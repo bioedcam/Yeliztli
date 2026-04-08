@@ -42,8 +42,13 @@ class TestGetAncestryMatchedAfColumn:
     def test_eas_maps_to_gnomad_af_eas(self) -> None:
         assert get_ancestry_matched_af_column("EAS") == "gnomad_af_eas"
 
-    def test_sas_maps_to_gnomad_af_sas(self) -> None:
-        assert get_ancestry_matched_af_column("SAS") == "gnomad_af_sas"
+    def test_csa_maps_to_gnomad_af_sas(self) -> None:
+        """CSA (Central/South Asian) maps to gnomAD's sas column."""
+        assert get_ancestry_matched_af_column("CSA") == "gnomad_af_sas"
+
+    def test_mid_falls_back_to_global(self) -> None:
+        """MID has no gnomAD-specific column, falls back to global."""
+        assert get_ancestry_matched_af_column("MID") == "gnomad_af_global"
 
     def test_oce_falls_back_to_global(self) -> None:
         """OCE has no gnomAD-specific data, falls back to global."""

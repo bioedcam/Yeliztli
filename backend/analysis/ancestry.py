@@ -5,7 +5,7 @@ P3-25 (PCA coordinates for visualization), and P3-32 (haplogroup
 assignment engine).
 
 Projects user genotypes onto pre-computed PCA space via NumPy dot product
-against loadings from the ancestry PCA bundle. Runtime target: < 1 second.
+against loadings from a 5,000-AIM NPZ bundle. Runtime target: < 1 second.
 
 Admixture fractions are estimated via inverse-distance weighting against
 reference population centroids in PCA space. Fractions sum to ~1.0.
@@ -14,19 +14,20 @@ PCA coordinates for visualization (P3-25) combine the user's projected
 coordinates with reference panel sample coordinates for scatter plot
 rendering. Reference samples are pre-computed and stored in the bundle.
 
-The ancestry PCA bundle contains:
-  - A curated set of ancestry informative markers (AIMs)
-  - Pre-computed PCA loadings (eigenvectors) from a reference panel
-  - Reference population centroids in PCA space
-  - Global reference allele frequencies for centering
+The ancestry PCA bundle (NPZ format) contains:
+  - 5,000 ancestry informative markers (AIMs) with rsID lookup
+  - Pre-computed PCA loadings (eigenvectors) from a 3,419-sample reference panel
+  - Per-AIM means and standard deviations for standardization
+  - Reference population centroids in PCA space (7 populations × 8 PCs)
   - Reference sample PCA coordinates by population (for visualization)
+  - Tracy-Widom p-values and eigenvalues (pre-computed, no runtime TW)
 
 Algorithm:
-  1. Load ancestry PCA bundle (SNPs, loadings, centroids, ref freqs)
-  2. Query sample genotypes for bundle SNPs
+  1. Load ancestry PCA bundle (NPZ with AIMs, loadings, centroids, means/stds)
+  2. Query sample genotypes for bundle SNPs (matched via rsID)
   3. Encode genotypes as alt-allele dosage (0, 1, or 2)
-  4. Center: dosage_i - 2 * ref_freq_i
-  5. Project: pc_scores = centered @ loadings.T
+  4. Standardize: (dosage_i - mean_i) / std_i
+  5. Project: pc_scores = standardized @ loadings
   6. Classify: nearest centroid in PCA space → top population
   7. Compute admixture fractions via inverse-distance weighting
 
@@ -81,9 +82,9 @@ from backend.db.tables import (
 
 logger = structlog.get_logger(__name__)
 
-# Path to the pre-computed ancestry PCA bundle
+# Path to the pre-computed ancestry PCA bundle (NPZ format, 5,000 AIMs)
 _BUNDLE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "panels" / "ancestry_pca_bundle.json"
+    Path(__file__).resolve().parent.parent / "data" / "panels" / "ancestry_pca_bundle.npz"
 )
 
 # Path to the haplogroup defining SNP bundle (PhyloTree + ISOGG)
@@ -91,8 +92,19 @@ _HAPLOGROUP_BUNDLE_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "panels" / "haplogroup_bundle.json"
 )
 
-# Super-population codes used throughout the module
-POPULATIONS = ("AFR", "AMR", "EAS", "EUR", "SAS", "OCE")
+# Super-population codes used throughout the module (canonical order, 7 populations)
+POPULATIONS = ("AFR", "AMR", "CSA", "EAS", "EUR", "MID", "OCE")
+
+# Human-readable labels for each population
+POPULATION_LABELS: dict[str, str] = {
+    "AFR": "African",
+    "AMR": "Admixed American",
+    "CSA": "Central/South Asian",
+    "EAS": "East Asian",
+    "EUR": "European",
+    "MID": "Middle Eastern",
+    "OCE": "Oceanian",
+}
 
 
 # ── Data classes ──────────────────────────────────────────────────────────
@@ -112,21 +124,31 @@ class AncestryAIM:
 
 @dataclass
 class AncestryBundle:
-    """Pre-computed PCA bundle for ancestry inference.
+    """Pre-computed PCA bundle for ancestry inference (NPZ format).
+
+    Loaded from a NumPy NPZ archive containing 5,000 AIMs, 8 PCs,
+    and 7 reference populations from a 3,419-sample panel.
 
     Attributes:
         version: Bundle version string.
-        build: Genome build (e.g. "GRCh37").
+        build: Genome build (e.g. "GRCh38").
         n_components: Number of principal components.
         populations: List of super-population codes.
         population_labels: Human-readable population names.
         snps: List of ancestry informative markers.
-        loadings: PCA loadings matrix, shape (n_components, n_snps).
+        loadings: PCA loadings matrix, shape (n_snps, n_components).
+        means: Per-AIM mean dosage from reference panel, shape (n_snps,).
+        stds: Per-AIM standard deviation from reference panel, shape (n_snps,).
         reference_centroids: Population centroids in PCA space,
             mapping population code → array of PC coordinates.
         reference_samples: Pre-computed PCA coordinates for reference
             panel samples, mapping population code → list of coordinate
             arrays. Used for PCA scatter plot visualization (P3-25).
+        eigenvalues: PCA eigenvalues, shape (n_components,).
+        n_significant_pcs: Number of statistically significant PCs.
+        tw_pvalues: Tracy-Widom p-values, shape (20,).
+        n_total_snps: Total SNPs in reference panel before AIM selection.
+        n_selected_aims: Number of AIMs selected for the bundle.
     """
 
     version: str
@@ -135,9 +157,16 @@ class AncestryBundle:
     populations: list[str]
     population_labels: dict[str, str]
     snps: list[AncestryAIM]
-    loadings: np.ndarray  # shape: (n_components, n_snps)
+    loadings: np.ndarray  # shape: (n_snps, n_components)
+    means: np.ndarray  # shape: (n_snps,)
+    stds: np.ndarray  # shape: (n_snps,)
     reference_centroids: dict[str, np.ndarray]  # pop → (n_components,)
     reference_samples: dict[str, list[list[float]]]  # pop → list of PC coords
+    eigenvalues: np.ndarray  # shape: (n_components,)
+    n_significant_pcs: int
+    tw_pvalues: np.ndarray  # shape: (20,)
+    n_total_snps: int
+    n_selected_aims: int
 
     @property
     def snp_count(self) -> int:
@@ -215,84 +244,105 @@ class PCACoordinates:
 
 
 def load_ancestry_bundle(bundle_path: Path | None = None) -> AncestryBundle:
-    """Load the pre-computed ancestry PCA bundle from JSON.
+    """Load the pre-computed ancestry PCA bundle from NPZ.
 
     Args:
-        bundle_path: Optional override for the bundle JSON path.
-            Defaults to ``backend/data/panels/ancestry_pca_bundle.json``.
+        bundle_path: Optional override for the bundle NPZ path.
+            Defaults to ``backend/data/panels/ancestry_pca_bundle.npz``.
 
     Returns:
-        Parsed AncestryBundle with SNPs, loadings, and centroids.
+        Parsed AncestryBundle with SNPs, loadings, centroids, and
+        reference panel data for 5,000 AIMs and 7 populations.
 
     Raises:
         FileNotFoundError: If the bundle file does not exist.
         ValueError: If the bundle structure is invalid.
     """
     path = bundle_path or _BUNDLE_PATH
+    if not path.exists():
+        raise FileNotFoundError(f"Ancestry PCA bundle not found: {path}")
+
     logger.info("loading_ancestry_bundle", path=str(path))
 
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    data = np.load(path, allow_pickle=False)
 
-    # Parse SNPs
+    # Extract scalar values
+    n_significant_pcs = int(data["n_significant_pcs"])
+    n_total_snps = int(data["n_total_snps"])
+    n_selected_aims = int(data["n_selected_aims"])
+
+    # Extract arrays
+    loadings = data["loadings"].astype(np.float64)  # (n_snps, n_components)
+    means = data["means"].astype(np.float64)  # (n_snps,)
+    stds = data["stds"].astype(np.float64)  # (n_snps,)
+    eigenvalues = data["eigenvalues"].astype(np.float64)  # (n_components,)
+    tw_pvalues = data["tw_pvalues"].astype(np.float64)  # (20,)
+
+    populations = list(data["populations"])
+    n_components = loadings.shape[1]
+    n_snps = loadings.shape[0]
+
+    # Build AIM list from NPZ arrays, using aim_rsids_23andme for rsID matching
+    aim_rsids_23andme = data["aim_rsids_23andme"]
+    aim_chroms = data["aim_chroms"]
+    aim_positions = data["aim_positions_grch38"]
+    aim_a1 = data["aim_a1"]  # alt allele
+    aim_a2 = data["aim_a2"]  # ref allele
+
     snps: list[AncestryAIM] = []
-    for snp_data in data["snps"]:
+    for i in range(n_snps):
         snps.append(
             AncestryAIM(
-                rsid=snp_data["rsid"],
-                chrom=snp_data["chrom"],
-                pos=snp_data["pos"],
-                ref=snp_data["ref"],
-                alt=snp_data["alt"],
-                ref_freq=snp_data["ref_freq"],
+                rsid=str(aim_rsids_23andme[i]),
+                chrom=str(aim_chroms[i]),
+                pos=int(aim_positions[i]),
+                ref=str(aim_a2[i]),
+                alt=str(aim_a1[i]),
+                ref_freq=1.0 - float(means[i]) / 2.0,
             )
         )
 
-    n_components = data["n_components"]
-    n_snps = len(snps)
+    # Validate shapes
+    if loadings.shape != (n_snps, n_components):
+        raise ValueError(
+            f"Loadings shape {loadings.shape} does not match "
+            f"({n_snps}, {n_components})"
+        )
+    if means.shape[0] != n_snps:
+        raise ValueError(f"Means has {means.shape[0]} entries, expected {n_snps}")
 
-    # Parse loadings: shape (n_components, n_snps)
-    loadings_raw = data["loadings"]
-    if len(loadings_raw) != n_components:
-        raise ValueError(f"Expected {n_components} loading vectors, got {len(loadings_raw)}")
-    for i, row in enumerate(loadings_raw):
-        if len(row) != n_snps:
-            raise ValueError(f"Loading vector {i} has {len(row)} values, expected {n_snps}")
-    loadings = np.array(loadings_raw, dtype=np.float64)
-
-    # Parse reference centroids
+    # Build reference centroids dict from (n_pops, n_components) matrix
+    centroid_matrix = data["population_centroids"].astype(np.float64)
     centroids: dict[str, np.ndarray] = {}
-    for pop, coords in data["reference_centroids"].items():
-        if len(coords) != n_components:
-            raise ValueError(
-                f"Centroid for {pop} has {len(coords)} values, expected {n_components}"
-            )
-        centroids[pop] = np.array(coords, dtype=np.float64)
+    for i, pop in enumerate(populations):
+        centroids[pop] = centroid_matrix[i]
 
-    # Parse reference samples for PCA visualization (P3-25)
-    ref_samples: dict[str, list[list[float]]] = {}
-    if "reference_samples" in data:
-        for pop, coords_list in data["reference_samples"].items():
-            parsed_coords = []
-            for i, coords in enumerate(coords_list):
-                if len(coords) != n_components:
-                    raise ValueError(
-                        f"Reference sample {i} for {pop} has {len(coords)} values, "
-                        f"expected {n_components}"
-                    )
-                parsed_coords.append([float(v) for v in coords])
-            ref_samples[pop] = parsed_coords
+    # Build reference samples dict from ref_pca_coords + ref_labels
+    ref_coords = data["ref_pca_coords"].astype(np.float64)  # (3419, n_components)
+    ref_labels = data["ref_labels"]  # (3419,)
+    ref_samples: dict[str, list[list[float]]] = {pop: [] for pop in populations}
+    for i in range(len(ref_labels)):
+        pop = str(ref_labels[i])
+        if pop in ref_samples:
+            ref_samples[pop].append([float(v) for v in ref_coords[i]])
 
     bundle = AncestryBundle(
-        version=data.get("version", "1.0.0"),
-        build=data.get("build", "GRCh37"),
+        version="2.0.0",
+        build="GRCh38",
         n_components=n_components,
-        populations=data["populations"],
-        population_labels=data.get("population_labels", {}),
+        populations=populations,
+        population_labels=POPULATION_LABELS,
         snps=snps,
         loadings=loadings,
+        means=means,
+        stds=stds,
         reference_centroids=centroids,
         reference_samples=ref_samples,
+        eigenvalues=eigenvalues,
+        n_significant_pcs=n_significant_pcs,
+        tw_pvalues=tw_pvalues,
+        n_total_snps=n_total_snps,
+        n_selected_aims=n_selected_aims,
     )
 
     logger.info(
@@ -300,6 +350,7 @@ def load_ancestry_bundle(bundle_path: Path | None = None) -> AncestryBundle:
         snp_count=bundle.snp_count,
         n_components=bundle.n_components,
         populations=bundle.populations,
+        n_significant_pcs=bundle.n_significant_pcs,
     )
 
     return bundle
@@ -344,9 +395,10 @@ def _project_onto_pca(
 ) -> tuple[np.ndarray, int]:
     """Project sample genotypes onto PCA space.
 
-    Encodes genotypes as alt-allele dosage, centers using reference
-    allele frequencies, imputes missing values with 0 (mean), and
-    projects via dot product with the loadings matrix.
+    Encodes genotypes as alt-allele dosage, standardizes using
+    per-AIM means and standard deviations from the reference panel,
+    imputes missing values with 0 (mean), and projects via dot
+    product with the loadings matrix.
 
     Args:
         bundle: Loaded ancestry PCA bundle.
@@ -357,8 +409,8 @@ def _project_onto_pca(
     """
     n_snps = bundle.snp_count
 
-    # Build centered dosage vector
-    centered = np.zeros(n_snps, dtype=np.float64)
+    # Build standardized dosage vector
+    standardized = np.zeros(n_snps, dtype=np.float64)
     snps_used = 0
 
     for i, snp in enumerate(bundle.snps):
@@ -366,18 +418,20 @@ def _project_onto_pca(
         dosage = _encode_dosage(genotype, snp.alt)
 
         if dosage is not None:
-            # Center: dosage - 2 * alt_freq
-            # alt_freq = 1 - ref_freq
-            alt_freq = 1.0 - snp.ref_freq
-            centered[i] = dosage - 2.0 * alt_freq
+            # Standardize: (dosage - mean) / std
+            std = bundle.stds[i]
+            if std > 0:
+                standardized[i] = (dosage - bundle.means[i]) / std
+            else:
+                standardized[i] = 0.0
             snps_used += 1
-        # else: leave as 0.0 (mean-imputed)
+        # else: leave as 0.0 (mean-imputed after standardization)
 
-    # Project: pc_scores = loadings @ centered
-    # loadings shape: (n_components, n_snps)
-    # centered shape: (n_snps,)
+    # Project: pc_scores = standardized @ loadings
+    # loadings shape: (n_snps, n_components)
+    # standardized shape: (n_snps,)
     # result shape: (n_components,)
-    pc_scores = bundle.loadings @ centered
+    pc_scores = standardized @ bundle.loadings
 
     return pc_scores, snps_used
 
@@ -693,9 +747,10 @@ def get_pca_coordinates(
 _ANCESTRY_TO_GNOMAD_COL: dict[str, str] = {
     "AFR": "gnomad_af_afr",
     "AMR": "gnomad_af_amr",
+    "CSA": "gnomad_af_sas",  # gnomAD "sas" covers Central/South Asian
     "EAS": "gnomad_af_eas",
     "EUR": "gnomad_af_eur",
-    "SAS": "gnomad_af_sas",
+    "MID": "gnomad_af_global",  # gnomAD has no dedicated MID column
     "OCE": "gnomad_af_global",
 }
 
