@@ -96,6 +96,6 @@ def test_encode_ccres_database_info_has_post_download() -> None:
 def test_other_databases_have_no_post_download() -> None:
     """Other databases should not have a post_download hook."""
     for name, db_info in DATABASES.items():
-        if name == "encode_ccres":
+        if name in ("encode_ccres", "lai_bundle"):
             continue
         assert db_info.post_download is None, f"{name} should not have post_download"
