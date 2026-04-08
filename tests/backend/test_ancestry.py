@@ -31,7 +31,13 @@ from backend.analysis.ancestry import (
     _classify_nearest_centroid,
     _encode_dosage,
     _project_onto_pca,
+    classify_ancestry,
     compute_admixture_fractions,
+    compute_confidence,
+    compute_missing_aim_rate,
+    estimate_admixture_knn,
+    estimate_admixture_nnls,
+    get_inferred_ancestry,
     get_pca_coordinates,
     infer_ancestry,
     load_ancestry_bundle,
@@ -455,7 +461,9 @@ class TestAdmixtureFractionsIntegration:
 
         with eur_sample.connect() as conn:
             row = conn.execute(
-                sa.select(findings).where(findings.c.module == "ancestry")
+                sa.select(findings)
+                .where(findings.c.module == "ancestry")
+                .where(findings.c.category == "nnls_admixture")
             ).fetchone()
         detail = json.loads(row.detail_json)
         assert "admixture_fractions" in detail
@@ -632,14 +640,14 @@ class TestEURClassification:
 class TestStoreAncestryFindings:
     """Test ancestry findings storage in the sample database."""
 
-    def test_stores_single_finding(
+    def test_stores_three_findings(
         self,
         small_bundle: AncestryBundle,
         eur_sample: sa.Engine,
     ) -> None:
         result = infer_ancestry(small_bundle, eur_sample)
         count = store_ancestry_findings(result, eur_sample)
-        assert count == 1
+        assert count == 3
 
     def test_finding_has_module_ancestry(
         self,
@@ -653,9 +661,9 @@ class TestStoreAncestryFindings:
             rows = conn.execute(
                 sa.select(findings).where(findings.c.module == "ancestry")
             ).fetchall()
-        assert len(rows) == 1
-        assert rows[0].module == "ancestry"
-        assert rows[0].category == "pca_projection"
+        assert len(rows) == 3
+        categories = {r.category for r in rows}
+        assert categories == {"pca_projection", "nnls_admixture", "knn_admixture"}
 
     def test_detail_json_has_top_population(
         self,
@@ -667,7 +675,9 @@ class TestStoreAncestryFindings:
 
         with eur_sample.connect() as conn:
             row = conn.execute(
-                sa.select(findings).where(findings.c.module == "ancestry")
+                sa.select(findings)
+                .where(findings.c.module == "ancestry")
+                .where(findings.c.category == "nnls_admixture")
             ).fetchone()
         detail = json.loads(row.detail_json)
         assert "top_population" in detail
@@ -683,7 +693,9 @@ class TestStoreAncestryFindings:
 
         with eur_sample.connect() as conn:
             row = conn.execute(
-                sa.select(findings).where(findings.c.module == "ancestry")
+                sa.select(findings)
+                .where(findings.c.module == "ancestry")
+                .where(findings.c.category == "pca_projection")
             ).fetchone()
         detail = json.loads(row.detail_json)
         assert "pc_scores" in detail
@@ -694,13 +706,15 @@ class TestStoreAncestryFindings:
         small_bundle: AncestryBundle,
         eur_sample: sa.Engine,
     ) -> None:
-        """Verify detail_json has 'inferred_ancestry' for prs.get_inferred_ancestry()."""
+        """Verify detail_json has 'inferred_ancestry' for get_inferred_ancestry()."""
         result = infer_ancestry(small_bundle, eur_sample)
         store_ancestry_findings(result, eur_sample)
 
         with eur_sample.connect() as conn:
             row = conn.execute(
-                sa.select(findings).where(findings.c.module == "ancestry")
+                sa.select(findings)
+                .where(findings.c.module == "ancestry")
+                .where(findings.c.category == "nnls_admixture")
             ).fetchone()
         detail = json.loads(row.detail_json)
         assert "inferred_ancestry" in detail
@@ -721,7 +735,7 @@ class TestStoreAncestryFindings:
                 .select_from(findings)
                 .where(findings.c.module == "ancestry")
             ).scalar()
-        assert count == 1  # Not 2
+        assert count == 3  # 3 categories, not 6
 
     def test_insufficient_coverage_stores_nothing(
         self,
@@ -741,10 +755,11 @@ class TestStoreAncestryFindings:
         store_ancestry_findings(result, eur_sample)
 
         with eur_sample.connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 sa.select(findings).where(findings.c.module == "ancestry")
-            ).fetchone()
-        assert row.evidence_level == 2
+            ).fetchall()
+        for row in rows:
+            assert row.evidence_level == 2
 
     def test_finding_text_contains_population(
         self,
@@ -756,7 +771,9 @@ class TestStoreAncestryFindings:
 
         with eur_sample.connect() as conn:
             row = conn.execute(
-                sa.select(findings).where(findings.c.module == "ancestry")
+                sa.select(findings)
+                .where(findings.c.module == "ancestry")
+                .where(findings.c.category == "nnls_admixture")
             ).fetchone()
         assert result.top_population in row.finding_text
 
@@ -897,18 +914,287 @@ class TestBundleReferenceSamples:
             assert dist < 10.0, f"{pop} mean distance to centroid: {dist:.2f}"
 
 
+# ── NNLS admixture tests (T-ANC-01) ────────────────────────────────────────
+
+
+class TestEstimateAdmixtureNNLS:
+    """T-ANC-01: NNLS fractions sum to 1.0."""
+
+    def test_fractions_sum_to_one(self, small_bundle: AncestryBundle) -> None:
+        user_pcs = np.array([-0.5, 1.0])
+        fracs = estimate_admixture_nnls(user_pcs, small_bundle)
+        assert abs(sum(fracs.values()) - 1.0) < 0.001
+
+    def test_all_populations_present(self, small_bundle: AncestryBundle) -> None:
+        user_pcs = np.array([0.0, 0.0])
+        fracs = estimate_admixture_nnls(user_pcs, small_bundle)
+        for pop in small_bundle.reference_centroids:
+            assert pop in fracs
+
+    def test_near_centroid_gives_high_fraction(self, small_bundle: AncestryBundle) -> None:
+        eur_centroid = small_bundle.reference_centroids["EUR"]
+        fracs = estimate_admixture_nnls(eur_centroid, small_bundle)
+        assert fracs["EUR"] > 0.5
+
+    def test_fractions_non_negative(self, small_bundle: AncestryBundle) -> None:
+        user_pcs = np.array([1.0, -0.5])
+        fracs = estimate_admixture_nnls(user_pcs, small_bundle)
+        assert all(f >= 0.0 for f in fracs.values())
+
+
+# ── kNN admixture tests (T-ANC-02) ────────────────────────────────────────
+
+
+class TestEstimateAdmixtureKNN:
+    """T-ANC-02: kNN fractions sum to 1.0."""
+
+    def test_fractions_sum_to_one(self, small_bundle: AncestryBundle) -> None:
+        user_pcs = np.array([-1.0, 1.5])
+        fracs = estimate_admixture_knn(user_pcs, small_bundle)
+        assert abs(sum(fracs.values()) - 1.0) < 0.001
+
+    def test_near_eur_cluster(self, small_bundle: AncestryBundle) -> None:
+        eur_centroid = small_bundle.reference_centroids["EUR"]
+        # With k=3 (small bundle has only 9 samples), EUR should dominate
+        fracs = estimate_admixture_knn(eur_centroid, small_bundle, k=3)
+        assert fracs["EUR"] > 0.5
+
+    def test_near_afr_cluster(self, small_bundle: AncestryBundle) -> None:
+        afr_centroid = small_bundle.reference_centroids["AFR"]
+        fracs = estimate_admixture_knn(afr_centroid, small_bundle, k=3)
+        assert fracs["AFR"] > 0.5
+
+
+# ── EUR/EAS classification tests (T-ANC-03, T-ANC-04) ──────────────────
+
+
+class TestClassifyAncestry:
+    """T-ANC-03/04: Known samples project into correct clusters."""
+
+    def test_eur_sample_classified(self, small_bundle: AncestryBundle) -> None:
+        eur_pcs = small_bundle.reference_centroids["EUR"]
+        pop = classify_ancestry(eur_pcs, small_bundle)
+        assert pop == "EUR"
+
+    def test_eas_sample_classified(self, small_bundle: AncestryBundle) -> None:
+        eas_pcs = small_bundle.reference_centroids["EAS"]
+        pop = classify_ancestry(eas_pcs, small_bundle)
+        assert pop == "EAS"
+
+    def test_returns_valid_population(self, small_bundle: AncestryBundle) -> None:
+        user_pcs = np.array([0.0, 0.0])
+        pop = classify_ancestry(user_pcs, small_bundle)
+        assert pop in small_bundle.reference_centroids
+
+
+# ── Missing AIM rate tests (T-ANC-05, T-ANC-06) ──────────────────────────
+
+
+class TestComputeMissingAIMRate:
+    """T-ANC-05/06: Missing AIM rate computation."""
+
+    def test_all_present_is_zero(self, small_bundle: AncestryBundle) -> None:
+        genotype_map = {snp.rsid: "AG" for snp in small_bundle.snps}
+        rate = compute_missing_aim_rate(genotype_map, small_bundle)
+        assert rate == 0.0
+
+    def test_all_missing_is_one(self, small_bundle: AncestryBundle) -> None:
+        rate = compute_missing_aim_rate({}, small_bundle)
+        assert rate == 1.0
+
+    def test_ten_percent_removed(self, small_bundle: AncestryBundle) -> None:
+        # 4 SNPs, remove 1 → 25% missing (can't get exactly 10% with 4 SNPs)
+        genotype_map = {snp.rsid: "AG" for snp in small_bundle.snps[:-1]}
+        rate = compute_missing_aim_rate(genotype_map, small_bundle)
+        assert rate == 0.25
+
+    def test_nocall_counted_as_missing(self, small_bundle: AncestryBundle) -> None:
+        genotype_map = {snp.rsid: "--" for snp in small_bundle.snps}
+        rate = compute_missing_aim_rate(genotype_map, small_bundle)
+        assert rate == 1.0
+
+
+# ── Mean imputation test (T-ANC-07) ──────────────────────────────────────
+
+
+class TestMeanImputation:
+    """T-ANC-07: Mean imputation doesn't crash, produces reasonable coords."""
+
+    def test_partial_data_produces_coordinates(
+        self,
+        small_bundle: AncestryBundle,
+        partial_sample: sa.Engine,
+    ) -> None:
+        result = infer_ancestry(small_bundle, partial_sample)
+        assert len(result.pc_scores) == 2
+        assert all(np.isfinite(s) for s in result.pc_scores)
+
+    def test_empty_data_produces_zero_coords(
+        self,
+        small_bundle: AncestryBundle,
+        sample_engine: sa.Engine,
+    ) -> None:
+        result = infer_ancestry(small_bundle, sample_engine)
+        assert all(s == 0.0 for s in result.pc_scores)
+
+
+# ── Confidence tests (T-ANC-08) ──────────────────────────────────────────
+
+
+class TestComputeConfidence:
+    """T-ANC-08: Confidence > 0.9 when NNLS/kNN agree, < 0.5 when disagree."""
+
+    def test_identical_fractions_high_confidence(self) -> None:
+        fracs = {"AFR": 0.8, "EUR": 0.1, "EAS": 0.1}
+        conf = compute_confidence(fracs, fracs)
+        assert conf > 0.99
+
+    def test_similar_fractions_high_confidence(self) -> None:
+        nnls = {"AFR": 0.7, "EUR": 0.2, "EAS": 0.1}
+        knn = {"AFR": 0.65, "EUR": 0.25, "EAS": 0.1}
+        conf = compute_confidence(nnls, knn)
+        assert conf > 0.9
+
+    def test_opposite_fractions_low_confidence(self) -> None:
+        nnls = {"AFR": 1.0, "EUR": 0.0, "EAS": 0.0}
+        knn = {"AFR": 0.0, "EUR": 0.0, "EAS": 1.0}
+        conf = compute_confidence(nnls, knn)
+        assert conf < 0.5
+
+    def test_confidence_range(self) -> None:
+        nnls = {"AFR": 0.5, "EUR": 0.3, "EAS": 0.2}
+        knn = {"AFR": 0.4, "EUR": 0.4, "EAS": 0.2}
+        conf = compute_confidence(nnls, knn)
+        assert 0.0 <= conf <= 1.0
+
+
+# ── Integration: full pipeline (T-ANC-09) ────────────────────────────────
+
+
+class TestFullPipelineIntegration:
+    """T-ANC-09: Full pipeline produces findings in sample DB."""
+
+    def test_pipeline_stores_findings(
+        self,
+        small_bundle: AncestryBundle,
+        eur_sample: sa.Engine,
+    ) -> None:
+        result = infer_ancestry(small_bundle, eur_sample)
+        count = store_ancestry_findings(result, eur_sample)
+        assert count == 3
+
+        with eur_sample.connect() as conn:
+            rows = conn.execute(
+                sa.select(findings).where(findings.c.module == "ancestry")
+            ).fetchall()
+        assert len(rows) == 3
+        categories = {r.category for r in rows}
+        assert "nnls_admixture" in categories
+        assert "knn_admixture" in categories
+        assert "pca_projection" in categories
+
+    def test_result_has_all_new_fields(
+        self,
+        small_bundle: AncestryBundle,
+        eur_sample: sa.Engine,
+    ) -> None:
+        result = infer_ancestry(small_bundle, eur_sample)
+        assert result.admixture_method == "nnls"
+        assert 0.0 <= result.confidence <= 1.0
+        assert 0.0 <= result.missing_aim_rate <= 1.0
+        assert result.n_pcs_used == small_bundle.n_components
+        assert result.nnls_fractions is not None
+        assert result.knn_fractions is not None
+
+    def test_get_inferred_ancestry_prefers_nnls(
+        self,
+        small_bundle: AncestryBundle,
+        eur_sample: sa.Engine,
+    ) -> None:
+        result = infer_ancestry(small_bundle, eur_sample)
+        store_ancestry_findings(result, eur_sample)
+        ancestry = get_inferred_ancestry(eur_sample)
+        assert ancestry == result.top_population
+
+
+# ── Property: fractions always sum to ~1.0 (T-ANC-10) ────────────────────
+
+
+class TestFractionsSumProperty:
+    """T-ANC-10: Fractions always sum to ~1.0 regardless of input."""
+
+    @pytest.mark.parametrize(
+        "user_pcs",
+        [
+            np.array([0.0, 0.0]),
+            np.array([100.0, -100.0]),
+            np.array([-50.0, 50.0]),
+            np.array([2.0, -1.0]),   # near AFR centroid
+            np.array([-1.0, 1.5]),   # near EUR centroid
+        ],
+    )
+    def test_nnls_fractions_sum_to_one(
+        self,
+        small_bundle: AncestryBundle,
+        user_pcs: np.ndarray,
+    ) -> None:
+        fracs = estimate_admixture_nnls(user_pcs, small_bundle)
+        assert abs(sum(fracs.values()) - 1.0) < 0.001
+
+    @pytest.mark.parametrize(
+        "user_pcs",
+        [
+            np.array([0.0, 0.0]),
+            np.array([100.0, -100.0]),
+            np.array([-1.0, 1.5]),
+        ],
+    )
+    def test_knn_fractions_sum_to_one(
+        self,
+        small_bundle: AncestryBundle,
+        user_pcs: np.ndarray,
+    ) -> None:
+        fracs = estimate_admixture_knn(user_pcs, small_bundle)
+        assert abs(sum(fracs.values()) - 1.0) < 0.001
+
+
+# ── classify_ancestry returns valid label (T-ANC-11) ──────────────────────
+
+
+class TestClassifyAncestryValid:
+    """T-ANC-11: classify_ancestry returns a valid population label."""
+
+    @pytest.mark.parametrize(
+        "user_pcs",
+        [
+            np.array([0.0, 0.0]),
+            np.array([2.0, -1.0]),
+            np.array([-1.0, 1.5]),
+            np.array([-0.5, -2.0]),
+            np.array([50.0, 50.0]),
+        ],
+    )
+    def test_returns_valid_population(
+        self,
+        small_bundle: AncestryBundle,
+        user_pcs: np.ndarray,
+    ) -> None:
+        pop = classify_ancestry(user_pcs, small_bundle)
+        assert pop in small_bundle.reference_centroids
+
+
 # ── PRS integration test ─────────────────────────────────────────────────
 
 
 class TestPRSIntegration:
-    """Test that ancestry findings are readable by prs.get_inferred_ancestry()."""
+    """Test that ancestry findings are readable by get_inferred_ancestry()."""
 
     def test_get_inferred_ancestry_reads_finding(
         self,
         small_bundle: AncestryBundle,
         eur_sample: sa.Engine,
     ) -> None:
-        from backend.analysis.prs import get_inferred_ancestry
+        from backend.analysis.ancestry import get_inferred_ancestry
 
         # Before ancestry inference → None
         assert get_inferred_ancestry(eur_sample) is None

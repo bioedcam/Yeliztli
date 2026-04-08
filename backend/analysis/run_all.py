@@ -85,6 +85,7 @@ def _get_modules() -> list[tuple[str, Callable]]:
 
 
 def _run_cancer(sample_engine: Engine, registry: DBRegistry) -> int:
+    from backend.analysis.ancestry import get_inferred_ancestry
     from backend.analysis.cancer import (
         extract_cancer_variants,
         load_cancer_panel,
@@ -95,7 +96,6 @@ def _run_cancer(sample_engine: Engine, registry: DBRegistry) -> int:
         run_cancer_prs,
         store_cancer_prs_findings,
     )
-    from backend.analysis.prs import get_inferred_ancestry
 
     panel = load_cancer_panel()
     result = extract_cancer_variants(panel, sample_engine)

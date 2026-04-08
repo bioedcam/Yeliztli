@@ -7,8 +7,8 @@ assignment engine).
 Projects user genotypes onto pre-computed PCA space via NumPy dot product
 against loadings from a 5,000-AIM NPZ bundle. Runtime target: < 1 second.
 
-Admixture fractions are estimated via inverse-distance weighting against
-reference population centroids in PCA space. Fractions sum to ~1.0.
+Admixture fractions are estimated via NNLS (primary) and kNN (secondary)
+against reference population centroids / samples. Fractions sum to ~1.0.
 
 PCA coordinates for visualization (P3-25) combine the user's projected
 coordinates with reference panel sample coordinates for scatter plot
@@ -28,8 +28,10 @@ Algorithm:
   3. Encode genotypes as alt-allele dosage (0, 1, or 2)
   4. Standardize: (dosage_i - mean_i) / std_i
   5. Project: pc_scores = standardized @ loadings
-  6. Classify: nearest centroid in PCA space → top population
-  7. Compute admixture fractions via inverse-distance weighting
+  6. Estimate admixture via NNLS against population centroids
+  7. Estimate admixture via kNN against reference panel samples
+  8. Classify: population with highest NNLS fraction → top population
+  9. Compute confidence: cosine similarity between NNLS and kNN vectors
 
 The ``top_population`` output is consumed by the PRS ancestry mismatch
 check (P3-16) via ``prs.get_inferred_ancestry()``.
@@ -43,6 +45,11 @@ Usage::
     from backend.analysis.ancestry import (
         load_ancestry_bundle,
         infer_ancestry,
+        estimate_admixture_nnls,
+        estimate_admixture_knn,
+        compute_confidence,
+        classify_ancestry,
+        compute_missing_aim_rate,
         compute_admixture_fractions,
         store_ancestry_findings,
         get_pca_coordinates,
@@ -71,6 +78,7 @@ from pathlib import Path
 import numpy as np
 import sqlalchemy as sa
 import structlog
+from scipy.optimize import nnls as _scipy_nnls
 
 from backend.analysis.evidence import ANCESTRY_EVIDENCE_LEVEL
 from backend.db.tables import (
@@ -208,6 +216,12 @@ class AncestryResult:
     coverage_fraction: float
     projection_time_ms: float
     is_sufficient: bool
+    admixture_method: str = "nnls"
+    confidence: float = 0.0
+    missing_aim_rate: float = 0.0
+    n_pcs_used: int = 0
+    nnls_fractions: dict[str, float] | None = None
+    knn_fractions: dict[str, float] | None = None
 
     @property
     def n_components(self) -> int:
@@ -469,17 +483,191 @@ def _classify_nearest_centroid(
     return best_pop, distances
 
 
+def estimate_admixture_nnls(
+    user_pcs: np.ndarray,
+    bundle: AncestryBundle,
+) -> dict[str, float]:
+    """Estimate admixture fractions via non-negative least squares.
+
+    Solves min ||C @ x - user_pcs|| subject to x >= 0, where C is the
+    matrix of population centroids. The solution is normalized to sum to 1.0.
+
+    Args:
+        user_pcs: User's projected PC coordinates, shape (n_components,).
+        bundle: Loaded ancestry PCA bundle (contains centroids).
+
+    Returns:
+        Dict mapping population code → fraction (0.0–1.0), summing to 1.0.
+    """
+    pops = list(bundle.reference_centroids.keys())
+    # Build centroid matrix: (n_components, n_pops)
+    centroid_matrix = np.column_stack([bundle.reference_centroids[p] for p in pops])
+
+    # NNLS: find x >= 0 such that ||centroid_matrix @ x - user_pcs|| is minimized
+    x, _ = _scipy_nnls(centroid_matrix, user_pcs)
+
+    # Normalize to sum to 1.0
+    total = x.sum()
+    if total > 0:
+        x = x / total
+    else:
+        # Fallback: uniform distribution
+        x = np.ones(len(pops)) / len(pops)
+
+    fractions = {pop: round(float(x[i]), 4) for i, pop in enumerate(pops)}
+
+    # Ensure exact sum to 1.0
+    frac_sum = sum(fractions.values())
+    if abs(frac_sum - 1.0) > 1e-8:
+        max_pop = max(fractions, key=lambda p: fractions[p])
+        fractions[max_pop] = round(fractions[max_pop] + (1.0 - frac_sum), 4)
+
+    return fractions
+
+
+def estimate_admixture_knn(
+    user_pcs: np.ndarray,
+    bundle: AncestryBundle,
+    k: int = 15,
+) -> dict[str, float]:
+    """Estimate admixture fractions via k-nearest neighbors.
+
+    Finds the k nearest reference panel samples in PCA space and
+    returns the proportion of each population among those neighbors.
+
+    Args:
+        user_pcs: User's projected PC coordinates, shape (n_components,).
+        bundle: Loaded ancestry PCA bundle (contains reference samples).
+        k: Number of nearest neighbors to use.
+
+    Returns:
+        Dict mapping population code → fraction (0.0–1.0), summing to 1.0.
+    """
+    # Build reference coordinate and label arrays
+    all_coords: list[np.ndarray] = []
+    all_labels: list[str] = []
+
+    for pop, samples in bundle.reference_samples.items():
+        for sample in samples:
+            all_coords.append(np.array(sample, dtype=np.float64))
+            all_labels.append(pop)
+
+    if not all_coords:
+        return {pop: round(1.0 / len(bundle.populations), 4) for pop in bundle.populations}
+
+    ref_matrix = np.array(all_coords)  # (n_ref, n_components)
+    # Euclidean distances
+    diffs = ref_matrix - user_pcs[np.newaxis, :]
+    distances = np.sqrt(np.sum(diffs ** 2, axis=1))
+
+    # Find k nearest
+    actual_k = min(k, len(distances))
+    if actual_k == len(distances):
+        nearest_idx = np.arange(actual_k)
+    else:
+        nearest_idx = np.argpartition(distances, actual_k)[:actual_k]
+
+    # Count populations among nearest neighbors
+    counts: dict[str, int] = {pop: 0 for pop in bundle.reference_centroids}
+    for idx in nearest_idx:
+        label = all_labels[idx]
+        if label in counts:
+            counts[label] += 1
+
+    # Convert to fractions
+    fractions = {pop: round(c / actual_k, 4) for pop, c in counts.items()}
+
+    # Ensure exact sum to 1.0
+    frac_sum = sum(fractions.values())
+    if abs(frac_sum - 1.0) > 1e-8:
+        max_pop = max(fractions, key=lambda p: fractions[p])
+        fractions[max_pop] = round(fractions[max_pop] + (1.0 - frac_sum), 4)
+
+    return fractions
+
+
+def compute_confidence(
+    nnls_fracs: dict[str, float],
+    knn_fracs: dict[str, float],
+) -> float:
+    """Compute confidence as cosine similarity between NNLS and kNN vectors.
+
+    A high similarity (close to 1.0) means the two methods agree,
+    indicating high confidence in the ancestry estimate.
+
+    Args:
+        nnls_fracs: NNLS admixture fractions.
+        knn_fracs: kNN admixture fractions.
+
+    Returns:
+        Cosine similarity between the two proportion vectors (0.0–1.0).
+    """
+    pops = sorted(set(nnls_fracs.keys()) | set(knn_fracs.keys()))
+    if not pops:
+        return 0.0
+
+    a = np.array([nnls_fracs.get(p, 0.0) for p in pops])
+    b = np.array([knn_fracs.get(p, 0.0) for p in pops])
+
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+
+    if norm_a < 1e-10 or norm_b < 1e-10:
+        return 0.0
+
+    return float(np.clip(np.dot(a, b) / (norm_a * norm_b), 0.0, 1.0))
+
+
+def classify_ancestry(
+    user_pcs: np.ndarray,
+    bundle: AncestryBundle,
+) -> str:
+    """Return the population with the highest NNLS fraction.
+
+    Args:
+        user_pcs: User's projected PC coordinates.
+        bundle: Loaded ancestry PCA bundle.
+
+    Returns:
+        Population code string (e.g. "EUR").
+    """
+    fracs = estimate_admixture_nnls(user_pcs, bundle)
+    return max(fracs, key=lambda p: fracs[p])
+
+
+def compute_missing_aim_rate(
+    genotype_map: dict[str, str | None],
+    bundle: AncestryBundle,
+) -> float:
+    """Compute the fraction of bundle AIMs missing from user data.
+
+    Args:
+        genotype_map: Mapping rsid → genotype string.
+        bundle: Loaded ancestry PCA bundle.
+
+    Returns:
+        Fraction of missing AIMs (0.0 = all present, 1.0 = all missing).
+    """
+    if bundle.snp_count == 0:
+        return 0.0
+
+    missing = 0
+    for snp in bundle.snps:
+        gt = genotype_map.get(snp.rsid)
+        if gt is None or gt in ("--", "00", "II", "DD", "DI", "ID", ""):
+            missing += 1
+
+    return missing / bundle.snp_count
+
+
 def compute_admixture_fractions(
     population_distances: dict[str, float],
 ) -> dict[str, float]:
     """Estimate admixture fractions via inverse-distance weighting.
 
-    Converts squared Euclidean distances to population centroids into
-    proportional ancestry estimates. Uses inverse-distance weighting
-    with a small epsilon to avoid division by zero when a sample sits
-    exactly on a centroid.
-
-    The resulting fractions sum to ~1.0 (within floating point tolerance).
+    .. deprecated::
+        Kept for backward compatibility. Prefer ``estimate_admixture_nnls``
+        for new code.
 
     Args:
         population_distances: Squared Euclidean distance to each
@@ -586,11 +774,23 @@ def infer_ancestry(
     pc_scores, snps_used = _project_onto_pca(bundle, genotype_map)
     projection_ms = (time.perf_counter() - t0) * 1000.0
 
-    # Classify
-    top_pop, distances = _classify_nearest_centroid(pc_scores, bundle.reference_centroids)
+    # Classify via nearest centroid (kept for distances)
+    _, distances = _classify_nearest_centroid(pc_scores, bundle.reference_centroids)
 
-    # Compute admixture fractions (P3-24)
-    admixture = compute_admixture_fractions(distances)
+    # NNLS admixture (primary method)
+    nnls_fracs = estimate_admixture_nnls(pc_scores, bundle)
+
+    # kNN admixture (secondary method)
+    knn_fracs = estimate_admixture_knn(pc_scores, bundle)
+
+    # Confidence: cosine similarity between NNLS and kNN
+    confidence = compute_confidence(nnls_fracs, knn_fracs)
+
+    # Top population from NNLS
+    top_pop = max(nnls_fracs, key=lambda p: nnls_fracs[p])
+
+    # Missing AIM rate
+    missing_rate = compute_missing_aim_rate(genotype_map, bundle)
 
     coverage = snps_used / bundle.snp_count if bundle.snp_count > 0 else 0.0
     is_sufficient = coverage >= _MIN_COVERAGE
@@ -599,12 +799,18 @@ def infer_ancestry(
         pc_scores=[round(float(s), 6) for s in pc_scores],
         top_population=top_pop,
         population_distances=distances,
-        admixture_fractions=admixture,
+        admixture_fractions=nnls_fracs,
         snps_used=snps_used,
         snps_total=bundle.snp_count,
         coverage_fraction=round(coverage, 4),
         projection_time_ms=round(projection_ms, 2),
         is_sufficient=is_sufficient,
+        admixture_method="nnls",
+        confidence=round(confidence, 4),
+        missing_aim_rate=round(missing_rate, 4),
+        n_pcs_used=bundle.n_components,
+        nnls_fractions=nnls_fracs,
+        knn_fractions=knn_fracs,
     )
 
     logger.info(
@@ -615,6 +821,9 @@ def infer_ancestry(
         coverage=result.coverage_fraction,
         projection_ms=result.projection_time_ms,
         is_sufficient=result.is_sufficient,
+        admixture_method=result.admixture_method,
+        confidence=result.confidence,
+        missing_aim_rate=result.missing_aim_rate,
     )
 
     return result
@@ -629,17 +838,19 @@ def store_ancestry_findings(
 ) -> int:
     """Store ancestry inference findings in the sample database.
 
-    Creates a single finding with module='ancestry' and
-    category='pca_projection' containing the full PCA result.
-    The ``detail_json.top_population`` field is read by
-    ``prs.get_inferred_ancestry()`` for ancestry mismatch checks.
+    Creates multiple findings with module='ancestry':
+      - ``pca_projection``: PCA coordinates and centroid distances.
+      - ``nnls_admixture``: NNLS admixture fractions (primary). Contains
+        ``top_population`` in ``detail_json`` — read by
+        ``get_inferred_ancestry()``.
+      - ``knn_admixture``: kNN admixture fractions (secondary).
 
     Args:
         result: AncestryResult from infer_ancestry.
         sample_engine: SQLAlchemy engine for the sample database.
 
     Returns:
-        Number of findings inserted (0 or 1).
+        Number of findings inserted (0 or 3).
     """
     if not result.is_sufficient:
         logger.warning(
@@ -657,13 +868,8 @@ def store_ancestry_findings(
     admixture_parts = [f"{pop} {frac:.0%}" for pop, frac in sorted_admixture[:3] if frac >= 0.01]
     admixture_summary = ", ".join(admixture_parts) if admixture_parts else result.top_population
 
-    finding_text = (
-        f"Inferred ancestry: {admixture_summary} "
-        f"({result.snps_used}/{result.snps_total} markers, "
-        f"{result.coverage_fraction:.0%} coverage)"
-    )
-
-    detail = {
+    # Row 1: PCA projection
+    pca_detail = {
         "top_population": result.top_population,
         "inferred_ancestry": result.top_population,
         "pc_scores": result.pc_scores,
@@ -675,31 +881,83 @@ def store_ancestry_findings(
         "coverage_fraction": result.coverage_fraction,
         "projection_time_ms": result.projection_time_ms,
         "is_sufficient": result.is_sufficient,
+        "n_pcs_used": result.n_pcs_used,
+        "missing_aim_rate": result.missing_aim_rate,
     }
 
-    row = {
+    pca_row = {
         "module": "ancestry",
         "category": "pca_projection",
-        "evidence_level": ANCESTRY_EVIDENCE_LEVEL,  # PCA-based inference = ★★☆☆
-        "finding_text": finding_text,
-        "detail_json": json.dumps(detail),
+        "evidence_level": ANCESTRY_EVIDENCE_LEVEL,
+        "finding_text": (
+            f"PCA projection: {result.snps_used}/{result.snps_total} markers, "
+            f"{result.coverage_fraction:.0%} coverage, {result.n_pcs_used} PCs"
+        ),
+        "detail_json": json.dumps(pca_detail),
     }
 
+    # Row 2: NNLS admixture (primary — has top_population for get_inferred_ancestry)
+    nnls_detail = {
+        "top_population": result.top_population,
+        "inferred_ancestry": result.top_population,
+        "admixture_fractions": result.nnls_fractions or result.admixture_fractions,
+        "admixture_method": "nnls",
+        "confidence": result.confidence,
+        "missing_aim_rate": result.missing_aim_rate,
+        "snps_used": result.snps_used,
+        "snps_total": result.snps_total,
+        "coverage_fraction": result.coverage_fraction,
+    }
+
+    nnls_row = {
+        "module": "ancestry",
+        "category": "nnls_admixture",
+        "evidence_level": ANCESTRY_EVIDENCE_LEVEL,
+        "finding_text": (
+            f"Inferred ancestry: {admixture_summary} "
+            f"({result.snps_used}/{result.snps_total} markers, "
+            f"{result.coverage_fraction:.0%} coverage)"
+        ),
+        "detail_json": json.dumps(nnls_detail),
+    }
+
+    # Row 3: kNN admixture (secondary)
+    knn_detail = {
+        "top_population": result.top_population,
+        "admixture_fractions": result.knn_fractions or {},
+        "admixture_method": "knn",
+        "k": 15,
+    }
+
+    knn_row = {
+        "module": "ancestry",
+        "category": "knn_admixture",
+        "evidence_level": ANCESTRY_EVIDENCE_LEVEL,
+        "finding_text": (
+            f"kNN admixture estimate (k=15): {result.top_population}"
+        ),
+        "detail_json": json.dumps(knn_detail),
+    }
+
+    categories = ("pca_projection", "nnls_admixture", "knn_admixture")
+
     with sample_engine.begin() as conn:
-        # Clear previous ancestry PCA findings
+        # Clear previous ancestry admixture findings
         conn.execute(
             sa.delete(findings).where(
                 findings.c.module == "ancestry",
-                findings.c.category == "pca_projection",
+                findings.c.category.in_(categories),
             )
         )
-        conn.execute(sa.insert(findings), [row])
+        conn.execute(sa.insert(findings), [pca_row, nnls_row, knn_row])
 
     logger.info(
-        "ancestry_finding_stored",
+        "ancestry_findings_stored",
         top_population=result.top_population,
+        admixture_method=result.admixture_method,
+        confidence=result.confidence,
     )
-    return 1
+    return 3
 
 
 # ── PCA coordinates for visualization (P3-25) ────────────────────────────
@@ -776,8 +1034,8 @@ def get_ancestry_matched_af_column(population: str | None) -> str:
 def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
     """Retrieve the inferred top ancestry from a sample's findings.
 
-    Queries the findings table for the most recent ancestry PCA projection
-    finding and extracts the ``top_population`` from ``detail_json``.
+    Preference order: ``nnls_admixture`` → ``pca_projection``.
+    Extracts ``top_population`` from ``detail_json``.
 
     This is the canonical way to get ancestry for P3-26 (ancestry-matched AF)
     and is also used by PRS ancestry mismatch checks (P3-16).
@@ -788,23 +1046,29 @@ def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
     Returns:
         Inferred top ancestry code (e.g. "EUR", "EAS", "AFR") or None.
     """
-    with sample_engine.connect() as conn:
-        row = conn.execute(
-            sa.select(findings.c.detail_json)
-            .where(findings.c.module == "ancestry")
-            .where(findings.c.category == "pca_projection")
-            .order_by(findings.c.id.desc())
-            .limit(1)
-        ).fetchone()
+    # Try nnls_admixture first (primary), then pca_projection, then any ancestry finding
+    for category in ("nnls_admixture", "pca_projection", None):
+        with sample_engine.connect() as conn:
+            stmt = (
+                sa.select(findings.c.detail_json)
+                .where(findings.c.module == "ancestry")
+                .order_by(findings.c.id.desc())
+                .limit(1)
+            )
+            if category is not None:
+                stmt = stmt.where(findings.c.category == category)
+            row = conn.execute(stmt).fetchone()
 
-    if row is None or not row.detail_json:
-        return None
+        if row is not None and row.detail_json:
+            try:
+                detail = json.loads(row.detail_json)
+                result = detail.get("top_population") or detail.get("inferred_ancestry")
+                if result:
+                    return result
+            except (ValueError, TypeError):
+                continue
 
-    try:
-        detail = json.loads(row.detail_json)
-        return detail.get("top_population")
-    except (ValueError, TypeError):
-        return None
+    return None
 
 
 # ── Convenience pipeline ──────────────────────────────────────────────────

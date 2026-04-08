@@ -44,12 +44,12 @@ from pathlib import Path
 import sqlalchemy as sa
 import structlog
 
+from backend.analysis.ancestry import get_inferred_ancestry
 from backend.analysis.evidence import TRAITS_EVIDENCE_CAP, cap_evidence_level
 from backend.analysis.prs import (
     PRSResult,
     PRSSNPWeight,
     PRSWeightSet,
-    get_inferred_ancestry,
     run_prs,
     store_prs_findings,
 )

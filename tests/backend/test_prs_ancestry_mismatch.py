@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 
+from backend.analysis.ancestry import get_inferred_ancestry
 from backend.analysis.cancer_prs import (
     load_cancer_prs_weights,
     run_cancer_prs,
@@ -25,7 +26,6 @@ from backend.analysis.cancer_prs import (
 from backend.analysis.prs import (
     PRSResult,
     check_ancestry_mismatch,
-    get_inferred_ancestry,
 )
 from backend.db.tables import annotated_variants, findings
 

@@ -21,9 +21,9 @@ Usage::
         compute_prs,
         compute_prs_percentile,
         compute_prs_bootstrap_ci,
-        get_inferred_ancestry,
         store_prs_findings,
     )
+    from backend.analysis.ancestry import get_inferred_ancestry
 
     weight_set = PRSWeightSet(
         name="Breast cancer (BCAC)",
@@ -434,44 +434,8 @@ def compute_prs_bootstrap_ci(
 
 # ── Ancestry lookup ────────────────────────────────────────────────────
 
-
-def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
-    """Retrieve the inferred top ancestry from a sample's findings.
-
-    Looks for an ancestry module finding with the inferred super-population
-    stored in detail_json. Returns None if ancestry inference has not been
-    run yet (P3-23 not complete or no findings present).
-
-    Args:
-        sample_engine: SQLAlchemy engine for the sample database.
-
-    Returns:
-        Inferred top ancestry code (e.g. "EUR", "EAS", "AFR") or None.
-    """
-    with sample_engine.connect() as conn:
-        row = conn.execute(
-            sa.select(findings.c.detail_json)
-            .where(findings.c.module == "ancestry")
-            .order_by(findings.c.id.desc())
-            .limit(1)
-        ).fetchone()
-
-    if row is None or not row.detail_json:
-        logger.debug("no_ancestry_finding", msg="Ancestry inference not yet run")
-        return None
-
-    try:
-        detail = json.loads(row.detail_json)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("ancestry_detail_json_invalid")
-        return None
-
-    inferred = detail.get("top_population") or detail.get("inferred_ancestry")
-    if inferred:
-        logger.info("inferred_ancestry_found", ancestry=inferred)
-        return inferred
-    return None
-
+# Canonical implementation is in backend.analysis.ancestry.
+# Re-export here for backward compatibility with existing callers.
 
 # ── Ancestry mismatch warning ───────────────────────────────────────────
 
