@@ -146,6 +146,11 @@ export default function AncestryView() {
                   Checking availability...
                 </div>
               )}
+              {laiStatusQuery.isError && (
+                <p className="text-sm text-destructive">
+                  Failed to check LAI availability.
+                </p>
+              )}
               {laiStatusQuery.data && !laiStatusQuery.data.bundle_downloaded && (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">

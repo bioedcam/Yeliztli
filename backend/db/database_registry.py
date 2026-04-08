@@ -98,8 +98,40 @@ def _extract_lai_bundle(tarball_path: Path, dest_path: Path) -> None:
 
 
 def detect_java() -> bool:
-    """Check whether a Java runtime (8+) is available on PATH."""
-    return shutil.which("java") is not None
+    """Check whether a Java runtime (8+) is available on PATH.
+
+    Runs ``java -version`` and parses the output to verify the major
+    version is at least 8.  Returns False if Java is missing, the
+    command fails, or the version cannot be parsed.
+    """
+    import re
+    import subprocess
+
+    if shutil.which("java") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["java", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        # java -version prints to stderr
+        output = result.stderr + result.stdout
+        # Match patterns like: "1.8.0_292", "11.0.11", "17", "21.0.1"
+        match = re.search(r'"(\d+)(?:\.(\d+))?', output)
+        if not match:
+            return False
+        major = int(match.group(1))
+        # Java 8 reports as "1.8"; Java 9+ reports as "9", "11", etc.
+        if major == 1:
+            minor = int(match.group(2)) if match.group(2) else 0
+            return minor >= 8
+        return major >= 8
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def validate_lai_bundle(bundle_dir: Path) -> bool:

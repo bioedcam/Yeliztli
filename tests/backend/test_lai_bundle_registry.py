@@ -9,6 +9,7 @@ T-DL-05: Bundle validation checks all 22 chromosome model files
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from unittest.mock import patch
 
@@ -90,7 +91,7 @@ class TestLAIBundleExtraction:
                     fpath = f"gnomix_models/chr{chrom}/{fname}"
                     info = tarfile.TarInfo(name=fpath)
                     info.size = 4
-                    tf.addfile(info, fileobj=__import__("io").BytesIO(b"test"))
+                    tf.addfile(info, fileobj=io.BytesIO(b"test"))
             # Add other expected dirs
             for dirname in ("beagle", "genetic_maps", "liftover", "phasing_panel"):
                 info = tarfile.TarInfo(name=f"{dirname}/")
@@ -130,7 +131,7 @@ class TestLAIBundleExtraction:
                 fpath = f"gnomix_models/chr1/{fname}"
                 info = tarfile.TarInfo(name=fpath)
                 info.size = 4
-                tf.addfile(info, fileobj=__import__("io").BytesIO(b"test"))
+                tf.addfile(info, fileobj=io.BytesIO(b"test"))
 
         import shutil
 
@@ -144,14 +145,50 @@ class TestLAIBundleExtraction:
 
 
 class TestJavaDetection:
-    """Test Java runtime detection."""
+    """Test Java runtime detection with version parsing."""
 
-    def test_detect_java_when_present(self):
-        with patch("shutil.which", return_value="/usr/bin/java"):
-            assert detect_java() is True
+    def _mock_java(self, version_output: str, returncode: int = 0):
+        """Helper to mock both shutil.which and subprocess.run for java."""
+        import subprocess as sp
+
+        mock_result = sp.CompletedProcess(
+            args=["java", "-version"],
+            returncode=returncode,
+            stdout="",
+            stderr=version_output,
+        )
+        return (
+            patch("shutil.which", return_value="/usr/bin/java"),
+            patch("subprocess.run", return_value=mock_result),
+        )
 
     def test_detect_java_when_absent(self):
         with patch("shutil.which", return_value=None):
+            assert detect_java() is False
+
+    def test_detect_java_8(self):
+        p1, p2 = self._mock_java('openjdk version "1.8.0_292"\n')
+        with p1, p2:
+            assert detect_java() is True
+
+    def test_detect_java_11(self):
+        p1, p2 = self._mock_java('openjdk version "11.0.11" 2021-04-20\n')
+        with p1, p2:
+            assert detect_java() is True
+
+    def test_detect_java_17(self):
+        p1, p2 = self._mock_java('openjdk version "17.0.1" 2021-10-19\n')
+        with p1, p2:
+            assert detect_java() is True
+
+    def test_detect_java_7_too_old(self):
+        p1, p2 = self._mock_java('java version "1.7.0_80"\n')
+        with p1, p2:
+            assert detect_java() is False
+
+    def test_detect_java_nonzero_returncode(self):
+        p1, p2 = self._mock_java("", returncode=1)
+        with p1, p2:
             assert detect_java() is False
 
 
