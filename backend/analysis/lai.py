@@ -15,6 +15,7 @@ SSE polling.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import sqlalchemy as sa
@@ -51,7 +52,7 @@ def is_lai_available() -> bool:
 def run_lai_analysis(
     sample_id: int,
     sample_engine: sa.Engine,
-    progress_callback: None | (callable) = None,
+    progress_callback: Callable[[str, float], None] | None = None,
 ) -> LAIResult:
     """Run LAI analysis on a sample.
 

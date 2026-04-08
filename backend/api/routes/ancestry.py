@@ -500,7 +500,7 @@ def trigger_lai_analysis(sample_id: int) -> LAITriggerResponse:
     try:
         job_id = create_lai_job(sample_id)
     except ValueError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
 
     run_lai_task(sample_id, job_id)
 
@@ -535,7 +535,7 @@ def get_lai_results(sample_id: int) -> LAIResultResponse | None:
         global_ancestry=json.loads(row.global_ancestry_json),
         chromosome_painting=json.loads(row.chromosome_painting_json),
         metadata=json.loads(row.metadata_json),
-        created_at=str(row.created_at) if row.created_at else "",
+        created_at=row.created_at.isoformat() if row.created_at else "",
     )
 
 

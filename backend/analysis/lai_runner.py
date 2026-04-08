@@ -20,11 +20,16 @@ import shutil
 import subprocess
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
+
+if TYPE_CHECKING:
+    from backend.analysis.gnomix_inference import ChromosomeResult
 
 logger = structlog.get_logger(__name__)
 
@@ -88,7 +93,7 @@ class LAIRunner:
         """Load rsID -> (chrom, pos_grch38) lookup table."""
         lookup: dict[str, tuple[str, int]] = {}
         path = self.bundle / "liftover" / "rsid_to_grch38.tsv"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) == 3:
@@ -100,7 +105,7 @@ class LAIRunner:
         self,
         genotypes: list[dict[str, str | int]],
         output_dir: str | Path,
-        progress_callback: None | (callable) = None,
+        progress_callback: Callable[[str, float], None] | None = None,
         cleanup: bool = True,
     ) -> LAIRunnerResult:
         """Run the full LAI pipeline.
@@ -157,12 +162,12 @@ class LAIRunner:
 
         # Step 4: Run Gnomix inference
         from backend.analysis.gnomix_inference import (
-            ChromosomeResult,
             load_gnomix_model,
             run_inference,
         )
 
         chrom_results: dict[int, ChromosomeResult] = {}
+        failed_chroms: list[int] = []
         for i, chr_num in enumerate(sorted(phased_paths.keys()), 1):
             frac = 0.70 + (i / 22) * 0.20
             report(f"Inferring ancestry chr{chr_num}... ({i}/22)", frac)
@@ -177,6 +182,10 @@ class LAIRunner:
                 chrom_results[chr_num] = result
             except Exception:
                 logger.exception("gnomix_inference_failed", chrom=chr_num)
+                failed_chroms.append(chr_num)
+
+        if failed_chroms and len(failed_chroms) > len(phased_paths) // 2:
+            raise RuntimeError(f"Too many chromosomes failed inference: {failed_chroms}")
 
         report("Ancestry inference complete", 0.90)
 
@@ -193,6 +202,7 @@ class LAIRunner:
             "mapped_to_grch38": matched,
             "chromosomes_phased": len(phased_paths),
             "chromosomes_analyzed": len(chrom_results),
+            "chromosomes_failed": failed_chroms,
             "runtime_seconds": round(elapsed, 1),
             "populations": list(POPULATIONS.keys()),
         }
@@ -205,7 +215,7 @@ class LAIRunner:
 
         # Save results
         results_path = out / "lai_results.json"
-        with open(results_path, "w") as f:
+        with open(results_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "global_ancestry": lai_result.global_ancestry,
@@ -330,6 +340,7 @@ class LAIRunner:
                         alleles[rec.pos] = {"ref": rec.ref, "alt": rec.alts[0]}
         except Exception:
             logger.exception("ref_allele_read_failed", chrom=chrom)
+            raise
 
         return alleles
 
@@ -429,19 +440,31 @@ class LAIRunner:
 
         return hap0, hap1
 
-    def _compute_global_ancestry(self, chrom_results: dict[int, object]) -> dict[str, dict]:
+    def _compute_global_ancestry(
+        self, chrom_results: dict[int, ChromosomeResult]
+    ) -> dict[str, dict]:
         """Compute genome-wide ancestry proportions from chromosome results."""
         from backend.analysis.gnomix_inference import CANONICAL_POPULATIONS
 
         pop_windows: dict[str, int] = defaultdict(int)
         total_windows = 0
 
+        n_pops = len(CANONICAL_POPULATIONS)
         for chr_num, result in chrom_results.items():
             for w in range(result.n_windows):
-                h0_pop = CANONICAL_POPULATIONS[int(result.hap0_ancestry[w])]
-                h1_pop = CANONICAL_POPULATIONS[int(result.hap1_ancestry[w])]
-                pop_windows[h0_pop] += 1
-                pop_windows[h1_pop] += 1
+                h0_idx = int(result.hap0_ancestry[w])
+                h1_idx = int(result.hap1_ancestry[w])
+                if not (0 <= h0_idx < n_pops) or not (0 <= h1_idx < n_pops):
+                    logger.warning(
+                        "invalid_ancestry_index",
+                        chrom=chr_num,
+                        window=w,
+                        h0=h0_idx,
+                        h1=h1_idx,
+                    )
+                    continue
+                pop_windows[CANONICAL_POPULATIONS[h0_idx]] += 1
+                pop_windows[CANONICAL_POPULATIONS[h1_idx]] += 1
                 total_windows += 2
 
         if total_windows == 0:
@@ -460,7 +483,7 @@ class LAIRunner:
         return ancestry
 
     def _build_chromosome_painting(
-        self, chrom_results: dict[int, object]
+        self, chrom_results: dict[int, ChromosomeResult]
     ) -> dict[str, list[dict]]:
         """Build chromosome painting data structure for visualization."""
         from backend.analysis.gnomix_inference import CANONICAL_POPULATIONS
@@ -471,9 +494,14 @@ class LAIRunner:
             result = chrom_results[chr_num]
             segments: list[dict] = []
 
+            n_pops = len(CANONICAL_POPULATIONS)
             for w in range(result.n_windows):
-                h0_pop = CANONICAL_POPULATIONS[int(result.hap0_ancestry[w])]
-                h1_pop = CANONICAL_POPULATIONS[int(result.hap1_ancestry[w])]
+                h0_idx = int(result.hap0_ancestry[w])
+                h1_idx = int(result.hap1_ancestry[w])
+                if not (0 <= h0_idx < n_pops) or not (0 <= h1_idx < n_pops):
+                    continue
+                h0_pop = CANONICAL_POPULATIONS[h0_idx]
+                h1_pop = CANONICAL_POPULATIONS[h1_idx]
                 start_pos, end_pos = result.window_positions[w]
 
                 segments.append(
