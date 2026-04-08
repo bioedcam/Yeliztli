@@ -319,8 +319,7 @@ def load_ancestry_bundle(bundle_path: Path | None = None) -> AncestryBundle:
     # Validate shapes
     if loadings.shape != (n_snps, n_components):
         raise ValueError(
-            f"Loadings shape {loadings.shape} does not match "
-            f"({n_snps}, {n_components})"
+            f"Loadings shape {loadings.shape} does not match ({n_snps}, {n_components})"
         )
     if means.shape[0] != n_snps:
         raise ValueError(f"Means has {means.shape[0]} entries, expected {n_snps}")
@@ -558,7 +557,7 @@ def estimate_admixture_knn(
     ref_matrix = np.array(all_coords)  # (n_ref, n_components)
     # Euclidean distances
     diffs = ref_matrix - user_pcs[np.newaxis, :]
-    distances = np.sqrt(np.sum(diffs ** 2, axis=1))
+    distances = np.sqrt(np.sum(diffs**2, axis=1))
 
     # Find k nearest
     actual_k = min(k, len(distances))
@@ -933,9 +932,7 @@ def store_ancestry_findings(
         "module": "ancestry",
         "category": "knn_admixture",
         "evidence_level": ANCESTRY_EVIDENCE_LEVEL,
-        "finding_text": (
-            f"kNN admixture estimate (k=15): {result.top_population}"
-        ),
+        "finding_text": (f"kNN admixture estimate (k=15): {result.top_population}"),
         "detail_json": json.dumps(knn_detail),
     }
 

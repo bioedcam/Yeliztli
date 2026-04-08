@@ -1159,7 +1159,7 @@ describe('DatabasesStep', () => {
       expect(screen.getByText('250.0 MB')).toBeInTheDocument()
     })
     expect(screen.getByText('500.0 MB')).toBeInTheDocument()
-    expect(screen.getByText('50.0 MB')).toBeInTheDocument()
+    expect(screen.getByText('414.4 KB')).toBeInTheDocument()
   })
 
   it('triggers download on Download All click', async () => {

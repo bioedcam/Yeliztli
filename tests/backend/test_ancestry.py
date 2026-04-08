@@ -75,10 +75,10 @@ def small_bundle() -> AncestryBundle:
     # Loadings: 4 SNPs × 2 PCs (n_snps, n_components)
     loadings = np.array(
         [
-            [0.5, 0.1],   # SNP1: PC1=0.5, PC2=0.1
+            [0.5, 0.1],  # SNP1: PC1=0.5, PC2=0.1
             [0.3, -0.4],  # SNP2: PC1=0.3, PC2=-0.4
             [-0.2, 0.3],  # SNP3: PC1=-0.2, PC2=0.3
-            [0.1, 0.5],   # SNP4: PC1=0.1, PC2=0.5
+            [0.1, 0.5],  # SNP4: PC1=0.1, PC2=0.5
         ],
         dtype=np.float64,
     )
@@ -1129,8 +1129,8 @@ class TestFractionsSumProperty:
             np.array([0.0, 0.0]),
             np.array([100.0, -100.0]),
             np.array([-50.0, 50.0]),
-            np.array([2.0, -1.0]),   # near AFR centroid
-            np.array([-1.0, 1.5]),   # near EUR centroid
+            np.array([2.0, -1.0]),  # near AFR centroid
+            np.array([-1.0, 1.5]),  # near EUR centroid
         ],
     )
     def test_nnls_fractions_sum_to_one(
