@@ -227,14 +227,10 @@ def get_ancestry_findings(
     knn_detail = json.loads(knn_row.detail_json) if knn_row and knn_row.detail_json else {}
 
     # Prefer NNLS fractions over PCA-derived fractions
-    admixture_fractions = (
-        nnls_detail.get("admixture_fractions")
-        or pca_detail.get("admixture_fractions", {})
+    admixture_fractions = nnls_detail.get("admixture_fractions") or pca_detail.get(
+        "admixture_fractions", {}
     )
-    top_population = (
-        nnls_detail.get("top_population")
-        or pca_detail.get("top_population", "")
-    )
+    top_population = nnls_detail.get("top_population") or pca_detail.get("top_population", "")
 
     # Use NNLS finding text if available, otherwise PCA
     finding_text = (nnls_row.finding_text if nnls_row else None) or pca_row.finding_text or ""
@@ -245,8 +241,7 @@ def get_ancestry_findings(
         population_distances=pca_detail.get("population_distances", {}),
         admixture_fractions=admixture_fractions,
         population_ranking=[
-            PopulationDistance(**p)
-            for p in pca_detail.get("population_ranking", [])
+            PopulationDistance(**p) for p in pca_detail.get("population_ranking", [])
         ],
         snps_used=pca_detail.get("snps_used", 0),
         snps_total=pca_detail.get("snps_total", 0),
