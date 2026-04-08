@@ -1,0 +1,529 @@
+"""LAI runner — Local Ancestry Inference pipeline for GenomeInsight.
+
+Orchestrates the full LAI pipeline:
+  1. Read genotypes from sample DB (raw_variants table)
+  2. Translate rsIDs to GRCh38 coordinates via liftover lookup
+  3. Write per-chromosome unphased VCFs (using pysam)
+  4. Phase with Beagle against the shipped reference panel
+  5. Run Gnomix inference using re-exported models (numpy + xgboost)
+  6. Aggregate into global ancestry proportions + chromosome painting
+
+Replaces ``scripts/lai_runner.py`` — subprocess calls to bcftools/bgzip/tabix
+are replaced by pysam.  Gnomix inference is handled by
+``gnomix_inference.py`` instead of calling the gnomix.py script.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import time
+from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
+import structlog
+
+if TYPE_CHECKING:
+    from backend.analysis.gnomix_inference import ChromosomeResult
+
+logger = structlog.get_logger(__name__)
+
+POPULATIONS: dict[str, dict[str, str]] = {
+    "AFR": {"display": "African", "color": "#E8A838"},
+    "AMR": {"display": "Indigenous American", "color": "#EE6677"},
+    "CSA": {"display": "Central/South Asian", "color": "#AA3377"},
+    "EAS": {"display": "East Asian", "color": "#66CCEE"},
+    "EUR": {"display": "European", "color": "#4477AA"},
+    "MID": {"display": "Middle Eastern", "color": "#228833"},
+    "OCE": {"display": "Oceanian", "color": "#CCBB44"},
+}
+
+
+@dataclass
+class LAIRunnerResult:
+    """Result from a full LAI pipeline run."""
+
+    global_ancestry: dict[str, dict]
+    chromosome_painting: dict[str, list[dict]]
+    metadata: dict
+
+
+class LAIRunner:
+    """Orchestrates local ancestry inference from sample DB genotypes."""
+
+    def __init__(self, bundle_path: str | Path, java_mem: str = "4g") -> None:
+        self.bundle = Path(bundle_path)
+        self.java_mem = java_mem
+        self._validate_bundle()
+        self.rsid_lookup = self._load_rsid_lookup()
+        logger.info("lai_runner_init", rsid_count=len(self.rsid_lookup))
+
+    def _validate_bundle(self) -> None:
+        """Check that all required bundle components exist."""
+        required = [
+            self.bundle / "beagle" / "beagle.jar",
+            self.bundle / "liftover" / "rsid_to_grch38.tsv",
+        ]
+        for chr_num in range(1, 23):
+            required.extend(
+                [
+                    self.bundle / "phasing_panel" / f"ref_panel_chr{chr_num}.vcf.gz",
+                    self.bundle / "gnomix_models" / f"chr{chr_num}" / "metadata.npz",
+                    self.bundle / "gnomix_models" / f"chr{chr_num}" / "base_coefs.npz",
+                    self.bundle / "gnomix_models" / f"chr{chr_num}" / "smoother.json",
+                    self.bundle / "genetic_maps" / f"plink.chrchr{chr_num}.GRCh38.map",
+                ]
+            )
+
+        missing = [str(p) for p in required if not p.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "LAI bundle incomplete. Missing:\n"
+                + "\n".join(missing[:10])
+                + (f"\n... and {len(missing) - 10} more" if len(missing) > 10 else "")
+            )
+        logger.info("lai_bundle_validated", path=str(self.bundle))
+
+    def _load_rsid_lookup(self) -> dict[str, tuple[str, int]]:
+        """Load rsID -> (chrom, pos_grch38) lookup table."""
+        lookup: dict[str, tuple[str, int]] = {}
+        path = self.bundle / "liftover" / "rsid_to_grch38.tsv"
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) == 3:
+                    rsid, chrom, pos = parts
+                    lookup[rsid] = (chrom, int(pos))
+        return lookup
+
+    def run(
+        self,
+        genotypes: list[dict[str, str | int]],
+        output_dir: str | Path,
+        progress_callback: Callable[[str, float], None] | None = None,
+        cleanup: bool = True,
+    ) -> LAIRunnerResult:
+        """Run the full LAI pipeline.
+
+        Args:
+            genotypes: List of dicts with keys: rsid, chrom, pos, genotype.
+                Typically read from the sample DB raw_variants table.
+            output_dir: Directory for intermediate and output files.
+            progress_callback: Optional function(message, fraction) for updates.
+            cleanup: Remove intermediate files after completion.
+
+        Returns:
+            LAIRunnerResult with global_ancestry, chromosome_painting, metadata.
+        """
+        start_time = time.time()
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        def report(msg: str, frac: float) -> None:
+            logger.info("lai_progress", message=msg, fraction=frac)
+            if progress_callback:
+                progress_callback(msg, frac)
+
+        # Step 1: Filter to autosomal diploid genotypes
+        report("Preparing genotypes...", 0.0)
+        filtered = self._filter_genotypes(genotypes)
+        report(f"Filtered {len(filtered)} autosomal diploid genotypes", 0.05)
+
+        # Step 2: Translate to GRCh38 and write per-chromosome VCFs
+        report("Writing per-chromosome VCFs...", 0.05)
+        vcf_paths = self._write_per_chrom_vcfs(filtered, out)
+        matched = sum(len(v) for v in vcf_paths.values())
+        report(
+            f"Mapped {matched} variants to GRCh38 across {len(vcf_paths)} chromosomes",
+            0.10,
+        )
+
+        # Step 3: Phase with Beagle
+        phased_paths: dict[int, Path] = {}
+        for i, chr_num in enumerate(range(1, 23), 1):
+            chrom = f"chr{chr_num}"
+            frac = 0.10 + (i / 22) * 0.60
+            report(f"Phasing {chrom}... ({i}/22)", frac)
+
+            if chrom not in vcf_paths:
+                logger.debug("lai_no_variants", chrom=chrom)
+                continue
+
+            phased = self._phase_chromosome(chr_num, vcf_paths[chrom], out)
+            if phased:
+                phased_paths[chr_num] = phased
+
+        report(f"Phasing complete: {len(phased_paths)} chromosomes", 0.70)
+
+        # Step 4: Run Gnomix inference
+        from backend.analysis.gnomix_inference import (
+            load_gnomix_model,
+            run_inference,
+        )
+
+        chrom_results: dict[int, ChromosomeResult] = {}
+        failed_chroms: list[int] = []
+        for i, chr_num in enumerate(sorted(phased_paths.keys()), 1):
+            frac = 0.70 + (i / 22) * 0.20
+            report(f"Inferring ancestry chr{chr_num}... ({i}/22)", frac)
+
+            try:
+                model_dir = self.bundle / "gnomix_models" / f"chr{chr_num}"
+                model = load_gnomix_model(model_dir)
+                hap0, hap1 = self._parse_phased_vcf(
+                    phased_paths[chr_num], model.snp_pos, model.snp_ref, model.snp_alt
+                )
+                result = run_inference(model, hap0, hap1)
+                chrom_results[chr_num] = result
+            except Exception:
+                logger.exception("gnomix_inference_failed", chrom=chr_num)
+                failed_chroms.append(chr_num)
+
+        if failed_chroms and len(failed_chroms) > len(phased_paths) // 2:
+            raise RuntimeError(f"Too many chromosomes failed inference: {failed_chroms}")
+
+        report("Ancestry inference complete", 0.90)
+
+        # Step 5: Aggregate results
+        report("Aggregating results...", 0.90)
+        global_ancestry = self._compute_global_ancestry(chrom_results)
+        chromosome_painting = self._build_chromosome_painting(chrom_results)
+
+        # Step 6: Metadata
+        elapsed = time.time() - start_time
+        metadata = {
+            "total_genotypes": len(genotypes),
+            "filtered_genotypes": len(filtered),
+            "mapped_to_grch38": matched,
+            "chromosomes_phased": len(phased_paths),
+            "chromosomes_analyzed": len(chrom_results),
+            "chromosomes_failed": failed_chroms,
+            "runtime_seconds": round(elapsed, 1),
+            "populations": list(POPULATIONS.keys()),
+        }
+
+        lai_result = LAIRunnerResult(
+            global_ancestry=global_ancestry,
+            chromosome_painting=chromosome_painting,
+            metadata=metadata,
+        )
+
+        # Save results
+        results_path = out / "lai_results.json"
+        with open(results_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "global_ancestry": lai_result.global_ancestry,
+                    "chromosome_painting": lai_result.chromosome_painting,
+                    "metadata": lai_result.metadata,
+                },
+                f,
+                indent=2,
+                default=str,
+            )
+        report(f"Results saved to {results_path}", 0.95)
+
+        if cleanup:
+            self._cleanup(out)
+
+        report("LAI analysis complete", 1.0)
+        return lai_result
+
+    def _filter_genotypes(self, genotypes: list[dict]) -> list[dict]:
+        """Filter to autosomal diploid SNP genotypes."""
+        autosomal_chroms = {str(i) for i in range(1, 23)}
+        filtered = []
+        for gt in genotypes:
+            chrom = str(gt["chrom"])
+            genotype = str(gt["genotype"])
+            if chrom not in autosomal_chroms:
+                continue
+            if genotype == "--" or len(genotype) != 2:
+                continue
+            a1, a2 = genotype[0], genotype[1]
+            if a1 not in "ACGT" or a2 not in "ACGT":
+                continue
+            filtered.append(
+                {
+                    "rsid": gt["rsid"],
+                    "chrom": chrom,
+                    "allele1": a1,
+                    "allele2": a2,
+                }
+            )
+        return filtered
+
+    def _write_per_chrom_vcfs(self, genotypes: list[dict], out: Path) -> dict[str, Path]:
+        """Translate rsIDs to GRCh38 and write per-chromosome VCFs using pysam."""
+        vcf_dir = out / "unphased_vcfs"
+        vcf_dir.mkdir(exist_ok=True)
+
+        chrom_genotypes: dict[str, list[dict]] = defaultdict(list)
+        for gt in genotypes:
+            rsid = gt["rsid"]
+            if rsid not in self.rsid_lookup:
+                continue
+            chrom, pos38 = self.rsid_lookup[rsid]
+            chrom_genotypes[chrom].append(
+                {
+                    "chrom": chrom,
+                    "pos": pos38,
+                    "rsid": rsid,
+                    "allele1": gt["allele1"],
+                    "allele2": gt["allele2"],
+                }
+            )
+
+        vcf_paths: dict[str, Path] = {}
+        for chrom in sorted(chrom_genotypes.keys(), key=lambda x: int(x.replace("chr", ""))):
+            sites = sorted(chrom_genotypes[chrom], key=lambda x: x["pos"])
+            vcf_path = vcf_dir / f"user_{chrom}.vcf.gz"
+            self._write_single_vcf(chrom, sites, vcf_path)
+            vcf_paths[chrom] = vcf_path
+
+        return vcf_paths
+
+    def _write_single_vcf(self, chrom: str, sites: list[dict], vcf_path: Path) -> None:
+        """Write a single-sample VCF for one chromosome using pysam."""
+        import pysam
+
+        ref_alleles = self._get_ref_alleles_pysam(chrom)
+
+        # Build VCF text in memory, then compress with pysam
+        lines: list[str] = [
+            "##fileformat=VCFv4.2\n",
+            f"##contig=<ID={chrom}>\n",
+            '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n',
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n",
+        ]
+
+        for site in sites:
+            pos = site["pos"]
+            rsid = site["rsid"]
+            a1, a2 = site["allele1"], site["allele2"]
+
+            if pos not in ref_alleles:
+                continue
+            ref = ref_alleles[pos]["ref"]
+            alt = ref_alleles[pos]["alt"]
+
+            gt = self._encode_genotype(a1, a2, ref, alt)
+            if gt is None:
+                continue
+
+            lines.append(f"{chrom}\t{pos}\t{rsid}\t{ref}\t{alt}\t.\tPASS\t.\tGT\t{gt}\n")
+
+        # Write compressed VCF using pysam's BGZFile
+        with pysam.BGZFile(str(vcf_path), "wb") as bgz:
+            bgz.write("".join(lines).encode())
+
+        # Index with tabix
+        pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
+
+    def _get_ref_alleles_pysam(self, chrom: str) -> dict[int, dict[str, str]]:
+        """Extract REF/ALT alleles from the reference panel using pysam."""
+        import pysam
+
+        chr_num = chrom.replace("chr", "")
+        ref_vcf_path = self.bundle / "phasing_panel" / f"ref_panel_chr{chr_num}.vcf.gz"
+
+        alleles: dict[int, dict[str, str]] = {}
+        try:
+            with pysam.VariantFile(str(ref_vcf_path)) as vcf:
+                for rec in vcf:
+                    if rec.alts:
+                        alleles[rec.pos] = {"ref": rec.ref, "alt": rec.alts[0]}
+        except Exception:
+            logger.exception("ref_allele_read_failed", chrom=chrom)
+            raise
+
+        return alleles
+
+    @staticmethod
+    def _encode_genotype(a1: str, a2: str, ref: str, alt: str) -> str | None:
+        """Encode a diploid genotype as VCF GT field.
+
+        Returns "0/0", "0/1", "1/1", or None if alleles don't match.
+        """
+        alleles = {ref: "0", alt: "1"}
+        g1 = alleles.get(a1)
+        g2 = alleles.get(a2)
+        if g1 is None or g2 is None:
+            return None
+        gt_vals = sorted([g1, g2])
+        return f"{gt_vals[0]}/{gt_vals[1]}"
+
+    def _phase_chromosome(self, chr_num: int, vcf_path: Path, out: Path) -> Path | None:
+        """Phase a single chromosome using Beagle."""
+        beagle_jar = self.bundle / "beagle" / "beagle.jar"
+        ref_panel = self.bundle / "phasing_panel" / f"ref_panel_chr{chr_num}.vcf.gz"
+        gen_map = self.bundle / "genetic_maps" / f"plink.chrchr{chr_num}.GRCh38.map"
+        out_prefix = out / "phased" / f"phased_chr{chr_num}"
+
+        (out / "phased").mkdir(exist_ok=True)
+
+        cmd = [
+            "java",
+            f"-Xmx{self.java_mem}",
+            "-jar",
+            str(beagle_jar),
+            f"gt={vcf_path}",
+            f"ref={ref_panel}",
+            f"map={gen_map}",
+            f"out={out_prefix}",
+            "impute=false",
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                logger.error("beagle_failed", chrom=chr_num, stderr=result.stderr[-500:])
+                return None
+        except subprocess.TimeoutExpired:
+            logger.error("beagle_timeout", chrom=chr_num)
+            return None
+
+        phased_vcf = Path(f"{out_prefix}.vcf.gz")
+        if phased_vcf.exists() and phased_vcf.stat().st_size > 0:
+            return phased_vcf
+        logger.error("beagle_no_output", chrom=chr_num)
+        return None
+
+    def _parse_phased_vcf(
+        self,
+        vcf_path: Path,
+        snp_pos: np.ndarray,
+        snp_ref: np.ndarray,
+        snp_alt: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Parse a phased VCF and extract haplotype vectors aligned to model SNPs.
+
+        Returns two haplotype arrays (hap0, hap1) of shape (n_snps,).
+        Missing sites are encoded as 0 (reference).
+        """
+        import pysam
+
+        n_snps = len(snp_pos)
+        hap0 = np.zeros(n_snps, dtype=np.int8)
+        hap1 = np.zeros(n_snps, dtype=np.int8)
+
+        # Build position lookup for fast matching
+        pos_to_idx: dict[int, int] = {}
+        for i, pos in enumerate(snp_pos):
+            pos_to_idx[int(pos)] = i
+
+        try:
+            with pysam.VariantFile(str(vcf_path)) as vcf:
+                for rec in vcf:
+                    idx = pos_to_idx.get(rec.pos)
+                    if idx is None:
+                        continue
+                    # Verify alleles match
+                    if not rec.alts:
+                        continue
+                    if rec.ref != str(snp_ref[idx]) or rec.alts[0] != str(snp_alt[idx]):
+                        continue
+
+                    sample = rec.samples[0]
+                    gt = sample["GT"]
+                    if gt is None or len(gt) < 2:
+                        continue
+                    hap0[idx] = int(gt[0]) if gt[0] is not None else 0
+                    hap1[idx] = int(gt[1]) if gt[1] is not None else 0
+        except Exception:
+            logger.exception("phased_vcf_parse_failed", path=str(vcf_path))
+
+        return hap0, hap1
+
+    def _compute_global_ancestry(
+        self, chrom_results: dict[int, ChromosomeResult]
+    ) -> dict[str, dict]:
+        """Compute genome-wide ancestry proportions from chromosome results."""
+        from backend.analysis.gnomix_inference import CANONICAL_POPULATIONS
+
+        pop_windows: dict[str, int] = defaultdict(int)
+        total_windows = 0
+
+        n_pops = len(CANONICAL_POPULATIONS)
+        for chr_num, result in chrom_results.items():
+            for w in range(result.n_windows):
+                h0_idx = int(result.hap0_ancestry[w])
+                h1_idx = int(result.hap1_ancestry[w])
+                if not (0 <= h0_idx < n_pops) or not (0 <= h1_idx < n_pops):
+                    logger.warning(
+                        "invalid_ancestry_index",
+                        chrom=chr_num,
+                        window=w,
+                        h0=h0_idx,
+                        h1=h1_idx,
+                    )
+                    continue
+                pop_windows[CANONICAL_POPULATIONS[h0_idx]] += 1
+                pop_windows[CANONICAL_POPULATIONS[h1_idx]] += 1
+                total_windows += 2
+
+        if total_windows == 0:
+            return {}
+
+        ancestry: dict[str, dict] = {}
+        for pop in sorted(POPULATIONS.keys()):
+            frac = pop_windows.get(pop, 0) / total_windows
+            ancestry[pop] = {
+                "fraction": round(frac, 4),
+                "percentage": round(frac * 100, 1),
+                "display_name": POPULATIONS[pop]["display"],
+                "color": POPULATIONS[pop]["color"],
+            }
+
+        return ancestry
+
+    def _build_chromosome_painting(
+        self, chrom_results: dict[int, ChromosomeResult]
+    ) -> dict[str, list[dict]]:
+        """Build chromosome painting data structure for visualization."""
+        from backend.analysis.gnomix_inference import CANONICAL_POPULATIONS
+
+        painting: dict[str, list[dict]] = {}
+
+        for chr_num in sorted(chrom_results.keys()):
+            result = chrom_results[chr_num]
+            segments: list[dict] = []
+
+            n_pops = len(CANONICAL_POPULATIONS)
+            for w in range(result.n_windows):
+                h0_idx = int(result.hap0_ancestry[w])
+                h1_idx = int(result.hap1_ancestry[w])
+                if not (0 <= h0_idx < n_pops) or not (0 <= h1_idx < n_pops):
+                    continue
+                h0_pop = CANONICAL_POPULATIONS[h0_idx]
+                h1_pop = CANONICAL_POPULATIONS[h1_idx]
+                start_pos, end_pos = result.window_positions[w]
+
+                segments.append(
+                    {
+                        "start": start_pos,
+                        "end": end_pos,
+                        "n_snps": 0,  # not tracked per-window in this implementation
+                        "hap0": h0_pop,
+                        "hap1": h1_pop,
+                        "hap0_color": POPULATIONS.get(h0_pop, {}).get("color", "#999"),
+                        "hap1_color": POPULATIONS.get(h1_pop, {}).get("color", "#999"),
+                    }
+                )
+
+            painting[f"chr{chr_num}"] = segments
+
+        return painting
+
+    def _cleanup(self, out: Path) -> None:
+        """Remove intermediate files, keep only final results."""
+        for subdir in ["unphased_vcfs", "phased"]:
+            path = out / subdir
+            if path.exists():
+                shutil.rmtree(path)
+                logger.info("lai_cleanup", path=str(path))

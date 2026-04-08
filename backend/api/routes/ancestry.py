@@ -115,6 +115,32 @@ class LAIStatusResponse(BaseModel):
     message: str
 
 
+class LAITriggerResponse(BaseModel):
+    """Response from triggering LAI analysis."""
+
+    job_id: str
+    message: str
+
+
+class LAIResultResponse(BaseModel):
+    """LAI analysis results."""
+
+    global_ancestry: dict
+    chromosome_painting: dict
+    metadata: dict
+    created_at: str
+
+
+class LAIProgressResponse(BaseModel):
+    """LAI analysis progress."""
+
+    job_id: str
+    status: str
+    progress_pct: float
+    message: str
+    error: str | None = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -439,4 +465,107 @@ def get_lai_status() -> LAIStatusResponse:
         java_available=java_available,
         lai_available=lai_available,
         message=message,
+    )
+
+
+@router.post("/lai/{sample_id}")
+def trigger_lai_analysis(sample_id: int) -> LAITriggerResponse:
+    """Trigger LAI analysis for a sample.
+
+    Creates a background job and returns the job_id for progress polling.
+    Returns 404 if LAI bundle is not downloaded, 503 if Java unavailable.
+    """
+    from backend.config import get_settings
+    from backend.db.database_registry import detect_java, validate_lai_bundle
+
+    settings = get_settings()
+    lai_dir = settings.resolved_lai_bundle_path
+
+    if not validate_lai_bundle(lai_dir):
+        raise HTTPException(
+            404,
+            detail="LAI bundle not downloaded. Download it from Settings to enable.",
+        )
+    if not detect_java():
+        raise HTTPException(
+            503,
+            detail="Java 8+ is required for LAI analysis. Please install Java.",
+        )
+
+    # Verify sample exists
+    _get_sample_engine(sample_id)
+
+    from backend.tasks.huey_tasks import create_lai_job, run_lai_task
+
+    try:
+        job_id = create_lai_job(sample_id)
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+
+    run_lai_task(sample_id, job_id)
+
+    return LAITriggerResponse(
+        job_id=job_id,
+        message="LAI analysis started. Poll /lai/progress for updates.",
+    )
+
+
+@router.get("/lai/{sample_id}/results")
+def get_lai_results(sample_id: int) -> LAIResultResponse | None:
+    """Get LAI results for a sample.
+
+    Returns the most recent LAI results, or null if LAI has not been run.
+    """
+    from backend.db.tables import lai_results
+
+    sample_engine = _get_sample_engine(sample_id)
+
+    # Ensure table exists before querying
+    lai_results.create(sample_engine, checkfirst=True)
+
+    with sample_engine.connect() as conn:
+        row = conn.execute(
+            sa.select(lai_results).order_by(lai_results.c.id.desc()).limit(1)
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return LAIResultResponse(
+        global_ancestry=json.loads(row.global_ancestry_json),
+        chromosome_painting=json.loads(row.chromosome_painting_json),
+        metadata=json.loads(row.metadata_json),
+        created_at=row.created_at.isoformat() if row.created_at else "",
+    )
+
+
+@router.get("/lai/{sample_id}/progress")
+def get_lai_progress(sample_id: int) -> LAIProgressResponse | None:
+    """Get LAI analysis progress for a sample.
+
+    Returns the most recent LAI job status, or null if no job exists.
+    """
+    from backend.db.tables import jobs
+
+    registry = get_registry()
+    with registry.reference_engine.connect() as conn:
+        row = conn.execute(
+            sa.select(jobs)
+            .where(
+                jobs.c.sample_id == sample_id,
+                jobs.c.job_type == "lai_analysis",
+            )
+            .order_by(jobs.c.created_at.desc())
+            .limit(1)
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return LAIProgressResponse(
+        job_id=row.job_id,
+        status=row.status,
+        progress_pct=row.progress_pct or 0.0,
+        message=row.message or "",
+        error=row.error,
     )

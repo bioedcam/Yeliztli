@@ -303,6 +303,123 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
         )
 
 
+# ── LAI analysis task (AMv2 Step 4) ───────────────────────────────────
+
+
+def create_lai_job(sample_id: int) -> str:
+    """Create a job record for an LAI analysis run. Returns the job_id."""
+    import sqlalchemy as sa
+
+    from backend.db.connection import get_registry
+    from backend.db.tables import jobs
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    registry = get_registry()
+
+    with registry.reference_engine.begin() as conn:
+        # Check for already-running LAI job on this sample
+        existing = conn.execute(
+            sa.select(jobs.c.job_id).where(
+                jobs.c.sample_id == sample_id,
+                jobs.c.job_type == "lai_analysis",
+                jobs.c.status.in_(["pending", "running"]),
+            )
+        ).fetchone()
+        if existing is not None:
+            raise ValueError(
+                f"LAI analysis already in progress for sample {sample_id} (job {existing.job_id})"
+            )
+
+        conn.execute(
+            jobs.insert().values(
+                job_id=job_id,
+                sample_id=sample_id,
+                job_type="lai_analysis",
+                status="pending",
+                progress_pct=0.0,
+                message="Queued for local ancestry inference",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    return job_id
+
+
+@huey.task()
+def run_lai_task(sample_id: int, job_id: str) -> None:
+    """Huey background task: run LAI analysis on a sample.
+
+    Updates the jobs table with progress so the SSE endpoint can
+    stream per-chromosome updates to the frontend.
+    """
+    from backend.analysis.lai import run_lai_analysis
+    from backend.db.connection import get_registry
+
+    registry = get_registry()
+
+    try:
+        db_path = _get_sample_db_path(sample_id)
+        sample_db_full = registry.settings.data_dir / db_path
+        sample_engine = registry.get_sample_engine(sample_db_full)
+
+        _update_job(job_id, status="running", message="Starting LAI analysis")
+
+        def progress_callback(msg: str, fraction: float) -> None:
+            if _is_job_cancelled(job_id):
+                raise AnnotationCancelledError(f"Job {job_id} cancelled by user")
+            pct = round(fraction * 100, 1)
+            _update_job(
+                job_id,
+                status="running",
+                progress_pct=pct,
+                message=msg,
+            )
+
+        result = run_lai_analysis(
+            sample_id=sample_id,
+            sample_engine=sample_engine,
+            progress_callback=progress_callback,
+        )
+
+        top_pop = ""
+        if result.global_ancestry:
+            top_pop = max(
+                result.global_ancestry,
+                key=lambda p: result.global_ancestry[p]["fraction"],
+            )
+
+        _update_job(
+            job_id,
+            status="complete",
+            progress_pct=100.0,
+            message=(
+                f"LAI complete: {result.metadata.get('chromosomes_analyzed', 0)} "
+                f"chromosomes analyzed, top ancestry: {top_pop}"
+            ),
+        )
+
+        logger.info(
+            "lai_task_complete",
+            job_id=job_id,
+            sample_id=sample_id,
+            top_population=top_pop,
+        )
+
+    except AnnotationCancelledError:
+        logger.info("lai_task_cancelled", job_id=job_id, sample_id=sample_id)
+
+    except Exception as exc:
+        logger.exception("lai_task_failed", job_id=job_id, sample_id=sample_id)
+        _update_job(
+            job_id,
+            status="failed",
+            message="LAI analysis failed",
+            error=str(exc),
+        )
+
+
 # ── UniProt pre-fetch task (P4-12c) ───────────────────────────────────
 
 

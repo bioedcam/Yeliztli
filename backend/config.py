@@ -61,6 +61,16 @@ class Settings(BaseSettings):
         description='Optional time window for large downloads, e.g. "02:00-06:00".',
     )
 
+    # --- LAI (Local Ancestry Inference) ---
+    lai_bundle_path: Path | None = Field(
+        default=None,
+        description="Path to LAI bundle directory. Defaults to data_dir / 'lai_bundle'.",
+    )
+    lai_java_mem: str = Field(
+        default="4g",
+        description="JVM memory allocation for Beagle phasing (e.g. '4g').",
+    )
+
     # --- UI preferences ---
     theme: Literal["light", "dark", "system"] = "system"
 
@@ -99,6 +109,10 @@ class Settings(BaseSettings):
     @property
     def encode_ccres_db_path(self) -> Path:
         return self.data_dir / "encode_ccres.db"
+
+    @property
+    def resolved_lai_bundle_path(self) -> Path:
+        return self.lai_bundle_path or (self.data_dir / "lai_bundle")
 
     @classmethod
     def settings_customise_sources(

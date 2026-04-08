@@ -689,6 +689,18 @@ panel_coverage = sa.Table(
     ),
 )
 
+# ── LAI Results (Local Ancestry Inference) ────────────────────────────
+
+lai_results = sa.Table(
+    "lai_results",
+    sample_metadata_obj,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("global_ancestry_json", sa.Text, nullable=False),
+    sa.Column("chromosome_painting_json", sa.Text, nullable=False),
+    sa.Column("metadata_json", sa.Text, nullable=False),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
 # ── Watched Variants (VUS tracking) ───────────────────────────────────
 
 watched_variants = sa.Table(
