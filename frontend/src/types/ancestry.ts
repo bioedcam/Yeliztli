@@ -55,3 +55,11 @@ export interface HaplogroupAssignment {
 export interface HaplogroupResponse {
   assignments: HaplogroupAssignment[]
 }
+
+/** LAI bundle and Java availability status. */
+export interface LAIStatusResponse {
+  bundle_downloaded: boolean
+  java_available: boolean
+  lai_available: boolean
+  message: string
+}

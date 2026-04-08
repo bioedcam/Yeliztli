@@ -53,6 +53,99 @@ class DatabaseInfo:
 # ── Post-download transforms ─────────────────────────────────────────
 
 
+def _extract_lai_bundle(tarball_path: Path, dest_path: Path) -> None:
+    """Extract the LAI bundle tarball into a sibling directory.
+
+    Called by the download pipeline as a ``post_download`` hook.  *dest_path*
+    is the nominal ``data_dir / "lai_bundle.tar.gz"`` — the bundle is extracted
+    into ``data_dir / "lai_bundle/"`` alongside it.
+    """
+    import tarfile
+
+    dest_dir = dest_path.parent / "lai_bundle"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    with tarfile.open(tarball_path, "r:gz") as tf:
+        # Safety: reject entries with path traversal or symlinks
+        for member in tf.getmembers():
+            if member.name.startswith("/") or ".." in member.name.split("/"):
+                logger.warning("lai_bundle_skip_unsafe_entry", name=member.name)
+                continue
+            if member.issym() or member.islnk():
+                logger.warning("lai_bundle_skip_link", name=member.name)
+                continue
+            tf.extract(member, dest_dir, filter="data")
+
+    # Validate: all 22 chromosome model directories must exist
+    missing = []
+    for chrom in range(1, 23):
+        model_dir = dest_dir / "gnomix_models" / f"chr{chrom}"
+        for expected_file in ("base_coefs.npz", "metadata.npz", "smoother.json"):
+            if not (model_dir / expected_file).exists():
+                missing.append(f"gnomix_models/chr{chrom}/{expected_file}")
+
+    if missing:
+        logger.error("lai_bundle_incomplete", missing_files=missing[:5])
+        raise ValueError(
+            f"LAI bundle extraction incomplete — missing {len(missing)} file(s): "
+            + ", ".join(missing[:5])
+        )
+
+    # Remove tarball after successful extraction
+    tarball_path.unlink(missing_ok=True)
+
+    logger.info("lai_bundle_extracted", dest=str(dest_dir))
+
+
+def detect_java() -> bool:
+    """Check whether a Java runtime (8+) is available on PATH.
+
+    Runs ``java -version`` and parses the output to verify the major
+    version is at least 8.  Returns False if Java is missing, the
+    command fails, or the version cannot be parsed.
+    """
+    import re
+    import subprocess
+
+    if shutil.which("java") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["java", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        # java -version prints to stderr
+        output = result.stderr + result.stdout
+        # Match patterns like: "1.8.0_292", "11.0.11", "17", "21.0.1"
+        match = re.search(r'"(\d+)(?:\.(\d+))?', output)
+        if not match:
+            return False
+        major = int(match.group(1))
+        # Java 8 reports as "1.8"; Java 9+ reports as "9", "11", etc.
+        if major == 1:
+            minor = int(match.group(2)) if match.group(2) else 0
+            return minor >= 8
+        return major >= 8
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def validate_lai_bundle(bundle_dir: Path) -> bool:
+    """Check that an extracted LAI bundle has the expected structure."""
+    if not bundle_dir.is_dir():
+        return False
+    for chrom in range(1, 23):
+        model_dir = bundle_dir / "gnomix_models" / f"chr{chrom}"
+        for fname in ("base_coefs.npz", "metadata.npz", "smoother.json"):
+            if not (model_dir / fname).exists():
+                return False
+    return True
+
+
 def _build_encode_ccres_db(raw_bed_path: Path, db_path: Path) -> None:
     """Transform a downloaded ENCODE cCREs BED file into a SQLite database.
 
@@ -157,6 +250,22 @@ DATABASES: dict[str, DatabaseInfo] = {
         phase=3,
         build_mode="bundled",
         target_db="standalone",
+    ),
+    "lai_bundle": DatabaseInfo(
+        name="lai_bundle",
+        display_name="LAI Bundle (Chromosome Painting)",
+        description=(
+            "Local ancestry inference models for chromosome-level ancestry painting. "
+            "Optional — requires ~500 MB and Java 8+."
+        ),
+        url="https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v1.1/genomeinsight_lai_bundle_v1.1.tar.gz",
+        filename="lai_bundle.tar.gz",
+        expected_size_bytes=523_801_111,  # ~500 MB
+        required=False,
+        phase=3,
+        build_mode="download",
+        target_db="standalone",
+        post_download=_extract_lai_bundle,
     ),
     "encode_ccres": DatabaseInfo(
         name="encode_ccres",
@@ -293,7 +402,12 @@ def get_database_status(db_info: DatabaseInfo, settings: Settings) -> dict:
 
     Returns a dict with download/presence status suitable for API responses.
     """
-    if db_info.build_mode == "bundled":
+    if db_info.name == "lai_bundle":
+        # LAI bundle: the extracted directory is the artifact, not the tarball
+        lai_dir = settings.data_dir / "lai_bundle"
+        downloaded = validate_lai_bundle(lai_dir)
+        file_size = None  # directory, not a single file
+    elif db_info.build_mode == "bundled":
         dest = db_info.dest_path(settings)
         bundled_src = BUNDLED_DIR / db_info.filename
         if not dest.exists() and bundled_src.exists():

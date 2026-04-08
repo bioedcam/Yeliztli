@@ -11,13 +11,14 @@
  */
 
 import { useSearchParams } from "react-router-dom"
-import { Globe, Loader2 } from "lucide-react"
+import { Download, Globe, Info, Loader2 } from "lucide-react"
 import PageLoading from "@/components/ui/PageLoading"
 import PageError from "@/components/ui/PageError"
 import PageEmpty from "@/components/ui/PageEmpty"
 import { cn } from "@/lib/utils"
 import { parseSampleId } from "@/lib/format"
-import { useAncestryFindings, useHaplogroups, usePCACoordinates } from "@/api/ancestry"
+import { useAncestryFindings, useHaplogroups, useLAIStatus, usePCACoordinates } from "@/api/ancestry"
+import { useTriggerDownload } from "@/api/setup"
 import AncestryResultCard from "@/components/ancestry/AncestryResultCard"
 import AdmixtureBar from "@/components/ancestry/AdmixtureBar"
 import PCAScatter from "@/components/ancestry/PCAScatter"
@@ -30,6 +31,8 @@ export default function AncestryView() {
   const findingsQuery = useAncestryFindings(sampleId)
   const pcaQuery = usePCACoordinates(sampleId)
   const haplogroupQuery = useHaplogroups(sampleId)
+  const laiStatusQuery = useLAIStatus()
+  const triggerDownload = useTriggerDownload()
 
   // No sample selected
   if (sampleId == null) {
@@ -129,6 +132,59 @@ export default function AncestryView() {
                 <div className="text-sm text-muted-foreground text-center py-8">
                   PCA coordinates not available.
                 </div>
+              )}
+            </div>
+          </section>
+
+          {/* Chromosome Painting Section */}
+          <section aria-label="Chromosome painting" className="mt-8">
+            <div className="rounded-lg border bg-card p-5">
+              <h2 className="text-lg font-semibold mb-3">Chromosome Painting</h2>
+              {laiStatusQuery.isLoading && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking availability...
+                </div>
+              )}
+              {laiStatusQuery.isError && (
+                <p className="text-sm text-destructive">
+                  Failed to check LAI availability.
+                </p>
+              )}
+              {laiStatusQuery.data && !laiStatusQuery.data.bundle_downloaded && (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Enables chromosome-level ancestry painting (15-30 min analysis). Requires Java 8+.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={triggerDownload.isPending}
+                      onClick={() => triggerDownload.mutate(["lai_bundle"])}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium",
+                        "bg-primary text-primary-foreground hover:bg-primary/90 transition-colors",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                      )}
+                    >
+                      <Download className="h-4 w-4" />
+                      {triggerDownload.isPending ? "Starting..." : "Download LAI Bundle (~500 MB)"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {laiStatusQuery.data && laiStatusQuery.data.bundle_downloaded && !laiStatusQuery.data.java_available && (
+                <div className="flex items-start gap-2 rounded-md bg-amber-500/10 border border-amber-500/30 px-4 py-3">
+                  <Info className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-amber-700 dark:text-amber-400">
+                    Java 8+ is required for chromosome-level ancestry analysis. Please install Java and restart.
+                  </p>
+                </div>
+              )}
+              {laiStatusQuery.data && laiStatusQuery.data.lai_available && (
+                <p className="text-sm text-muted-foreground">
+                  Chromosome painting results will appear here after running the deep ancestry analysis.
+                </p>
               )}
             </div>
           </section>

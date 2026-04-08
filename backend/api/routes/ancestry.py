@@ -106,6 +106,15 @@ class HaplogroupRunResponse(BaseModel):
     assignments: list[HaplogroupAssignmentResponse]
 
 
+class LAIStatusResponse(BaseModel):
+    """LAI bundle and Java availability status."""
+
+    bundle_downloaded: bool
+    java_available: bool
+    lai_available: bool
+    message: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -389,3 +398,45 @@ def run_haplogroup(
         )
 
     return HaplogroupRunResponse(assignments=assignments)
+
+
+# ── LAI status endpoint ────────────────────────────────────────────────────
+
+
+@router.get("/lai/status")
+def get_lai_status() -> LAIStatusResponse:
+    """Check LAI bundle and Java availability.
+
+    Returns whether the LAI bundle is downloaded and extracted,
+    whether Java is available, and whether LAI analysis can be run.
+    """
+    from backend.config import get_settings
+    from backend.db.database_registry import detect_java, validate_lai_bundle
+
+    settings = get_settings()
+    lai_dir = settings.data_dir / "lai_bundle"
+    bundle_downloaded = validate_lai_bundle(lai_dir)
+    java_available = detect_java()
+    lai_available = bundle_downloaded and java_available
+
+    if lai_available:
+        message = "Chromosome painting is available."
+    elif not bundle_downloaded and not java_available:
+        message = (
+            "LAI bundle not downloaded and Java not found. "
+            "Download the LAI bundle (~500 MB) and install Java 8+ to enable chromosome painting."
+        )
+    elif not bundle_downloaded:
+        message = "LAI bundle not downloaded. Download it (~500 MB) to enable chromosome painting."
+    else:
+        message = (
+            "Java 8+ is required for chromosome-level ancestry analysis. "
+            "Please install Java and restart."
+        )
+
+    return LAIStatusResponse(
+        bundle_downloaded=bundle_downloaded,
+        java_available=java_available,
+        lai_available=lai_available,
+        message=message,
+    )

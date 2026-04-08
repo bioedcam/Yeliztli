@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import type {
   AncestryFindingResponse,
   HaplogroupResponse,
+  LAIStatusResponse,
   PCACoordinatesResponse,
 } from "@/types/ancestry"
 
@@ -70,5 +71,25 @@ export function useHaplogroups(sampleId: number | null) {
     },
     enabled: sampleId != null,
     staleTime: Infinity,
+  })
+}
+
+/**
+ * LAI bundle and Java availability status.
+ * Used to show/hide chromosome painting section on AncestryView.
+ * Cached with staleTime of 1 hour since availability changes infrequently.
+ */
+export function useLAIStatus() {
+  return useQuery({
+    queryKey: ["lai-status"],
+    queryFn: async (): Promise<LAIStatusResponse> => {
+      const res = await fetch("/api/analysis/ancestry/lai/status")
+      if (!res.ok) {
+        const text = await res.text().catch(() => "")
+        throw new Error(`LAI status failed: ${res.status}${text ? ` - ${text}` : ""}`)
+      }
+      return res.json()
+    },
+    staleTime: 3_600_000, // 1 hour
   })
 }
