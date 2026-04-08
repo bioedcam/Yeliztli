@@ -303,8 +303,11 @@ describe("PCAScatter", () => {
     render(<PCAScatter pcaData={PCA_COORDINATES} />)
     const ySelect = screen.getByTestId("pc-y-select")
     fireEvent.change(ySelect, { target: { value: "2" } })
-    // After changing Y to PC3, the chart should re-render
-    expect(screen.getByTestId("plotly-chart")).toBeInTheDocument()
+    // User trace should now use PC3 (index 2) for y-axis
+    const chart = screen.getByTestId("plotly-chart")
+    const traces = JSON.parse(chart.getAttribute("data-traces") ?? "[]")
+    const userTrace = traces.find((t: { name: string }) => t.name === "You")
+    expect(userTrace?.y[0]).toBe(PCA_COORDINATES.user[2])
   })
 })
 

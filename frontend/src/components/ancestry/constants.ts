@@ -22,7 +22,7 @@ export const POPULATION_COLORS: Record<string, string> = {
   CSA: "#8B5CF6",  // violet-500
   EAS: "#10B981",  // emerald-500
   EUR: "#3B82F6",  // blue-500
-  MID: "#F97316",  // orange-500
+  MID: "#14B8A6",  // teal-500
   OCE: "#EC4899",  // pink-500
 }
 

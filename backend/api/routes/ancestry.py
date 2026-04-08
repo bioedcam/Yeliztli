@@ -257,7 +257,7 @@ def get_ancestry_findings(
         finding_text=finding_text,
         confidence=nnls_detail.get("confidence", 0.0),
         missing_aim_rate=pca_detail.get("missing_aim_rate", 0.0),
-        admixture_method=nnls_detail.get("admixture_method", "nnls"),
+        admixture_method=nnls_detail.get("admixture_method") or ("nnls" if nnls_row else "idw"),
         n_pcs_used=pca_detail.get("n_pcs_used", 0),
         nnls_fractions=nnls_detail.get("admixture_fractions"),
         knn_fractions=knn_detail.get("admixture_fractions"),

@@ -194,9 +194,12 @@ export default function AncestryView() {
                   </p>
                   <button
                     type="button"
+                    disabled
+                    title="Chromosome painting will be available in a future update"
                     className={cn(
                       "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium",
                       "bg-primary text-primary-foreground hover:bg-primary/90 transition-colors",
+                      "disabled:opacity-50 disabled:cursor-not-allowed",
                     )}
                   >
                     <Play className="h-4 w-4" />
