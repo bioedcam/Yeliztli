@@ -1047,8 +1047,8 @@ def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
         Inferred top ancestry code (e.g. "EUR", "EAS", "AFR") or None.
     """
     # Try nnls_admixture first (primary), then pca_projection, then any ancestry finding
-    for category in ("nnls_admixture", "pca_projection", None):
-        with sample_engine.connect() as conn:
+    with sample_engine.connect() as conn:
+        for category in ("nnls_admixture", "pca_projection", None):
             stmt = (
                 sa.select(findings.c.detail_json)
                 .where(findings.c.module == "ancestry")
@@ -1059,14 +1059,14 @@ def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
                 stmt = stmt.where(findings.c.category == category)
             row = conn.execute(stmt).fetchone()
 
-        if row is not None and row.detail_json:
-            try:
-                detail = json.loads(row.detail_json)
-                result = detail.get("top_population") or detail.get("inferred_ancestry")
-                if result:
-                    return result
-            except (ValueError, TypeError):
-                continue
+            if row is not None and row.detail_json:
+                try:
+                    detail = json.loads(row.detail_json)
+                    result = detail.get("top_population") or detail.get("inferred_ancestry")
+                    if result:
+                        return result
+                except (ValueError, TypeError):
+                    continue
 
     return None
 

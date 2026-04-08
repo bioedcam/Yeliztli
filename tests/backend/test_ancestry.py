@@ -1002,8 +1002,8 @@ class TestComputeMissingAIMRate:
         rate = compute_missing_aim_rate({}, small_bundle)
         assert rate == 1.0
 
-    def test_ten_percent_removed(self, small_bundle: AncestryBundle) -> None:
-        # 4 SNPs, remove 1 → 25% missing (can't get exactly 10% with 4 SNPs)
+    def test_partial_missing_rate(self, small_bundle: AncestryBundle) -> None:
+        # 4 SNPs, remove 1 → 25% missing
         genotype_map = {snp.rsid: "AG" for snp in small_bundle.snps[:-1]}
         rate = compute_missing_aim_rate(genotype_map, small_bundle)
         assert rate == 0.25
@@ -1194,8 +1194,6 @@ class TestPRSIntegration:
         small_bundle: AncestryBundle,
         eur_sample: sa.Engine,
     ) -> None:
-        from backend.analysis.ancestry import get_inferred_ancestry
-
         # Before ancestry inference → None
         assert get_inferred_ancestry(eur_sample) is None
 

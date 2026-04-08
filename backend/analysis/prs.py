@@ -434,8 +434,8 @@ def compute_prs_bootstrap_ci(
 
 # ── Ancestry lookup ────────────────────────────────────────────────────
 
-# Canonical implementation is in backend.analysis.ancestry.
-# Re-export here for backward compatibility with existing callers.
+# NOTE: get_inferred_ancestry was moved to backend.analysis.ancestry.
+# Callers must import from there directly.
 
 # ── Ancestry mismatch warning ───────────────────────────────────────────
 
