@@ -1,4 +1,4 @@
-/** Tests for the Ancestry UI (P3-27, P3-34, AMv2 Step 5). */
+/** Tests for the Ancestry UI (P3-27, P3-34, AMv2 Steps 5-6). */
 
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "./test-utils"
@@ -7,9 +7,13 @@ import AdmixtureBar from "@/components/ancestry/AdmixtureBar"
 import PCAScatter from "@/components/ancestry/PCAScatter"
 import HaplogroupCard from "@/components/ancestry/HaplogroupCard"
 import AnalysisDetails from "@/components/ancestry/AnalysisDetails"
+import ChromosomePainting from "@/components/charts/ChromosomePainting"
+import AncestryPieChart from "@/components/charts/AncestryPieChart"
 import type {
   AncestryFindingResponse,
+  ChromosomePaintingSegment,
   HaplogroupAssignment,
+  LAIGlobalAncestryEntry,
   PCACoordinatesResponse,
 } from "@/types/ancestry"
 
@@ -478,5 +482,114 @@ describe("HaplogroupCard", () => {
   it("has accessible card test id", () => {
     render(<HaplogroupCard assignments={[MT_ASSIGNMENT]} />)
     expect(screen.getByTestId("haplogroup-card")).toBeInTheDocument()
+  })
+})
+
+// ── ChromosomePainting tests (AMv2 Step 6) ──────────────────────────
+
+const PAINTING_SEGMENT: ChromosomePaintingSegment = {
+  start: 10_000_000,
+  end: 50_000_000,
+  n_snps: 0,
+  hap0: "EUR",
+  hap1: "AFR",
+  hap0_color: "#3B82F6",
+  hap1_color: "#F59E0B",
+}
+
+const PAINTING_SEGMENT_2: ChromosomePaintingSegment = {
+  start: 50_000_000,
+  end: 100_000_000,
+  n_snps: 0,
+  hap0: "EAS",
+  hap1: "EUR",
+  hap0_color: "#10B981",
+  hap1_color: "#3B82F6",
+}
+
+const SAMPLE_PAINTING: Record<string, ChromosomePaintingSegment[]> = Object.fromEntries(
+  Array.from({ length: 22 }, (_, i) => [
+    `chr${i + 1}`,
+    [PAINTING_SEGMENT, PAINTING_SEGMENT_2],
+  ]),
+)
+
+describe("ChromosomePainting", () => {
+  it("renders the painting container", () => {
+    render(<ChromosomePainting painting={SAMPLE_PAINTING} />)
+    expect(screen.getByTestId("chromosome-painting")).toBeInTheDocument()
+  })
+
+  it("renders 22 chromosomes", () => {
+    render(<ChromosomePainting painting={SAMPLE_PAINTING} />)
+    for (let i = 1; i <= 22; i++) {
+      expect(screen.getByTestId(`painting-chr${i}`)).toBeInTheDocument()
+    }
+  })
+
+  it("renders population legend", () => {
+    render(<ChromosomePainting painting={SAMPLE_PAINTING} />)
+    const legend = screen.getByTestId("painting-legend")
+    expect(legend).toBeInTheDocument()
+    expect(legend.textContent).toContain("European")
+    expect(legend.textContent).toContain("African")
+    expect(legend.textContent).toContain("East Asian")
+  })
+
+  it("handles empty painting data", () => {
+    render(<ChromosomePainting painting={{}} />)
+    expect(screen.getByTestId("chromosome-painting")).toBeInTheDocument()
+    // Should still render 22 empty chromosome tracks
+    expect(screen.getByTestId("painting-chr1")).toBeInTheDocument()
+  })
+
+  it("renders chromosome labels", () => {
+    render(<ChromosomePainting painting={SAMPLE_PAINTING} />)
+    const svg = screen.getByTestId("chromosome-painting").querySelector("svg")
+    expect(svg).toBeInTheDocument()
+    // Check for label text elements
+    const textElements = svg!.querySelectorAll("text")
+    expect(textElements.length).toBe(22) // One label per chromosome
+  })
+})
+
+// ── AncestryPieChart tests (AMv2 Step 6) ────────────────────────────
+
+const SAMPLE_GLOBAL_ANCESTRY: Record<string, LAIGlobalAncestryEntry> = {
+  EUR: { fraction: 0.75, percentage: 75.0, display_name: "European", color: "#3B82F6" },
+  AMR: { fraction: 0.15, percentage: 15.0, display_name: "Admixed American", color: "#EF4444" },
+  AFR: { fraction: 0.08, percentage: 8.0, display_name: "African", color: "#F59E0B" },
+  EAS: { fraction: 0.02, percentage: 2.0, display_name: "East Asian", color: "#10B981" },
+  CSA: { fraction: 0.0, percentage: 0.0, display_name: "Central/South Asian", color: "#8B5CF6" },
+  MID: { fraction: 0.0, percentage: 0.0, display_name: "Middle Eastern", color: "#14B8A6" },
+  OCE: { fraction: 0.0, percentage: 0.0, display_name: "Oceanian", color: "#EC4899" },
+}
+
+describe("AncestryPieChart", () => {
+  it("renders the chart container", () => {
+    render(<AncestryPieChart globalAncestry={SAMPLE_GLOBAL_ANCESTRY} />)
+    expect(screen.getByTestId("ancestry-pie-chart")).toBeInTheDocument()
+  })
+
+  it("renders plotly chart with populations above threshold", () => {
+    render(<AncestryPieChart globalAncestry={SAMPLE_GLOBAL_ANCESTRY} />)
+    const chart = screen.getByTestId("plotly-chart")
+    const traces = JSON.parse(chart.getAttribute("data-traces") ?? "[]")
+    expect(traces).toHaveLength(1)
+    // Should include EUR, AMR, AFR, EAS (>= 0.1%) but not CSA, MID, OCE (0%)
+    expect(traces[0].labels).toEqual(["African", "Admixed American", "East Asian", "European"])
+  })
+
+  it("shows empty state when all fractions near zero", () => {
+    const empty: Record<string, LAIGlobalAncestryEntry> = {
+      EUR: { fraction: 0.0, percentage: 0.0, display_name: "European", color: "#3B82F6" },
+    }
+    render(<AncestryPieChart globalAncestry={empty} />)
+    expect(screen.getByText("No LAI ancestry data available.")).toBeInTheDocument()
+  })
+
+  it("shows chromosome painting label", () => {
+    render(<AncestryPieChart globalAncestry={SAMPLE_GLOBAL_ANCESTRY} />)
+    expect(screen.getByText("Based on chromosome painting analysis")).toBeInTheDocument()
   })
 })

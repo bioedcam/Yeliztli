@@ -75,3 +75,45 @@ export interface LAIStatusResponse {
   lai_available: boolean
   message: string
 }
+
+/** Response from triggering LAI analysis. */
+export interface LAITriggerResponse {
+  job_id: string
+  message: string
+}
+
+/** Per-population global ancestry from LAI. */
+export interface LAIGlobalAncestryEntry {
+  fraction: number
+  percentage: number
+  display_name: string
+  color: string
+}
+
+/** A single segment in chromosome painting (one window). */
+export interface ChromosomePaintingSegment {
+  start: number
+  end: number
+  n_snps: number
+  hap0: string
+  hap1: string
+  hap0_color: string
+  hap1_color: string
+}
+
+/** LAI analysis results. */
+export interface LAIResultResponse {
+  global_ancestry: Record<string, LAIGlobalAncestryEntry>
+  chromosome_painting: Record<string, ChromosomePaintingSegment[]>
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+/** LAI analysis progress. */
+export interface LAIProgressResponse {
+  job_id: string
+  status: string
+  progress_pct: number
+  message: string
+  error: string | null
+}
