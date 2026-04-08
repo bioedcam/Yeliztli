@@ -46,7 +46,7 @@ BUNDLE_PATH = (
     / "backend"
     / "data"
     / "panels"
-    / "ancestry_pca_bundle.json"
+    / "ancestry_pca_bundle.npz"
 )
 
 
@@ -66,14 +66,20 @@ def small_bundle() -> AncestryBundle:
         AncestryAIM(rsid="rs4", chrom="4", pos=400, ref="T", alt="C", ref_freq=0.6),
     ]
 
-    # Loadings: 2 PCs × 4 SNPs
+    # Loadings: 4 SNPs × 2 PCs (n_snps, n_components)
     loadings = np.array(
         [
-            [0.5, 0.3, -0.2, 0.1],  # PC1
-            [0.1, -0.4, 0.3, 0.5],  # PC2
+            [0.5, 0.1],   # SNP1: PC1=0.5, PC2=0.1
+            [0.3, -0.4],  # SNP2: PC1=0.3, PC2=-0.4
+            [-0.2, 0.3],  # SNP3: PC1=-0.2, PC2=0.3
+            [0.1, 0.5],   # SNP4: PC1=0.1, PC2=0.5
         ],
         dtype=np.float64,
     )
+
+    # Per-AIM means and stds (derived from ref_freq: mean = 2 * alt_freq)
+    means = np.array([0.6, 1.0, 1.4, 0.8], dtype=np.float64)
+    stds = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float64)
 
     centroids = {
         "AFR": np.array([2.0, -1.0], dtype=np.float64),
@@ -89,14 +95,21 @@ def small_bundle() -> AncestryBundle:
 
     return AncestryBundle(
         version="test",
-        build="GRCh37",
+        build="GRCh38",
         n_components=2,
         populations=["AFR", "EUR", "EAS"],
         population_labels={"AFR": "African", "EUR": "European", "EAS": "East Asian"},
         snps=snps,
         loadings=loadings,
+        means=means,
+        stds=stds,
         reference_centroids=centroids,
         reference_samples=reference_samples,
+        eigenvalues=np.array([10.0, 5.0], dtype=np.float64),
+        n_significant_pcs=2,
+        tw_pvalues=np.array([0.001] * 20, dtype=np.float64),
+        n_total_snps=1000,
+        n_selected_aims=4,
     )
 
 
@@ -163,44 +176,70 @@ def partial_sample(sample_engine: sa.Engine) -> sa.Engine:
 
 
 class TestLoadAncestryBundle:
-    """Test ancestry PCA bundle loading."""
+    """Test ancestry PCA bundle loading from NPZ."""
 
-    def test_loads_from_json(self, bundle: AncestryBundle) -> None:
-        assert bundle.snp_count > 0
-        assert bundle.n_components == 6
-        assert len(bundle.populations) == 6
+    def test_loads_from_npz(self, bundle: AncestryBundle) -> None:
+        assert bundle.snp_count == 5000
+        assert bundle.n_components == 8
+        assert len(bundle.populations) == 7
 
     def test_loadings_shape(self, bundle: AncestryBundle) -> None:
-        assert bundle.loadings.shape == (bundle.n_components, bundle.snp_count)
+        assert bundle.loadings.shape == (bundle.snp_count, bundle.n_components)
+
+    def test_means_and_stds_shape(self, bundle: AncestryBundle) -> None:
+        assert bundle.means.shape == (bundle.snp_count,)
+        assert bundle.stds.shape == (bundle.snp_count,)
 
     def test_centroids_all_populations(self, bundle: AncestryBundle) -> None:
         for pop in bundle.populations:
             assert pop in bundle.reference_centroids
             assert len(bundle.reference_centroids[pop]) == bundle.n_components
 
-    def test_snps_have_valid_ref_freq(self, bundle: AncestryBundle) -> None:
+    def test_snps_have_valid_rsids(self, bundle: AncestryBundle) -> None:
         for snp in bundle.snps:
-            assert 0.0 < snp.ref_freq < 1.0, f"{snp.rsid} ref_freq={snp.ref_freq}"
+            assert snp.rsid.startswith(("rs", "i")), f"Invalid rsid: {snp.rsid}"
 
     def test_rsid_set(self, bundle: AncestryBundle) -> None:
         rsids = bundle.rsid_set()
         assert len(rsids) == bundle.snp_count
-        assert all(r.startswith("rs") for r in rsids)
+        assert all(r.startswith(("rs", "i")) for r in rsids)
 
     def test_rsid_to_index(self, bundle: AncestryBundle) -> None:
         idx_map = bundle.rsid_to_index()
         assert len(idx_map) == bundle.snp_count
-        # First and last SNP should have correct indices
         assert idx_map[bundle.snps[0].rsid] == 0
         assert idx_map[bundle.snps[-1].rsid] == bundle.snp_count - 1
 
     def test_file_not_found_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
-            load_ancestry_bundle(Path("/nonexistent/bundle.json"))
+            load_ancestry_bundle(Path("/nonexistent/bundle.npz"))
 
     def test_population_labels(self, bundle: AncestryBundle) -> None:
         assert "EUR" in bundle.population_labels
         assert "AFR" in bundle.population_labels
+        assert "CSA" in bundle.population_labels
+        assert "MID" in bundle.population_labels
+
+    def test_seven_populations(self, bundle: AncestryBundle) -> None:
+        expected = {"AFR", "AMR", "CSA", "EAS", "EUR", "MID", "OCE"}
+        assert set(bundle.populations) == expected
+
+    def test_n_significant_pcs(self, bundle: AncestryBundle) -> None:
+        assert bundle.n_significant_pcs == 8
+
+    def test_tw_pvalues(self, bundle: AncestryBundle) -> None:
+        assert len(bundle.tw_pvalues) == 20
+
+    def test_eigenvalues(self, bundle: AncestryBundle) -> None:
+        assert len(bundle.eigenvalues) == bundle.n_components
+        # Eigenvalues should be in descending order
+        for i in range(len(bundle.eigenvalues) - 1):
+            assert bundle.eigenvalues[i] >= bundle.eigenvalues[i + 1]
+
+    def test_reference_samples_all_populations(self, bundle: AncestryBundle) -> None:
+        for pop in bundle.populations:
+            assert pop in bundle.reference_samples
+            assert len(bundle.reference_samples[pop]) > 0
 
 
 # ── Genotype encoding tests ──────────────────────────────────────────────
@@ -268,18 +307,14 @@ class TestProjectOntoPCA:
         np.testing.assert_array_equal(pc_scores, np.zeros(2))
 
     def test_projection_is_linear(self, small_bundle: AncestryBundle) -> None:
-        """Verify projection = loadings @ centered."""
+        """Verify projection = standardized @ loadings."""
         genotype_map = {"rs1": "GG", "rs2": "TT", "rs3": "AA", "rs4": "CC"}
         pc_scores, _ = _project_onto_pca(small_bundle, genotype_map)
 
         # Manual computation
-        alt_freqs = [0.3, 0.5, 0.7, 0.4]  # 1 - ref_freq
-        dosages = [2.0, 2.0, 2.0, 2.0]  # all homozygous alt
-        centered = np.array(
-            [d - 2.0 * f for d, f in zip(dosages, alt_freqs)],
-            dtype=np.float64,
-        )
-        expected = small_bundle.loadings @ centered
+        dosages = np.array([2.0, 2.0, 2.0, 2.0])  # all homozygous alt
+        standardized = (dosages - small_bundle.means) / small_bundle.stds
+        expected = standardized @ small_bundle.loadings
         np.testing.assert_array_almost_equal(pc_scores, expected)
 
 
@@ -815,7 +850,7 @@ class TestGetPCACoordinates:
         bundle: AncestryBundle,
         sample_engine: sa.Engine,
     ) -> None:
-        """PCA coordinates work with the full bundle (6 PCs, 128 SNPs)."""
+        """PCA coordinates work with the full bundle (8 PCs, 5000 AIMs)."""
         # Insert some genotypes
         genotypes = [
             {"rsid": s.rsid, "chrom": s.chrom, "pos": s.pos, "genotype": s.ref * 2}
@@ -824,11 +859,11 @@ class TestGetPCACoordinates:
         _insert_raw_genotypes(sample_engine, genotypes)
         result = infer_ancestry(bundle, sample_engine)
         coords = get_pca_coordinates(bundle, result)
-        assert coords.n_components == 6
-        assert len(coords.pc_labels) == 6
-        assert len(coords.user) == 6
-        # Reference samples should have all 6 populations
-        assert len(coords.reference_samples) == 6
+        assert coords.n_components == 8
+        assert len(coords.pc_labels) == 8
+        assert len(coords.user) == 8
+        # Reference samples should have all 7 populations
+        assert len(coords.reference_samples) == 7
         for pop in bundle.populations:
             assert pop in coords.reference_samples
             assert len(coords.reference_samples[pop]) > 0

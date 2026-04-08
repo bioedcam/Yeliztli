@@ -146,10 +146,13 @@ DATABASES: dict[str, DatabaseInfo] = {
     "ancestry_pca": DatabaseInfo(
         name="ancestry_pca",
         display_name="Ancestry PCA Bundle",
-        description="Pre-computed PCA loadings and reference population coordinates",
+        description=(
+            "Pre-computed PCA loadings and reference population coordinates"
+            " (5,000 AIMs, 7 populations)"
+        ),
         url="",
-        filename="ancestry_pca.db",
-        expected_size_bytes=50_000_000,  # ~50 MB
+        filename="ancestry_pca_bundle.npz",
+        expected_size_bytes=414_432,  # ~414 KB
         required=False,
         phase=3,
         build_mode="bundled",
