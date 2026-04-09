@@ -69,6 +69,8 @@ const ANCESTRY_FINDING: AncestryFindingResponse = {
   n_pcs_used: 8,
   nnls_fractions: { EUR: 0.82, AMR: 0.11, EAS: 0.04, CSA: 0.02, AFR: 0.01, MID: 0.00, OCE: 0.00 },
   knn_fractions: { EUR: 0.80, AMR: 0.13, EAS: 0.04, CSA: 0.02, AFR: 0.01, MID: 0.00, OCE: 0.00 },
+  nnls_ci_low: { EUR: 0.78, AMR: 0.08, EAS: 0.02, CSA: 0.00, AFR: 0.00, MID: 0.00, OCE: 0.00 },
+  nnls_ci_high: { EUR: 0.86, AMR: 0.14, EAS: 0.06, CSA: 0.04, AFR: 0.02, MID: 0.01, OCE: 0.01 },
 }
 
 const LOW_COVERAGE_FINDING: AncestryFindingResponse = {

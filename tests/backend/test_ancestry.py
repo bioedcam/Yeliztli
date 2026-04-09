@@ -578,12 +578,12 @@ class TestInferAncestry:
         result = infer_ancestry(small_bundle, sample_engine)
         assert result.snps_used == 4
 
-    def test_projection_under_1_second(
+    def test_projection_under_2_seconds(
         self,
         bundle: AncestryBundle,
         sample_engine: sa.Engine,
     ) -> None:
-        """Performance: PCA projection should complete in < 1 second."""
+        """Performance: Full ancestry inference (projection + bootstrap CI) < 2s."""
         # Insert some raw variants that match bundle SNPs
         bundle_snps = list(bundle.snps)[:50]
         genotypes = [
@@ -595,7 +595,7 @@ class TestInferAncestry:
         t0 = time.perf_counter()
         infer_ancestry(bundle, sample_engine)
         elapsed = time.perf_counter() - t0
-        assert elapsed < 1.0, f"Projection took {elapsed:.3f}s, expected < 1s"
+        assert elapsed < 2.0, f"Inference took {elapsed:.3f}s, expected < 2s"
 
 
 # ── T3-25: EUR sample classification ────────────────────────────────────
