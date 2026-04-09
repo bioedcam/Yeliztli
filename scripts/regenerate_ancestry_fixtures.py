@@ -17,7 +17,9 @@ from pathlib import Path
 
 import numpy as np
 
-OUTPUT_PATH = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "ancestry_test_fixture.npz"
+OUTPUT_PATH = (
+    Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "ancestry_test_fixture.npz"
+)
 
 # Parameters
 N_AIMS = 100
@@ -39,11 +41,14 @@ means = rng.uniform(0.1, 1.8, N_AIMS).astype(np.float64)
 stds = rng.uniform(0.3, 0.9, N_AIMS).astype(np.float64)
 
 # Generate well-separated population centroids
-population_centroids = np.array([
-    [5.0, 0.0, 0.0, 0.0],   # AFR
-    [0.0, 5.0, 0.0, 0.0],   # EUR
-    [-5.0, -5.0, 0.0, 0.0], # EAS
-], dtype=np.float64)
+population_centroids = np.array(
+    [
+        [5.0, 0.0, 0.0, 0.0],  # AFR
+        [0.0, 5.0, 0.0, 0.0],  # EUR
+        [-5.0, -5.0, 0.0, 0.0],  # EAS
+    ],
+    dtype=np.float64,
+)
 
 # Generate reference samples clustered around centroids
 ref_pca_coords = np.zeros((N_REF, N_PCS), dtype=np.float64)
@@ -53,7 +58,8 @@ ref_sample_ids = np.empty(N_REF, dtype="U20")
 for i, pop in enumerate(POPULATIONS):
     start = i * N_REF_PER_POP
     end = start + N_REF_PER_POP
-    ref_pca_coords[start:end] = population_centroids[i] + rng.standard_normal((N_REF_PER_POP, N_PCS)) * 0.5
+    noise = rng.standard_normal((N_REF_PER_POP, N_PCS)) * 0.5
+    ref_pca_coords[start:end] = population_centroids[i] + noise
     ref_labels[start:end] = pop
     for j in range(N_REF_PER_POP):
         ref_sample_ids[start + j] = f"{pop}_{j:03d}"
@@ -70,10 +76,12 @@ aim_a2 = np.array(["A"] * N_AIMS)  # ref
 eigenvalues = np.array([100.0, 50.0, 20.0, 10.0], dtype=np.float64)
 
 # Tracy-Widom p-values (first 4 significant, rest not)
-tw_pvalues = np.concatenate([
-    np.array([1e-20, 1e-15, 1e-8, 1e-4]),
-    np.ones(16) * 0.5,
-]).astype(np.float64)
+tw_pvalues = np.concatenate(
+    [
+        np.array([1e-20, 1e-15, 1e-8, 1e-4]),
+        np.ones(16) * 0.5,
+    ]
+).astype(np.float64)
 
 np.savez_compressed(
     OUTPUT_PATH,
