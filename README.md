@@ -39,6 +39,16 @@ For a walkthrough of all features, see the [Usage Guide](docs/usage-guide.md).
 - Python 3.12+
 - Node 20+ (for frontend)
 - ~2 GB disk space (application + reference databases)
+- Java 8+ (optional, for chromosome-level ancestry painting via Beagle phasing)
+
+### Ancestry Module
+
+GenomeInsight includes a two-tier ancestry analysis system:
+
+- **Tier 1 (Instant):** 5,000-AIM PCA projection with NNLS admixture estimation across 7 superpopulations (AFR, AMR, CSA, EAS, EUR, MID, OCE). Runs in under 1 second. Always available.
+- **Tier 2 (Deep Analysis):** Local ancestry inference via Gnomix models with Beagle phasing. Provides chromosome-level ancestry painting. Runs in 15–30 minutes. Requires an optional LAI bundle download (~500 MB) and Java 8+.
+
+The LAI bundle can be downloaded during initial setup or later from the Ancestry page. See [Ancestry Module Documentation](docs/ANCESTRY_MODULE.md) for methods and validation details.
 
 ## Development
 

@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 from backend.config import Settings
+
+
+def _java_available() -> bool:
+    """Return True if a Java runtime is on PATH."""
+    return shutil.which("java") is not None
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Auto-skip tests marked ``requires_java`` when Java is absent."""
+    if _java_available():
+        return
+    skip_java = pytest.mark.skip(reason="Java runtime not available")
+    for item in items:
+        if "requires_java" in item.keywords:
+            item.add_marker(skip_java)
+
 
 # ── Custom Markers ───────────────────────────────────────────────────
 
@@ -19,6 +36,10 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line("markers", "e2e: marks end-to-end tests")
     config.addinivalue_line("markers", "integration: marks integration tests")
+    config.addinivalue_line(
+        "markers",
+        "requires_java: marks tests that need a real Java runtime (skipped when unavailable)",
+    )
 
 
 # ── Project-wide Fixtures ────────────────────────────────────────────

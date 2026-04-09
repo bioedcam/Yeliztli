@@ -68,4 +68,5 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "e2e: marks end-to-end tests",
     "integration: marks integration tests",
+    "requires_java: marks tests that need a real Java runtime (skipped when unavailable)",
 ]
