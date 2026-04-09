@@ -50,6 +50,8 @@ BUNDLE_PATH = (
 @pytest.fixture()
 def bundle() -> AncestryBundle:
     """Load the production PCA bundle."""
+    if not BUNDLE_PATH.exists():
+        pytest.skip(f"PCA bundle not found at {BUNDLE_PATH}")
     return load_ancestry_bundle(BUNDLE_PATH)
 
 
@@ -77,7 +79,8 @@ def eur_sample_engine() -> sa.Engine:
     with engine.begin() as conn:
         conn.execute(sa.insert(raw_variants), variants)
 
-    return engine
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture()

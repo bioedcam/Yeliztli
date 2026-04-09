@@ -38,7 +38,6 @@ test.describe('F18-v2: Ancestry page E2E', () => {
       await page.goto('/ancestry')
       await page.waitForLoadState('networkidle')
 
-      const populations = ['AFR', 'AMR', 'CSA', 'EAS', 'EUR', 'MID', 'OCE']
       const fullNames = [
         'African',
         'Admixed American',
@@ -49,15 +48,18 @@ test.describe('F18-v2: Ancestry page E2E', () => {
         'Oceanian',
       ]
 
-      // Check that at least some population labels or abbreviations are present
+      // Check that at least some population labels are present
+      let foundCount = 0
       for (const name of fullNames) {
         const el = page.getByText(name, { exact: false })
-        // Don't fail if no sample selected — just verify structure exists
         const count = await el.count()
         if (count > 0) {
           await expect(el.first()).toBeVisible()
+          foundCount++
         }
       }
+      // Ensure at least one population label was found
+      expect(foundCount).toBeGreaterThan(0)
     })
   })
 
