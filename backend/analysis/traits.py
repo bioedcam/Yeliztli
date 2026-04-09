@@ -44,7 +44,7 @@ from pathlib import Path
 import sqlalchemy as sa
 import structlog
 
-from backend.analysis.ancestry import get_inferred_ancestry
+from backend.analysis.ancestry import get_inferred_ancestry, get_top_ancestry_fraction
 from backend.analysis.evidence import TRAITS_EVIDENCE_CAP, cap_evidence_level
 from backend.analysis.prs import (
     PRSResult,
@@ -449,6 +449,7 @@ def _run_traits_prs(
         return []
 
     inferred_ancestry = get_inferred_ancestry(sample_engine)
+    top_fraction = get_top_ancestry_fraction(sample_engine)
 
     results: list[PRSResult] = []
     for ws in weight_sets:
@@ -456,6 +457,7 @@ def _run_traits_prs(
             ws,
             sample_engine,
             inferred_ancestry=inferred_ancestry,
+            top_ancestry_fraction=top_fraction,
             n_bootstrap=n_bootstrap,
             rng_seed=rng_seed,
         )

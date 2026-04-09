@@ -443,16 +443,24 @@ def compute_prs_bootstrap_ci(
 def check_ancestry_mismatch(
     result: PRSResult,
     inferred_ancestry: str | None,
+    top_ancestry_fraction: float | None = None,
 ) -> PRSResult:
     """Check and flag ancestry mismatch between PRS weights and user ancestry.
 
     If the user's inferred top ancestry does not match the weight set's
     source population, an amber warning is attached to the result.
 
+    Additionally, if the top ancestry fraction is below 70%, an admixture
+    warning is added regardless of whether the populations match — admixed
+    individuals may see reduced PRS accuracy even when the top population
+    matches the weight set source.
+
     Args:
         result: PRSResult to check.
         inferred_ancestry: User's inferred top ancestry (e.g. "EUR", "EAS"),
             or None if ancestry inference hasn't been run.
+        top_ancestry_fraction: Fraction (0.0–1.0) of the top ancestry, or
+            None if unavailable.
 
     Returns:
         Updated PRSResult with ancestry_mismatch and ancestry_warning_text.
@@ -481,6 +489,19 @@ def check_ancestry_mismatch(
         result.ancestry_mismatch = False
         result.ancestry_warning_text = None
 
+    # Admixture-aware threshold: warn if top ancestry < 70%
+    if top_ancestry_fraction is not None and top_ancestry_fraction < 0.70:
+        admixture_warning = (
+            "Your ancestry composition is admixed "
+            f"(top ancestry {top_ancestry_fraction:.0%}). "
+            "PRS accuracy may be reduced for admixed genetic backgrounds."
+        )
+        if result.ancestry_warning_text:
+            result.ancestry_warning_text += f" {admixture_warning}"
+        else:
+            result.ancestry_mismatch = True
+            result.ancestry_warning_text = admixture_warning
+
     return result
 
 
@@ -491,6 +512,7 @@ def run_prs(
     weight_set: PRSWeightSet,
     sample_engine: sa.Engine,
     inferred_ancestry: str | None = None,
+    top_ancestry_fraction: float | None = None,
     n_bootstrap: int = 1000,
     rng_seed: int | None = None,
 ) -> PRSResult:
@@ -502,6 +524,8 @@ def run_prs(
         weight_set: PRS weight set.
         sample_engine: Sample database engine.
         inferred_ancestry: User's inferred ancestry, or None.
+        top_ancestry_fraction: Fraction (0.0–1.0) of the top ancestry, or
+            None if unavailable.
         n_bootstrap: Bootstrap iterations (default 1000).
         rng_seed: Optional RNG seed for reproducibility.
 
@@ -517,7 +541,7 @@ def run_prs(
         n_iterations=n_bootstrap,
         rng_seed=rng_seed,
     )
-    result = check_ancestry_mismatch(result, inferred_ancestry)
+    result = check_ancestry_mismatch(result, inferred_ancestry, top_ancestry_fraction)
     return result
 
 

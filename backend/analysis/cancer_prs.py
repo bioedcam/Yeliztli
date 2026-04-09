@@ -170,6 +170,7 @@ def run_cancer_prs(
     weight_sets: list[PRSWeightSet],
     sample_engine: sa.Engine,
     inferred_ancestry: str | None = None,
+    top_ancestry_fraction: float | None = None,
     n_bootstrap: int = 1000,
     rng_seed: int | None = None,
 ) -> CancerPRSResult:
@@ -183,6 +184,8 @@ def run_cancer_prs(
         weight_sets: Cancer PRS weight sets from load_cancer_prs_weights.
         sample_engine: SQLAlchemy engine for the sample database.
         inferred_ancestry: User's inferred ancestry (e.g. "EUR"), or None.
+        top_ancestry_fraction: Fraction (0.0–1.0) of the top ancestry, or
+            None if unavailable.
         n_bootstrap: Bootstrap iterations (default 1000).
         rng_seed: Optional RNG seed for reproducibility.
 
@@ -196,6 +199,7 @@ def run_cancer_prs(
             ws,
             sample_engine,
             inferred_ancestry=inferred_ancestry,
+            top_ancestry_fraction=top_ancestry_fraction,
             n_bootstrap=n_bootstrap,
             rng_seed=rng_seed,
         )

@@ -1124,8 +1124,8 @@ def get_ancestry_matched_af_column(population: str | None) -> str:
 def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
     """Retrieve the inferred top ancestry from a sample's findings.
 
-    Preference order: ``nnls_admixture`` → ``pca_projection``.
-    Extracts ``top_population`` from ``detail_json``.
+    Preference order: ``local_ancestry`` → ``nnls_admixture`` →
+    ``pca_projection``.  Extracts ``top_population`` from ``detail_json``.
 
     This is the canonical way to get ancestry for P3-26 (ancestry-matched AF)
     and is also used by PRS ancestry mismatch checks (P3-16).
@@ -1136,9 +1136,9 @@ def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
     Returns:
         Inferred top ancestry code (e.g. "EUR", "EAS", "AFR") or None.
     """
-    # Try nnls_admixture first (primary), then pca_projection, then any ancestry finding
+    # Try local_ancestry (LAI) first, then nnls_admixture, pca_projection, then any
     with sample_engine.connect() as conn:
-        for category in ("nnls_admixture", "pca_projection", None):
+        for category in ("local_ancestry", "nnls_admixture", "pca_projection", None):
             stmt = (
                 sa.select(findings.c.detail_json)
                 .where(findings.c.module == "ancestry")
@@ -1156,6 +1156,45 @@ def get_inferred_ancestry(sample_engine: sa.Engine) -> str | None:
                     if result:
                         return result
                 except (ValueError, TypeError):
+                    continue
+
+    return None
+
+
+def get_top_ancestry_fraction(sample_engine: sa.Engine) -> float | None:
+    """Retrieve the top ancestry fraction from a sample's findings.
+
+    Searches the same categories as :func:`get_inferred_ancestry` in the same
+    preference order (``local_ancestry`` → ``nnls_admixture`` →
+    ``pca_projection``).  Returns the fraction for the top population from
+    ``admixture_fractions`` in ``detail_json``.
+
+    Args:
+        sample_engine: SQLAlchemy engine for the sample database.
+
+    Returns:
+        Fraction (0.0–1.0) of the top ancestry, or None if unavailable.
+    """
+    with sample_engine.connect() as conn:
+        for category in ("local_ancestry", "nnls_admixture", "pca_projection", None):
+            stmt = (
+                sa.select(findings.c.detail_json)
+                .where(findings.c.module == "ancestry")
+                .order_by(findings.c.id.desc())
+                .limit(1)
+            )
+            if category is not None:
+                stmt = stmt.where(findings.c.category == category)
+            row = conn.execute(stmt).fetchone()
+
+            if row is not None and row.detail_json:
+                try:
+                    detail = json.loads(row.detail_json)
+                    top_pop = detail.get("top_population") or detail.get("inferred_ancestry")
+                    fracs = detail.get("admixture_fractions", {})
+                    if top_pop and top_pop in fracs:
+                        return float(fracs[top_pop])
+                except (ValueError, TypeError, KeyError):
                     continue
 
     return None

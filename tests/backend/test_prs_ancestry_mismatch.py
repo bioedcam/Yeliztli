@@ -518,3 +518,217 @@ class TestAncestryMatchCaseInsensitive:
         )
         result = check_ancestry_mismatch(result, inferred_ancestry="Eur")
         assert result.ancestry_mismatch is False
+
+
+# ── T-PRS-01 to T-PRS-04: AMv2 Step 8 tests ─────────────────────────────
+
+
+class TestAdmixtureAwareThreshold:
+    """AMv2 Step 8.3: Admixture-aware PRS accuracy warning."""
+
+    def _make_result(self, source_ancestry: str = "EUR") -> PRSResult:
+        return PRSResult(
+            weight_set_name="Test PRS",
+            trait="test",
+            module="test",
+            source_ancestry=source_ancestry,
+            source_study="Test",
+            source_pmid="123",
+            sample_size=1000,
+            raw_score=0.5,
+        )
+
+    def test_admixture_warning_fires_when_top_below_70(self) -> None:
+        """T-PRS-03: Admixture-aware warning fires when top ancestry < 70%."""
+        result = self._make_result()
+        result = check_ancestry_mismatch(
+            result, inferred_ancestry="EUR", top_ancestry_fraction=0.55
+        )
+        assert result.ancestry_mismatch is True
+        assert result.ancestry_warning_text is not None
+        assert "admixed" in result.ancestry_warning_text.lower()
+
+    def test_no_admixture_warning_when_top_above_70(self) -> None:
+        """No admixture warning when top ancestry >= 70% and populations match."""
+        result = self._make_result()
+        result = check_ancestry_mismatch(
+            result, inferred_ancestry="EUR", top_ancestry_fraction=0.85
+        )
+        assert result.ancestry_mismatch is False
+        assert result.ancestry_warning_text is None
+
+    def test_admixture_warning_combined_with_mismatch(self) -> None:
+        """Both mismatch and admixture warnings when both conditions hold."""
+        result = self._make_result(source_ancestry="EUR")
+        result = check_ancestry_mismatch(
+            result, inferred_ancestry="AFR", top_ancestry_fraction=0.55
+        )
+        assert result.ancestry_mismatch is True
+        assert "AFR" in result.ancestry_warning_text
+        assert "admixed" in result.ancestry_warning_text.lower()
+
+    def test_no_admixture_warning_when_fraction_none(self) -> None:
+        """No admixture warning when top fraction is not available."""
+        result = self._make_result()
+        result = check_ancestry_mismatch(
+            result, inferred_ancestry="EUR", top_ancestry_fraction=None
+        )
+        assert result.ancestry_mismatch is False
+        assert result.ancestry_warning_text is None
+
+    def test_admixture_warning_at_boundary_70(self) -> None:
+        """Exactly 70% should NOT trigger warning (threshold is < 70%)."""
+        result = self._make_result()
+        result = check_ancestry_mismatch(
+            result, inferred_ancestry="EUR", top_ancestry_fraction=0.70
+        )
+        assert result.ancestry_mismatch is False
+        assert result.ancestry_warning_text is None
+
+    def test_admixture_warning_at_69(self) -> None:
+        """69% should trigger the admixture warning."""
+        result = self._make_result()
+        result = check_ancestry_mismatch(
+            result, inferred_ancestry="EUR", top_ancestry_fraction=0.69
+        )
+        assert result.ancestry_mismatch is True
+        assert "admixed" in result.ancestry_warning_text.lower()
+
+
+class TestLAIPreferredOverTier1:
+    """T-PRS-04: LAI-derived ancestry preferred over Tier 1 when available."""
+
+    def test_local_ancestry_preferred(self, sample_engine: sa.Engine) -> None:
+        """get_inferred_ancestry prefers local_ancestry over nnls_admixture."""
+        with sample_engine.begin() as conn:
+            # Insert nnls_admixture first
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "nnls_admixture",
+                    "evidence_level": 2,
+                    "finding_text": "NNLS: EUR",
+                    "detail_json": json.dumps({"top_population": "EUR"}),
+                },
+            )
+            # Insert local_ancestry second
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "local_ancestry",
+                    "evidence_level": 2,
+                    "finding_text": "LAI: AFR",
+                    "detail_json": json.dumps({"top_population": "AFR"}),
+                },
+            )
+
+        result = get_inferred_ancestry(sample_engine)
+        assert result == "AFR"
+
+    def test_falls_back_to_nnls_without_lai(self, sample_engine: sa.Engine) -> None:
+        """Without local_ancestry, falls back to nnls_admixture."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "nnls_admixture",
+                    "evidence_level": 2,
+                    "finding_text": "NNLS: EUR",
+                    "detail_json": json.dumps({"top_population": "EUR"}),
+                },
+            )
+
+        result = get_inferred_ancestry(sample_engine)
+        assert result == "EUR"
+
+
+class TestGetTopAncestryFraction:
+    """Test get_top_ancestry_fraction() helper."""
+
+    def test_returns_fraction_from_nnls(self, sample_engine: sa.Engine) -> None:
+        from backend.analysis.ancestry import get_top_ancestry_fraction
+
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "nnls_admixture",
+                    "evidence_level": 2,
+                    "finding_text": "NNLS",
+                    "detail_json": json.dumps(
+                        {
+                            "top_population": "EUR",
+                            "admixture_fractions": {"EUR": 0.82, "AFR": 0.10, "EAS": 0.08},
+                        }
+                    ),
+                },
+            )
+
+        result = get_top_ancestry_fraction(sample_engine)
+        assert result == pytest.approx(0.82)
+
+    def test_returns_none_when_no_findings(self, sample_engine: sa.Engine) -> None:
+        from backend.analysis.ancestry import get_top_ancestry_fraction
+
+        result = get_top_ancestry_fraction(sample_engine)
+        assert result is None
+
+    def test_returns_none_when_no_fractions(self, sample_engine: sa.Engine) -> None:
+        from backend.analysis.ancestry import get_top_ancestry_fraction
+
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "nnls_admixture",
+                    "evidence_level": 2,
+                    "finding_text": "NNLS",
+                    "detail_json": json.dumps({"top_population": "EUR"}),
+                },
+            )
+
+        result = get_top_ancestry_fraction(sample_engine)
+        assert result is None
+
+    def test_prefers_local_ancestry(self, sample_engine: sa.Engine) -> None:
+        from backend.analysis.ancestry import get_top_ancestry_fraction
+
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "nnls_admixture",
+                    "evidence_level": 2,
+                    "finding_text": "NNLS",
+                    "detail_json": json.dumps(
+                        {
+                            "top_population": "EUR",
+                            "admixture_fractions": {"EUR": 0.82, "AFR": 0.10, "EAS": 0.08},
+                        }
+                    ),
+                },
+            )
+            conn.execute(
+                sa.insert(findings),
+                {
+                    "module": "ancestry",
+                    "category": "local_ancestry",
+                    "evidence_level": 2,
+                    "finding_text": "LAI",
+                    "detail_json": json.dumps(
+                        {
+                            "top_population": "AFR",
+                            "admixture_fractions": {"AFR": 0.65, "EUR": 0.20, "AMR": 0.15},
+                        }
+                    ),
+                },
+            )
+
+        result = get_top_ancestry_fraction(sample_engine)
+        assert result == pytest.approx(0.65)
