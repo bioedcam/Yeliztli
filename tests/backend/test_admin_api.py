@@ -103,22 +103,6 @@ def admin_client(tmp_data_dir: Path) -> Generator[TestClient, None, None]:
             ],
         )
 
-    # Seed an active job
-    with engine.begin() as conn:
-        conn.execute(
-            sa.insert(jobs),
-            [
-                {
-                    "job_id": "test-job-1",
-                    "sample_id": 1,
-                    "job_type": "annotation",
-                    "status": "running",
-                    "progress_pct": 45.0,
-                    "message": "Annotating variants",
-                }
-            ],
-        )
-
     engine.dispose()
 
     with (
@@ -131,6 +115,24 @@ def admin_client(tmp_data_dir: Path) -> Generator[TestClient, None, None]:
 
         app = create_app()
         with TestClient(app) as tc:
+            # Seed the active job AFTER lifespan startup so the
+            # recover_orphaned_jobs sweep doesn't flip it to "failed".
+            post_engine = sa.create_engine(f"sqlite:///{ref_path}")
+            with post_engine.begin() as conn:
+                conn.execute(
+                    sa.insert(jobs),
+                    [
+                        {
+                            "job_id": "test-job-1",
+                            "sample_id": 1,
+                            "job_type": "annotation",
+                            "status": "running",
+                            "progress_pct": 45.0,
+                            "message": "Annotating variants",
+                        }
+                    ],
+                )
+            post_engine.dispose()
             yield tc
         reset_registry()
 
