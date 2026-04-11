@@ -139,8 +139,7 @@ class LAIRunner:
 
         # Step 2: Translate to GRCh38 and write per-chromosome VCFs
         report("Writing per-chromosome VCFs...", 0.05)
-        vcf_paths = self._write_per_chrom_vcfs(filtered, out)
-        matched = sum(len(v) for v in vcf_paths.values())
+        vcf_paths, matched = self._write_per_chrom_vcfs(filtered, out)
         report(
             f"Mapped {matched} variants to GRCh38 across {len(vcf_paths)} chromosomes",
             0.10,
@@ -261,17 +260,22 @@ class LAIRunner:
             )
         return filtered
 
-    def _write_per_chrom_vcfs(self, genotypes: list[dict], out: Path) -> dict[str, Path]:
+    def _write_per_chrom_vcfs(
+        self, genotypes: list[dict], out: Path
+    ) -> tuple[dict[str, Path], int]:
         """Translate rsIDs to GRCh38 and write per-chromosome VCFs using pysam."""
         vcf_dir = out / "unphased_vcfs"
         vcf_dir.mkdir(exist_ok=True)
 
+        autosomal_chroms = {f"chr{i}" for i in range(1, 23)} | {str(i) for i in range(1, 23)}
         chrom_genotypes: dict[str, list[dict]] = defaultdict(list)
         for gt in genotypes:
             rsid = gt["rsid"]
             if rsid not in self.rsid_lookup:
                 continue
             chrom, pos38 = self.rsid_lookup[rsid]
+            if chrom not in autosomal_chroms:
+                continue
             chrom_genotypes[chrom].append(
                 {
                     "chrom": chrom,
@@ -283,13 +287,15 @@ class LAIRunner:
             )
 
         vcf_paths: dict[str, Path] = {}
-        for chrom in sorted(chrom_genotypes.keys(), key=lambda x: int(x.replace("chr", ""))):
+        total_sites = 0
+        for chrom in sorted(chrom_genotypes.keys(), key=lambda x: int(x.removeprefix("chr"))):
             sites = sorted(chrom_genotypes[chrom], key=lambda x: x["pos"])
             vcf_path = vcf_dir / f"user_{chrom}.vcf.gz"
             self._write_single_vcf(chrom, sites, vcf_path)
             vcf_paths[chrom] = vcf_path
+            total_sites += len(sites)
 
-        return vcf_paths
+        return vcf_paths, total_sites
 
     def _write_single_vcf(self, chrom: str, sites: list[dict], vcf_path: Path) -> None:
         """Write a single-sample VCF for one chromosome using pysam."""
@@ -379,7 +385,6 @@ class LAIRunner:
             f"ref={ref_panel}",
             f"map={gen_map}",
             f"out={out_prefix}",
-            "impute=false",
         ]
 
         try:
@@ -392,10 +397,34 @@ class LAIRunner:
             return None
 
         phased_vcf = Path(f"{out_prefix}.vcf.gz")
-        if phased_vcf.exists() and phased_vcf.stat().st_size > 0:
-            return phased_vcf
-        logger.error("beagle_no_output", chrom=chr_num)
-        return None
+        if not (phased_vcf.exists() and phased_vcf.stat().st_size > 0):
+            logger.error("beagle_no_output", chrom=chr_num)
+            return None
+
+        return self._postprocess_phased_vcf(phased_vcf, f"chr{chr_num}")
+
+    def _postprocess_phased_vcf(self, phased_vcf: Path, chrom: str) -> Path:
+        """Ensure phased VCF has a contig header and a tabix index.
+
+        Beagle 5's output omits ``##contig`` lines, which makes pysam emit
+        "contig not defined in header" warnings on every record. We rewrite
+        the file with the contig declared and then tabix-index it so pysam
+        can use random access cleanly.
+        """
+        import pysam
+
+        with pysam.VariantFile(str(phased_vcf)) as vin:
+            header = vin.header
+            if chrom not in header.contigs:
+                header.contigs.add(chrom)
+            fixed = phased_vcf.with_suffix(".fixed.vcf.gz")
+            with pysam.VariantFile(str(fixed), "wz", header=header) as vout:
+                for rec in vin:
+                    vout.write(rec)
+
+        fixed.replace(phased_vcf)
+        pysam.tabix_index(str(phased_vcf), preset="vcf", force=True)
+        return phased_vcf
 
     def _parse_phased_vcf(
         self,
@@ -420,16 +449,18 @@ class LAIRunner:
         for i, pos in enumerate(snp_pos):
             pos_to_idx[int(pos)] = i
 
+        matched = 0
+        allele_mismatch = 0
         try:
             with pysam.VariantFile(str(vcf_path)) as vcf:
                 for rec in vcf:
                     idx = pos_to_idx.get(rec.pos)
                     if idx is None:
                         continue
-                    # Verify alleles match
                     if not rec.alts:
                         continue
                     if rec.ref != str(snp_ref[idx]) or rec.alts[0] != str(snp_alt[idx]):
+                        allele_mismatch += 1
                         continue
 
                     sample = rec.samples[0]
@@ -438,8 +469,26 @@ class LAIRunner:
                         continue
                     hap0[idx] = int(gt[0]) if gt[0] is not None else 0
                     hap1[idx] = int(gt[1]) if gt[1] is not None else 0
+                    matched += 1
         except Exception:
             logger.exception("phased_vcf_parse_failed", path=str(vcf_path))
+
+        match_rate = matched / n_snps if n_snps else 0.0
+        log = logger.warning if match_rate < 0.5 else logger.info
+        log(
+            "phased_vcf_parsed",
+            path=str(vcf_path),
+            matched=matched,
+            n_snps=n_snps,
+            match_rate=round(match_rate, 4),
+            allele_mismatch=allele_mismatch,
+        )
+        if match_rate < 0.05:
+            raise RuntimeError(
+                f"Phased VCF {vcf_path.name} matched only {matched}/{n_snps} "
+                f"({match_rate:.1%}) model markers — inference would be meaningless. "
+                "Check that Beagle imputation against the reference panel is enabled."
+            )
 
         return hap0, hap1
 

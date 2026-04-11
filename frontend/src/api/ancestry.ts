@@ -139,7 +139,7 @@ export function useLAIProgress(
         throw new Error(`LAI progress failed: ${res.status}${text ? ` - ${text}` : ""}`)
       }
       const data: LAIProgressResponse | null = await res.json()
-      if (data?.status === "completed" && onComplete && !completeFiredRef.current) {
+      if (data?.status === "complete" && onComplete && !completeFiredRef.current) {
         completeFiredRef.current = true
         onComplete()
       }

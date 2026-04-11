@@ -6,17 +6,17 @@ In test/dev mode, immediate=True runs tasks synchronously.
 
 from __future__ import annotations
 
-import logging
 import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import structlog
 from huey import SqliteHuey, crontab
 
 from backend.config import get_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _settings = get_settings()
 _settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -78,6 +78,32 @@ def create_annotation_job(sample_id: int) -> str:
         )
 
     return job_id
+
+
+def recover_orphaned_jobs(engine) -> int:
+    """Mark any jobs left in 'running'/'pending' state as failed.
+
+    Called at backend startup. A worker that gets killed mid-task leaves its
+    jobs row stuck — there is no in-process recovery, so the UI keeps showing
+    a stale progress bar forever. This sweeps those rows on boot.
+    """
+    from backend.db.tables import jobs
+
+    with engine.begin() as conn:
+        result = conn.execute(
+            jobs.update()
+            .where(jobs.c.status.in_(("running", "pending")))
+            .values(
+                status="failed",
+                error="Worker terminated (backend restarted while task was in progress)",
+                message="Interrupted by backend restart",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        count = result.rowcount or 0
+    if count:
+        logger.info("orphaned_jobs_recovered", count=count)
+    return count
 
 
 def _update_job(

@@ -120,7 +120,7 @@ export interface LAIResultResponse {
 /** LAI analysis progress. */
 export interface LAIProgressResponse {
   job_id: string
-  status: "pending" | "running" | "completed" | "failed"
+  status: "pending" | "running" | "complete" | "failed"
   progress_pct: number
   message: string
   error: string | null

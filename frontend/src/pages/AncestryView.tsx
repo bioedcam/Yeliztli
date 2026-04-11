@@ -9,6 +9,7 @@
  * - Haplogroup assignments with traversal path (P3-34)
  */
 
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, CheckCircle, Download, Globe, Info, Loader2, Play } from "lucide-react"
@@ -40,6 +41,65 @@ export default function AncestryView() {
   const laiResultsQuery = useLAIResults(sampleId)
   const triggerDownload = useTriggerDownload()
   const triggerLAI = useTriggerLAI()
+
+  const [bundleDownloadStatus, setBundleDownloadStatus] = useState<
+    "idle" | "starting" | "downloading" | "extracting" | "error"
+  >("idle")
+  const [bundleDownloadError, setBundleDownloadError] = useState<string | null>(null)
+  const bundleSseRef = useRef<EventSource | null>(null)
+
+  useEffect(() => {
+    return () => {
+      bundleSseRef.current?.close()
+    }
+  }, [])
+
+  const handleDownloadLaiBundle = useCallback(() => {
+    bundleSseRef.current?.close()
+    bundleSseRef.current = null
+    setBundleDownloadError(null)
+    setBundleDownloadStatus("starting")
+    triggerDownload.mutate(["lai_bundle"], {
+      onSuccess: (result) => {
+        setBundleDownloadStatus("downloading")
+        const es = new EventSource(`/api/databases/progress/${result.session_id}`)
+        bundleSseRef.current = es
+        es.addEventListener("progress", (event: MessageEvent) => {
+          const data = JSON.parse(event.data) as {
+            databases: Array<{ db_name: string; status: string; progress_pct: number; error: string | null }>
+          }
+          const bundle = data.databases.find((db) => db.db_name === "lai_bundle")
+          if (!bundle) return
+          if (bundle.status === "extracting") {
+            setBundleDownloadStatus("extracting")
+          } else if (bundle.status === "downloading" || bundle.status === "pending") {
+            setBundleDownloadStatus("downloading")
+          } else if (bundle.status === "complete") {
+            es.close()
+            bundleSseRef.current = null
+            setBundleDownloadStatus("idle")
+            queryClient.invalidateQueries({ queryKey: ["lai-status"] })
+          } else if (bundle.status === "failed") {
+            es.close()
+            bundleSseRef.current = null
+            setBundleDownloadStatus("error")
+            setBundleDownloadError(bundle.error || "Download failed")
+          }
+        })
+        es.addEventListener("error", () => {
+          es.close()
+          bundleSseRef.current = null
+          setBundleDownloadStatus("error")
+          setBundleDownloadError("Lost connection to download progress stream.")
+          queryClient.invalidateQueries({ queryKey: ["lai-status"] })
+        })
+      },
+      onError: (err) => {
+        setBundleDownloadStatus("error")
+        setBundleDownloadError(err instanceof Error ? err.message : "Failed to start download")
+      },
+    })
+  }, [triggerDownload, queryClient])
 
   // Poll for LAI progress when LAI is available but no results yet.
   // Polling stops once results are loaded or when LAI is unavailable.
@@ -216,18 +276,29 @@ export default function AncestryView() {
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      disabled={triggerDownload.isPending}
-                      onClick={() => triggerDownload.mutate(["lai_bundle"])}
+                      disabled={bundleDownloadStatus !== "idle" && bundleDownloadStatus !== "error"}
+                      onClick={handleDownloadLaiBundle}
                       className={cn(
                         "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium",
                         "bg-primary text-primary-foreground hover:bg-primary/90 transition-colors",
                         "disabled:opacity-50 disabled:cursor-not-allowed",
                       )}
                     >
-                      <Download className="h-4 w-4" />
-                      {triggerDownload.isPending ? "Starting..." : "Enable Chromosome Painting (~500 MB)"}
+                      {bundleDownloadStatus === "downloading" || bundleDownloadStatus === "extracting" || bundleDownloadStatus === "starting" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      {bundleDownloadStatus === "starting" && "Starting..."}
+                      {bundleDownloadStatus === "downloading" && "Downloading bundle..."}
+                      {bundleDownloadStatus === "extracting" && "Extracting bundle..."}
+                      {(bundleDownloadStatus === "idle" || bundleDownloadStatus === "error") &&
+                        "Enable Chromosome Painting (~500 MB)"}
                     </button>
                   </div>
+                  {bundleDownloadError && (
+                    <p className="text-sm text-destructive">{bundleDownloadError}</p>
+                  )}
                 </div>
               )}
 

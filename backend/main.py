@@ -66,6 +66,7 @@ from backend.config import get_settings
 from backend.db.connection import get_registry, reset_registry
 from backend.db.tables import reference_metadata
 from backend.logging_config import configure_logging
+from backend.tasks.huey_tasks import recover_orphaned_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(engine_getter=lambda: registry.reference_engine)
     # Mark any leftover in-progress download sessions as interrupted/stale
     cleanup_interrupted_sessions(registry.reference_engine)
+    # Mark any orphaned jobs (worker killed mid-task) as failed
+    recover_orphaned_jobs(registry.reference_engine)
     logger.info("DBRegistry initialised (reference.db engine ready)")
     yield
     # Shutdown: stop download executor and dispose all engines
