@@ -55,6 +55,8 @@ export default function AncestryView() {
   }, [])
 
   const handleDownloadLaiBundle = useCallback(() => {
+    bundleSseRef.current?.close()
+    bundleSseRef.current = null
     setBundleDownloadError(null)
     setBundleDownloadStatus("starting")
     triggerDownload.mutate(["lai_bundle"], {
@@ -63,7 +65,7 @@ export default function AncestryView() {
         const es = new EventSource(`/api/databases/progress/${result.session_id}`)
         bundleSseRef.current = es
         es.addEventListener("progress", (event: MessageEvent) => {
-          const data = JSON.parse((event as MessageEvent).data) as {
+          const data = JSON.parse(event.data) as {
             databases: Array<{ db_name: string; status: string; progress_pct: number; error: string | null }>
           }
           const bundle = data.databases.find((db) => db.db_name === "lai_bundle")
