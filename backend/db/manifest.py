@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -72,6 +73,17 @@ _cached_manifest: Manifest | None = None
 _cached_at: float = 0.0
 
 
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+def _required_str(entry: dict, key: str, *, context: str) -> str:
+    """Return ``entry[key]`` as a string, rejecting missing / None / empty values."""
+    val = entry.get(key)
+    if val is None or (isinstance(val, str) and not val):
+        raise ValueError(f"{context}: field {key!r} must be a non-empty string")
+    return str(val)
+
+
 def _parse_manifest(payload: Any) -> Manifest:
     if not isinstance(payload, dict):
         raise ManifestFetchError(
@@ -79,29 +91,42 @@ def _parse_manifest(payload: Any) -> Manifest:
         )
     try:
         schema_version = int(payload.get("schema_version", 0))
-        generated_at = str(payload.get("generated_at", ""))
-        bundles_raw = payload.get("bundles") or {}
-        pins_raw = payload.get("pipeline_pins") or {}
+        generated_at = _required_str(payload, "generated_at", context="manifest")
+        if "bundles" not in payload or "pipeline_pins" not in payload:
+            raise ManifestFetchError("`bundles` and `pipeline_pins` are required")
+        bundles_raw = payload["bundles"]
+        pins_raw = payload["pipeline_pins"]
         if not isinstance(bundles_raw, dict) or not isinstance(pins_raw, dict):
             raise ManifestFetchError("`bundles` and `pipeline_pins` must be objects")
 
-        bundles = {
-            name: BundleManifestEntry(
-                version=str(entry["version"]),
-                build_date=str(entry["build_date"]),
-                url=str(entry["url"]),
-                sha256=str(entry["sha256"]),
-                size_bytes=int(entry["size_bytes"]),
+        bundles = {}
+        for name, entry in bundles_raw.items():
+            if not isinstance(entry, dict):
+                raise ValueError(f"bundle {name!r}: entry must be an object")
+            ctx = f"bundle {name!r}"
+            sha = _required_str(entry, "sha256", context=ctx)
+            if not _SHA256_RE.match(sha):
+                raise ValueError(f"{ctx}: sha256 must be 64 hex characters")
+            size = int(entry["size_bytes"])
+            if size <= 0:
+                raise ValueError(f"{ctx}: size_bytes must be > 0")
+            bundles[name] = BundleManifestEntry(
+                version=_required_str(entry, "version", context=ctx),
+                build_date=_required_str(entry, "build_date", context=ctx),
+                # url may be empty for bundles delivered out-of-band (e.g. ancestry_pca)
+                url=str(entry.get("url", "") or ""),
+                sha256=sha.lower(),
+                size_bytes=size,
             )
-            for name, entry in bundles_raw.items()
-        }
-        pins = {
-            name: PipelinePinEntry(
-                url=str(entry["url"]),
-                last_known_version=str(entry.get("last_known_version", "")),
+        pins = {}
+        for name, entry in pins_raw.items():
+            if not isinstance(entry, dict):
+                raise ValueError(f"pipeline pin {name!r}: entry must be an object")
+            ctx = f"pipeline pin {name!r}"
+            pins[name] = PipelinePinEntry(
+                url=_required_str(entry, "url", context=ctx),
+                last_known_version=str(entry.get("last_known_version", "") or ""),
             )
-            for name, entry in pins_raw.items()
-        }
     except (KeyError, TypeError, ValueError) as exc:
         raise ManifestFetchError(f"Manifest payload malformed: {exc}") from exc
 

@@ -232,6 +232,44 @@ class TestRemoteFetch:
             with pytest.raises(ManifestFetchError):
                 fetch_manifest()
 
+    def test_null_required_field_raises_typed(self):
+        """Null sha256 (or other required strings) must fail loudly, not str-coerce to 'None'."""
+        bad = json.loads(json.dumps(SAMPLE_PAYLOAD))
+        bad["bundles"]["lai_bundle"]["sha256"] = None
+        resp = _make_response(bad)
+        with patch("backend.db.manifest.httpx.get", return_value=resp):
+            with pytest.raises(ManifestFetchError, match="sha256"):
+                fetch_manifest()
+
+    def test_invalid_sha256_format_raises_typed(self):
+        """sha256 must be 64 hex chars."""
+        bad = json.loads(json.dumps(SAMPLE_PAYLOAD))
+        bad["bundles"]["lai_bundle"]["sha256"] = "not-a-real-hash"
+        resp = _make_response(bad)
+        with patch("backend.db.manifest.httpx.get", return_value=resp):
+            with pytest.raises(ManifestFetchError, match="sha256"):
+                fetch_manifest()
+
+    def test_zero_size_bundle_raises_typed(self):
+        """size_bytes must be > 0."""
+        bad = json.loads(json.dumps(SAMPLE_PAYLOAD))
+        bad["bundles"]["lai_bundle"]["size_bytes"] = 0
+        resp = _make_response(bad)
+        with patch("backend.db.manifest.httpx.get", return_value=resp):
+            with pytest.raises(ManifestFetchError, match="size_bytes"):
+                fetch_manifest()
+
+    def test_missing_top_level_sections_raises_typed(self):
+        """Missing bundles or pipeline_pins must fail loudly, not silently become empty."""
+        for missing in ("bundles", "pipeline_pins"):
+            bad = json.loads(json.dumps(SAMPLE_PAYLOAD))
+            del bad[missing]
+            resp = _make_response(bad)
+            with patch("backend.db.manifest.httpx.get", return_value=resp):
+                with pytest.raises(ManifestFetchError, match="required"):
+                    fetch_manifest()
+            reset_cache()
+
     def test_non_object_payload_raises_typed(self):
         resp = _make_response([])  # type: ignore[arg-type]
         with patch("backend.db.manifest.httpx.get", return_value=resp):
