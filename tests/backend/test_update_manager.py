@@ -55,6 +55,22 @@ from backend.db.update_manager import (
     should_download_now,
 )
 
+
+def _settings_mock(tmp_path: Path) -> MagicMock:
+    """MagicMock Settings with a real Path-backed data_dir / reference_db_path.
+
+    Guards against stringified-mock paths leaking into CWD if a runner code
+    path touches settings.data_dir before its patch fires.
+    """
+    settings = MagicMock()
+    settings.data_dir = tmp_path
+    settings.reference_db_path = tmp_path / "reference.db"
+    settings.downloads_dir = tmp_path / "downloads"
+    settings.samples_dir = tmp_path / "samples"
+    settings.update_download_window = None
+    return settings
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Bandwidth window tests
 # ═══════════════════════════════════════════════════════════════════════
@@ -727,9 +743,8 @@ class TestPrecheck:
 
 
 class TestScheduledUpdateCheck:
-    def test_orchestrator_skips_auto_disabled(self, reference_engine):
-        settings = MagicMock()
-        settings.update_download_window = None
+    def test_orchestrator_skips_auto_disabled(self, reference_engine, tmp_path: Path):
+        settings = _settings_mock(tmp_path)
 
         registry = MagicMock()
         registry.reference_engine = reference_engine
@@ -751,9 +766,8 @@ class TestScheduledUpdateCheck:
         # gnomAD is auto-update disabled, so no update should run
         assert len(result.available) == 1
 
-    def test_orchestrator_runs_clinvar_auto_update(self, reference_engine):
-        settings = MagicMock()
-        settings.update_download_window = None
+    def test_orchestrator_runs_clinvar_auto_update(self, reference_engine, tmp_path: Path):
+        settings = _settings_mock(tmp_path)
 
         registry = MagicMock()
         registry.reference_engine = reference_engine
