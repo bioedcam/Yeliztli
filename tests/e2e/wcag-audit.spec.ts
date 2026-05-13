@@ -253,7 +253,10 @@ test.describe('P4-26c: WCAG 2.1 AA Audit', () => {
     for (const pageDef of APP_PAGES) {
       test(`${pageDef.title} (${pageDef.path}) has focusable interactive elements`, async ({ page }) => {
         await page.goto(pageDef.path)
-        await page.waitForLoadState('networkidle')
+        // Wait on the h1 (AppLayout has fully hydrated by then) — `networkidle`
+        // can resolve before React mounts when the dev server returns an empty
+        // `<div id="root">` and no further requests follow.
+        await page.locator('h1').first().waitFor({ state: 'visible' })
 
         // Verify the page has interactive elements that can receive focus
         const interactive = page.locator('a, button, input, select, textarea, [tabindex="0"]')
