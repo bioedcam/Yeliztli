@@ -56,19 +56,15 @@ from backend.db.update_manager import (
 )
 
 
-def _settings_mock(tmp_path: Path) -> MagicMock:
-    """MagicMock Settings with a real Path-backed data_dir / reference_db_path.
+def _settings_for_test(tmp_path: Path) -> Settings:
+    """Real Settings instance anchored at a tmp_path-backed data_dir.
 
-    Guards against stringified-mock paths leaking into CWD if a runner code
-    path touches settings.data_dir before its patch fires.
+    Using real Settings instead of MagicMock guarantees that any code path
+    touching ``settings.data_dir`` / ``settings.reference_db_path`` resolves
+    to a concrete Path and cannot stringify a child mock into a sqlite URL
+    that drops a zero-byte file at the repo root.
     """
-    settings = MagicMock()
-    settings.data_dir = tmp_path
-    settings.reference_db_path = tmp_path / "reference.db"
-    settings.downloads_dir = tmp_path / "downloads"
-    settings.samples_dir = tmp_path / "samples"
-    settings.update_download_window = None
-    return settings
+    return Settings(data_dir=tmp_path, wal_mode=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -744,7 +740,7 @@ class TestPrecheck:
 
 class TestScheduledUpdateCheck:
     def test_orchestrator_skips_auto_disabled(self, reference_engine, tmp_path: Path):
-        settings = _settings_mock(tmp_path)
+        settings = _settings_for_test(tmp_path)
 
         registry = MagicMock()
         registry.reference_engine = reference_engine
@@ -767,7 +763,7 @@ class TestScheduledUpdateCheck:
         assert len(result.available) == 1
 
     def test_orchestrator_runs_clinvar_auto_update(self, reference_engine, tmp_path: Path):
-        settings = _settings_mock(tmp_path)
+        settings = _settings_for_test(tmp_path)
 
         registry = MagicMock()
         registry.reference_engine = reference_engine
