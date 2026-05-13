@@ -12,6 +12,7 @@
 
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { waitForReactHydration } from './helpers'
 
 // All pages within the main AppLayout (auth-guarded, sidebar-wrapped)
 const APP_PAGES = [
