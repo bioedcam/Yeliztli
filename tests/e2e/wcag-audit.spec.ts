@@ -253,9 +253,13 @@ test.describe('P4-26c: WCAG 2.1 AA Audit', () => {
     for (const pageDef of APP_PAGES) {
       test(`${pageDef.title} (${pageDef.path}) has focusable interactive elements`, async ({ page }) => {
         await page.goto(pageDef.path)
-        // Wait on the h1 (AppLayout has fully hydrated by then) — `networkidle`
-        // can resolve before React mounts when the dev server returns an empty
-        // `<div id="root">` and no further requests follow.
+        // This test inspects the hydrated DOM (counts interactive elements),
+        // so it gates on h1 visibility rather than the file-wide `networkidle`
+        // pattern. `networkidle` can resolve before React mounts when the dev
+        // server returns an empty `<div id="root">` and no further requests
+        // follow; other tests in this spec stay on `networkidle` because they
+        // assert on load-time behavior (errors, console output) rather than
+        // hydrated content.
         await page.locator('h1').first().waitFor({ state: 'visible' })
 
         // Verify the page has interactive elements that can receive focus

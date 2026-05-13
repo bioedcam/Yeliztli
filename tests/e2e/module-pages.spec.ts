@@ -15,8 +15,18 @@
  *   7. Gene Health    (/gene-health)
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+
+/**
+ * Wait until React has hydrated AppLayout. `networkidle` is unreliable here
+ * because the dev server can return an empty `<div id="root">` shell and no
+ * further requests follow, so the load state resolves before mount. Once the
+ * page-level h1 is visible, AppLayout + the page component have rendered.
+ */
+async function waitForReactHydration(page: Page): Promise<void> {
+  await page.locator('h1').first().waitFor({ state: 'visible' })
+}
 
 // All 7 module pages with expected content
 const MODULE_PAGES = [
@@ -83,8 +93,7 @@ test.describe('P3-68: Module pages verification', () => {
 
       test('heading hierarchy is valid (no skipped levels)', async ({ page }) => {
         await page.goto(mod.path)
-        // Wait for React to mount AppLayout before inspecting the heading tree.
-        await page.locator('h1').first().waitFor({ state: 'visible' })
+        await waitForReactHydration(page)
 
         const headingLevels = await page.evaluate(() => {
           const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6')
@@ -103,10 +112,7 @@ test.describe('P3-68: Module pages verification', () => {
 
       test('has focusable interactive elements', async ({ page }) => {
         await page.goto(mod.path)
-        // Wait on the h1 (AppLayout has fully hydrated by then) — `networkidle`
-        // can resolve before React mounts when the dev server returns an empty
-        // `<div id="root">` and no further requests follow.
-        await page.locator('h1').first().waitFor({ state: 'visible' })
+        await waitForReactHydration(page)
 
         // Verify the page has interactive elements that can receive focus
         const interactive = page.locator('a, button, input, select, textarea, [tabindex="0"]')
@@ -121,9 +127,7 @@ test.describe('P3-68: Module pages verification', () => {
 
       test('passes axe-core WCAG 2.1 AA accessibility check', async ({ page }) => {
         await page.goto(mod.path)
-        // Wait for React to mount AppLayout so axe-core analyzes the fully
-        // hydrated DOM rather than the empty `<div id="root">` shell.
-        await page.locator('h1').first().waitFor({ state: 'visible' })
+        await waitForReactHydration(page)
 
         const results = await new AxeBuilder({ page })
           .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
