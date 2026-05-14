@@ -164,6 +164,7 @@ class TestNoOutboundVariantData:
     # Files known to make outbound HTTP requests and their expected purpose
     _ALLOWED_OUTBOUND_FILES = {
         "annotation/clinvar.py": "reference DB download",
+        "annotation/cpic.py": "CPIC GitHub Releases version check (no variant data)",
         "annotation/dbnsfp.py": "reference DB download",
         "annotation/dbsnp.py": "reference DB download",
         "annotation/encode_ccres.py": "reference DB download",

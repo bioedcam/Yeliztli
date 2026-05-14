@@ -55,6 +55,18 @@ from backend.db.update_manager import (
     should_download_now,
 )
 
+
+def _settings_for_test(tmp_path: Path) -> Settings:
+    """Real Settings instance anchored at a tmp_path-backed data_dir.
+
+    Using real Settings instead of MagicMock guarantees that any code path
+    touching ``settings.data_dir`` / ``settings.reference_db_path`` resolves
+    to a concrete Path and cannot stringify a child mock into a sqlite URL
+    that drops a zero-byte file at the repo root.
+    """
+    return Settings(data_dir=tmp_path, wal_mode=False)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Bandwidth window tests
 # ═══════════════════════════════════════════════════════════════════════
@@ -727,9 +739,8 @@ class TestPrecheck:
 
 
 class TestScheduledUpdateCheck:
-    def test_orchestrator_skips_auto_disabled(self, reference_engine):
-        settings = MagicMock()
-        settings.update_download_window = None
+    def test_orchestrator_skips_auto_disabled(self, reference_engine, tmp_path: Path):
+        settings = _settings_for_test(tmp_path)
 
         registry = MagicMock()
         registry.reference_engine = reference_engine
@@ -751,9 +762,8 @@ class TestScheduledUpdateCheck:
         # gnomAD is auto-update disabled, so no update should run
         assert len(result.available) == 1
 
-    def test_orchestrator_runs_clinvar_auto_update(self, reference_engine):
-        settings = MagicMock()
-        settings.update_download_window = None
+    def test_orchestrator_runs_clinvar_auto_update(self, reference_engine, tmp_path: Path):
+        settings = _settings_for_test(tmp_path)
 
         registry = MagicMock()
         registry.reference_engine = reference_engine

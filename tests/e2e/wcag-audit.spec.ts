@@ -12,6 +12,7 @@
 
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { waitForReactHydration } from './helpers'
 
 // All pages within the main AppLayout (auth-guarded, sidebar-wrapped)
 const APP_PAGES = [
@@ -253,7 +254,12 @@ test.describe('P4-26c: WCAG 2.1 AA Audit', () => {
     for (const pageDef of APP_PAGES) {
       test(`${pageDef.title} (${pageDef.path}) has focusable interactive elements`, async ({ page }) => {
         await page.goto(pageDef.path)
-        await page.waitForLoadState('networkidle')
+        // This test inspects the hydrated DOM (counts interactive elements),
+        // so it gates on h1 visibility rather than the file-wide `networkidle`
+        // pattern; other tests in this spec stay on `networkidle` because they
+        // assert on load-time behavior (errors, console output) rather than
+        // hydrated content.
+        await waitForReactHydration(page)
 
         // Verify the page has interactive elements that can receive focus
         const interactive = page.locator('a, button, input, select, textarea, [tabindex="0"]')
