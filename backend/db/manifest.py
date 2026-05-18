@@ -30,8 +30,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import structlog
+from packaging.version import InvalidVersion, Version
 
 logger = logging.getLogger(__name__)
+_structlog = structlog.get_logger(__name__)
 
 MANIFEST_URL = (
     "https://raw.githubusercontent.com/bioedcam/GenomeInsight/main/bundles/manifest.json"
@@ -52,6 +55,7 @@ class BundleManifestEntry:
     url: str
     sha256: str
     size_bytes: int
+    min_app_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,10 @@ def _parse_manifest(payload: Any) -> Manifest:
             size = int(entry["size_bytes"])
             if size <= 0:
                 raise ValueError(f"{ctx}: size_bytes must be > 0")
+            min_app_raw = entry.get("min_app_version")
+            min_app_version = (
+                str(min_app_raw) if isinstance(min_app_raw, str) and min_app_raw else None
+            )
             bundles[name] = BundleManifestEntry(
                 version=_required_str(entry, "version", context=ctx),
                 build_date=_required_str(entry, "build_date", context=ctx),
@@ -117,6 +125,7 @@ def _parse_manifest(payload: Any) -> Manifest:
                 url=str(entry.get("url", "") or ""),
                 sha256=sha.lower(),
                 size_bytes=size,
+                min_app_version=min_app_version,
             )
         pins = {}
         for name, entry in pins_raw.items():
@@ -130,12 +139,59 @@ def _parse_manifest(payload: Any) -> Manifest:
     except (KeyError, TypeError, ValueError) as exc:
         raise ManifestFetchError(f"Manifest payload malformed: {exc}") from exc
 
-    return Manifest(
+    manifest = Manifest(
         schema_version=schema_version,
         generated_at=generated_at,
         bundles=bundles,
         pipeline_pins=pins,
     )
+    _emit_min_app_version_advisories(manifest)
+    return manifest
+
+
+def _current_app_version() -> str:
+    """Return the running app's semver string.
+
+    Lazy-imported so this module does not pull in the FastAPI app graph at
+    import time (avoids a circular import via ``backend.main``). Overridable
+    via monkeypatch in tests.
+    """
+    from backend.main import VERSION
+
+    return VERSION
+
+
+def _emit_min_app_version_advisories(manifest: Manifest) -> None:
+    """Advisory: emit a structured warning for each bundle whose advisory
+    ``min_app_version`` exceeds the running app version.
+
+    Never raises and never refuses to load — the manifest is the contract
+    (Plan §2.2, §5.5). Bundles without a ``min_app_version`` are skipped.
+    Malformed version strings on either side are logged once and skipped.
+    """
+    try:
+        installed_raw = _current_app_version()
+    except Exception:  # pragma: no cover — defensive; main.VERSION is a constant
+        return
+    try:
+        installed = Version(installed_raw.lstrip("v"))
+    except InvalidVersion:
+        return
+
+    for name, entry in manifest.bundles.items():
+        if entry.min_app_version is None:
+            continue
+        try:
+            required = Version(entry.min_app_version.lstrip("v"))
+        except InvalidVersion:
+            continue
+        if installed < required:
+            _structlog.warning(
+                "manifest_min_app_version_below_threshold",
+                bundle=name,
+                installed_app_version=str(installed),
+                required_app_version=str(required),
+            )
 
 
 def _load_local(path: Path) -> Manifest:

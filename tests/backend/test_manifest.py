@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import structlog
+from structlog.testing import capture_logs
 
 from backend.db import manifest as manifest_mod
 from backend.db.manifest import (
@@ -376,9 +378,9 @@ class TestAccessors:
 
 
 class TestBundleV2:
-    """The v2.0.0 vep_bundle fixture loads with all current fields and
-    tolerates the additive ``min_app_version`` JSON key (parser support for
-    that field lands in step 5)."""
+    """The v2.0.0 vep_bundle fixture loads with all current fields and the
+    additive ``min_app_version`` JSON key round-trips through the parser
+    (step 5)."""
 
     def test_v2_manifest_loads_with_all_fields(self, tmp_path: Path, monkeypatch):
         path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
@@ -392,20 +394,173 @@ class TestBundleV2:
         assert entry.sha256 == "0" * 64
         assert entry.size_bytes == 600_000_000
 
-    def test_v2_manifest_tolerates_min_app_version_additive_key(
-        self, tmp_path: Path, monkeypatch
-    ):
-        """Forward-compat contract — additive keys must not break older parsers."""
+    def test_v2_min_app_version_round_trips(self, tmp_path: Path, monkeypatch):
+        """`min_app_version` is parsed from the JSON entry and exposed on the dataclass."""
         path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.2.0")
 
         m = fetch_manifest()
-        assert "vep_bundle" in m.bundles
-        assert "min_app_version" in V2_PAYLOAD["bundles"]["vep_bundle"]
+        assert m.bundles["vep_bundle"].min_app_version == "0.2.0"
+        # The lai_bundle entry in the v2 fixture has no min_app_version → field is None.
+        assert m.bundles["lai_bundle"].min_app_version is None
 
     def test_legacy_v1_version_normalized_to_v1_0_0(self):
         """Prior ``v1.0`` was normalized to ``v1.0.0`` for clean semver compare."""
         assert SAMPLE_PAYLOAD["bundles"]["vep_bundle"]["version"] == "v1.0.0"
+
+
+# ── min_app_version advisory warning (step 5) ─────────────────────────
+
+
+class TestMinAppVersionField:
+    def test_dataclass_default_is_none(self):
+        """Backward-compat: existing callers that construct entries without the
+        new field still work; the additive default is ``None``."""
+        entry = BundleManifestEntry(
+            version="v1", build_date="2026-01-01", url="u", sha256="abc", size_bytes=10
+        )
+        assert entry.min_app_version is None
+
+    def test_dataclass_accepts_explicit_value(self):
+        entry = BundleManifestEntry(
+            version="v2.0.0",
+            build_date="2026-05-18",
+            url="u",
+            sha256="abc",
+            size_bytes=10,
+            min_app_version="0.2.0",
+        )
+        assert entry.min_app_version == "0.2.0"
+
+    def test_parser_treats_empty_string_as_none(self, tmp_path: Path, monkeypatch):
+        """Empty / null values collapse to ``None`` so the advisory check skips them."""
+        payload = json.loads(json.dumps(V2_PAYLOAD))
+        payload["bundles"]["vep_bundle"]["min_app_version"] = ""
+        path = _write_manifest(tmp_path / "manifest.json", payload)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.1.0")
+
+        m = fetch_manifest()
+        assert m.bundles["vep_bundle"].min_app_version is None
+
+
+class TestMinAppVersionAdvisoryWarning:
+    """Plan §2.2 / §5.5: when the running app version is below a bundle's
+    advisory ``min_app_version``, ``manifest.py`` logs a structured warning
+    and continues. It never refuses to load."""
+
+    EVENT_NAME = "manifest_min_app_version_below_threshold"
+
+    def _events_named(self, cap_logs, name):
+        return [e for e in cap_logs if e.get("event") == name]
+
+    def test_warning_emits_when_below_threshold(
+        self, tmp_path: Path, monkeypatch
+    ):
+        path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.1.0")
+
+        with capture_logs() as cap_logs:
+            m = fetch_manifest()
+
+        # Manifest still loads — never refuses.
+        assert m.bundles["vep_bundle"].version == "v2.0.0"
+        events = self._events_named(cap_logs, self.EVENT_NAME)
+        assert len(events) == 1
+        warn = events[0]
+        assert warn["log_level"] == "warning"
+        assert warn["bundle"] == "vep_bundle"
+        assert warn["installed_app_version"] == "0.1.0"
+        assert warn["required_app_version"] == "0.2.0"
+
+    def test_no_warning_when_app_at_threshold(self, tmp_path: Path, monkeypatch):
+        path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.2.0")
+
+        with capture_logs() as cap_logs:
+            fetch_manifest()
+
+        assert self._events_named(cap_logs, self.EVENT_NAME) == []
+
+    def test_no_warning_when_app_above_threshold(self, tmp_path: Path, monkeypatch):
+        path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.3.0")
+
+        with capture_logs() as cap_logs:
+            fetch_manifest()
+
+        assert self._events_named(cap_logs, self.EVENT_NAME) == []
+
+    def test_no_warning_when_field_absent(self, tmp_path: Path, monkeypatch):
+        """SAMPLE_PAYLOAD has no ``min_app_version`` on any bundle — silent."""
+        path = _write_manifest(tmp_path / "manifest.json", SAMPLE_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.1.0")
+
+        with capture_logs() as cap_logs:
+            fetch_manifest()
+
+        assert self._events_named(cap_logs, self.EVENT_NAME) == []
+
+    def test_malformed_min_app_version_does_not_raise(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """An unparseable ``min_app_version`` must never raise or block loading."""
+        payload = json.loads(json.dumps(V2_PAYLOAD))
+        payload["bundles"]["vep_bundle"]["min_app_version"] = "not-a-version"
+        path = _write_manifest(tmp_path / "manifest.json", payload)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.1.0")
+
+        with capture_logs() as cap_logs:
+            m = fetch_manifest()
+
+        assert m.bundles["vep_bundle"].min_app_version == "not-a-version"
+        # No advisory warning emitted (compare skipped on InvalidVersion).
+        assert self._events_named(cap_logs, self.EVENT_NAME) == []
+
+    def test_malformed_app_version_does_not_raise(self, tmp_path: Path, monkeypatch):
+        """An unparseable running-app version must never raise or block loading."""
+        path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "garbage")
+
+        with capture_logs() as cap_logs:
+            m = fetch_manifest()
+
+        assert m.bundles["vep_bundle"].version == "v2.0.0"
+        assert self._events_named(cap_logs, self.EVENT_NAME) == []
+
+    def test_leading_v_tolerated_on_both_sides(self, tmp_path: Path, monkeypatch):
+        """Both the manifest's ``v0.2.0`` form and a ``v0.1.0`` running app
+        version are accepted; semver compare strips a single leading ``v``."""
+        payload = json.loads(json.dumps(V2_PAYLOAD))
+        payload["bundles"]["vep_bundle"]["min_app_version"] = "v0.2.0"
+        path = _write_manifest(tmp_path / "manifest.json", payload)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "v0.1.0")
+
+        with capture_logs() as cap_logs:
+            fetch_manifest()
+
+        events = self._events_named(cap_logs, self.EVENT_NAME)
+        assert len(events) == 1
+        assert events[0]["installed_app_version"] == "0.1.0"
+        assert events[0]["required_app_version"] == "0.2.0"
+
+    def test_current_app_version_resolves_backend_main(self, monkeypatch):
+        """Default resolver returns ``backend.main.VERSION`` (lazy-imported)."""
+        from backend.main import VERSION
+
+        assert manifest_mod._current_app_version() == VERSION
+        # And the structlog logger module is wired up.
+        assert isinstance(manifest_mod._structlog, structlog.stdlib.BoundLogger) or hasattr(
+            manifest_mod._structlog, "warning"
+        )
 
 
 # ── repo manifest sanity (defensive — catches drift in bundles/manifest.json) ──
