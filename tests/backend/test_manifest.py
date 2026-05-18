@@ -402,9 +402,7 @@ class TestBundleV2:
         assert entry.sha256 == "0" * 64
         assert entry.size_bytes == 600_000_000
 
-    def test_v2_manifest_tolerates_min_app_version_additive_key(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_v2_manifest_tolerates_min_app_version_additive_key(self, tmp_path: Path, monkeypatch):
         """Forward-compat contract — additive keys must not break older parsers."""
         path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
