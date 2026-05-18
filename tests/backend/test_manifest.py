@@ -33,7 +33,7 @@ SAMPLE_PAYLOAD: dict = {
             "size_bytes": 523801111,
         },
         "vep_bundle": {
-            "version": "v1.0",
+            "version": "v1.0.0",
             "build_date": "2026-04-10",
             "url": "https://example.com/vep.db",
             "sha256": "1786b5bc1a6f5a0440239f40d5f5ac69d15ce213015a9cbf11affa05bbedfff0",
@@ -48,6 +48,34 @@ SAMPLE_PAYLOAD: dict = {
         "dbnsfp": {
             "url": "https://dist.genos.us/academic/e55b09/dbNSFP5.3.1a.zip",
             "last_known_version": "5.3.1a",
+        },
+    },
+}
+
+V2_PAYLOAD: dict = {
+    "schema_version": 1,
+    "generated_at": "2026-05-18T00:00:00Z",
+    "bundles": {
+        "lai_bundle": {
+            "version": "v1.1",
+            "build_date": "2026-04-07",
+            "url": "https://example.com/lai.tar.gz",
+            "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
+            "size_bytes": 523801111,
+        },
+        "vep_bundle": {
+            "version": "v2.0.0",
+            "build_date": "2026-05-18",
+            "url": "https://github.com/bioedcam/GenomeInsight/releases/download/bundle-v2.0.0/vep_bundle.db",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "size_bytes": 600_000_000,
+            "min_app_version": "0.2.0",
+        },
+    },
+    "pipeline_pins": {
+        "clinvar": {
+            "url": "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz",
+            "last_known_version": "",
         },
     },
 }
@@ -344,6 +372,42 @@ class TestAccessors:
             assert get_pipeline_pin("clinvar") is None
 
 
+# ── v2.0.0 bundle fixture ─────────────────────────────────────────────
+
+
+class TestBundleV2:
+    """The v2.0.0 vep_bundle fixture loads with all current fields and
+    tolerates the additive ``min_app_version`` JSON key (parser support for
+    that field lands in step 5)."""
+
+    def test_v2_manifest_loads_with_all_fields(self, tmp_path: Path, monkeypatch):
+        path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        m = fetch_manifest()
+        entry = m.bundles["vep_bundle"]
+        assert entry.version == "v2.0.0"
+        assert entry.build_date == "2026-05-18"
+        assert entry.url.endswith("/bundle-v2.0.0/vep_bundle.db")
+        assert entry.sha256 == "0" * 64
+        assert entry.size_bytes == 600_000_000
+
+    def test_v2_manifest_tolerates_min_app_version_additive_key(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Forward-compat contract — additive keys must not break older parsers."""
+        path = _write_manifest(tmp_path / "manifest.json", V2_PAYLOAD)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        m = fetch_manifest()
+        assert "vep_bundle" in m.bundles
+        assert "min_app_version" in V2_PAYLOAD["bundles"]["vep_bundle"]
+
+    def test_legacy_v1_version_normalized_to_v1_0_0(self):
+        """Prior ``v1.0`` was normalized to ``v1.0.0`` for clean semver compare."""
+        assert SAMPLE_PAYLOAD["bundles"]["vep_bundle"]["version"] == "v1.0.0"
+
+
 # ── repo manifest sanity (defensive — catches drift in bundles/manifest.json) ──
 
 
@@ -370,3 +434,19 @@ class TestRepoManifest:
         )
         for required in required_pins:
             assert required in m.pipeline_pins, f"missing pipeline pin: {required}"
+
+    def test_repo_manifest_vep_bundle_is_v2_0_0(self, monkeypatch):
+        """Pins step 4's manifest update against accidental rollback."""
+        repo_root = Path(__file__).resolve().parents[2]
+        path = repo_root / "bundles" / "manifest.json"
+        if not path.is_file():
+            pytest.skip("bundles/manifest.json not present in this checkout")
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        m = fetch_manifest()
+        vep = m.bundles["vep_bundle"]
+        assert vep.version == "v2.0.0"
+        assert vep.url.endswith("/bundle-v2.0.0/vep_bundle.db")
+        assert vep.size_bytes >= 100_000_000  # release-asset territory (>100 MB)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        assert raw["bundles"]["vep_bundle"]["min_app_version"] == "0.2.0"
