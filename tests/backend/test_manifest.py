@@ -21,6 +21,16 @@ from backend.db.manifest import (
     reset_cache,
 )
 
+# The VEP bundle v2.0.0 SHA-256 and exact size are filled in by the
+# cluster-side rebuild that produces vep_bundle.db (see
+# docs/bundle-release-runbook.md §3). Until that asset is published, the
+# manifest carries a sentinel SHA-256 of all zeros and the planned size
+# placeholder. These constants name those placeholders so the test
+# assertions are exact (per CodeRabbit feedback) and the future swap is
+# a single-line update.
+VEP_BUNDLE_SHA256_PLACEHOLDER = "0" * 64
+VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER = 600_000_000
+
 SAMPLE_PAYLOAD: dict = {
     "schema_version": 1,
     "generated_at": "2026-05-08T00:00:00Z",
@@ -67,8 +77,8 @@ V2_PAYLOAD: dict = {
             "version": "v2.0.0",
             "build_date": "2026-05-18",
             "url": "https://github.com/bioedcam/GenomeInsight/releases/download/bundle-v2.0.0/vep_bundle.db",
-            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-            "size_bytes": 600_000_000,
+            "sha256": VEP_BUNDLE_SHA256_PLACEHOLDER,
+            "size_bytes": VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER,
             "min_app_version": "0.2.0",
         },
     },
@@ -447,6 +457,10 @@ class TestRepoManifest:
         vep = m.bundles["vep_bundle"]
         assert vep.version == "v2.0.0"
         assert vep.url.endswith("/bundle-v2.0.0/vep_bundle.db")
-        assert vep.size_bytes >= 100_000_000  # release-asset territory (>100 MB)
+        # Exact-equality vs the named placeholder until the cluster rebuild
+        # publishes the real asset; that change updates the constants above
+        # and this assertion stays the same.
+        assert vep.size_bytes == VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER
+        assert vep.sha256 == VEP_BUNDLE_SHA256_PLACEHOLDER
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["bundles"]["vep_bundle"]["min_app_version"] == "0.2.0"
