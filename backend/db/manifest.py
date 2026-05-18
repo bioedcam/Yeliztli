@@ -186,12 +186,15 @@ def _emit_min_app_version_advisories(manifest: Manifest) -> None:
         except InvalidVersion:
             continue
         if installed < required:
-            _structlog.warning(
-                "manifest_min_app_version_below_threshold",
-                bundle=name,
-                installed_app_version=str(installed),
-                required_app_version=str(required),
-            )
+            try:
+                _structlog.warning(
+                    "manifest_min_app_version_below_threshold",
+                    bundle=name,
+                    installed_app_version=str(installed),
+                    required_app_version=str(required),
+                )
+            except Exception:
+                pass
 
 
 def _load_local(path: Path) -> Manifest:
