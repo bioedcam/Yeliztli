@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-08T00:00:00Z",
+  "generated_at": "2026-05-18T00:00:00Z",
   "bundles": {
     "lai_bundle": {
       "version": "v1.1",
@@ -10,11 +10,12 @@
       "size_bytes": 523801111
     },
     "vep_bundle": {
-      "version": "v1.0",
-      "build_date": "2026-04-10",
-      "url": "https://raw.githubusercontent.com/bioedcam/GenomeInsight/main/bundles/vep_bundle.db",
-      "sha256": "1786b5bc1a6f5a0440239f40d5f5ac69d15ce213015a9cbf11affa05bbedfff0",
-      "size_bytes": 11374592
+      "version": "v2.0.0",
+      "build_date": "2026-05-18",
+      "url": "https://github.com/bioedcam/GenomeInsight/releases/download/bundle-v2.0.0/vep_bundle.db",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 600000000,
+      "min_app_version": "0.2.0"
     },
     "ancestry_pca": {
       "version": "v1.0",
