@@ -94,6 +94,8 @@ def _genotype_to_ref_alt(genotype: str) -> tuple[str, str] | None:
     """
     if not genotype or genotype == "--":
         return None
+    if len(genotype) not in (1, 2):
+        return None
     if not all(c in _VALID_BASES for c in genotype):
         return None
 

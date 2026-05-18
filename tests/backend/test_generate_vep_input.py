@@ -106,7 +106,7 @@ def test_generate_vep_vcf_per_vendor(tmp_path: Path, vendor: str, fixture: Path)
         assert len(cols) == 8
         chrom, pos, _rsid, ref, alt, qual, filt, info = cols
         assert chrom in {str(n) for n in range(1, 23)} | {"X", "Y", "MT"}
-        assert int(pos) >= 0
+        assert int(pos) > 0
         assert ref in {"A", "C", "G", "T"}
         assert alt == "." or alt in {"A", "C", "G", "T"}
         assert qual == "."
@@ -185,12 +185,30 @@ def test_rsid_catalog_rejects_malformed(tmp_path: Path, row: str, error_fragment
         list(module._iter_catalog_rows(catalog_path))
 
 
+@pytest.mark.parametrize(
+    "genotype,expected",
+    [
+        ("", None),
+        ("--", None),
+        ("AAA", None),
+        ("ACGT", None),
+        ("XY", None),
+        ("A", ("A", ".")),
+        ("AA", ("A", ".")),
+        ("AC", ("A", "C")),
+    ],
+)
+def test_genotype_to_ref_alt_rejects_invalid_lengths(genotype, expected) -> None:
+    module = _load_script_module()
+    assert module._genotype_to_ref_alt(genotype) == expected
+
+
 def test_cli_rsid_catalog_round_trip(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog.tsv"
     catalog_path.write_text("rs1\t1\t100\nrs2\t2\t200\n", encoding="utf-8")
     output_path = tmp_path / "out.vcf"
 
-    result = subprocess.run(
+    subprocess.run(
         [
             sys.executable,
             str(SCRIPT_PATH),
@@ -204,7 +222,6 @@ def test_cli_rsid_catalog_round_trip(tmp_path: Path) -> None:
         check=True,
     )
 
-    assert result.returncode == 0
     headers, data_lines = _read_vcf_lines(output_path)
     assert any("##source=GenomeInsight-rsid-catalog" in h for h in headers)
     assert data_lines == [
