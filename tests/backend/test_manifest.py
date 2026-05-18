@@ -399,8 +399,8 @@ class TestBundleV2:
         assert entry.version == "v2.0.0"
         assert entry.build_date == "2026-05-18"
         assert entry.url.endswith("/bundle-v2.0.0/vep_bundle.db")
-        assert entry.sha256 == "0" * 64
-        assert entry.size_bytes == 600_000_000
+        assert entry.sha256 == VEP_BUNDLE_SHA256_PLACEHOLDER
+        assert entry.size_bytes == VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER
 
     def test_v2_manifest_tolerates_min_app_version_additive_key(self, tmp_path: Path, monkeypatch):
         """Forward-compat contract — additive keys must not break older parsers."""
