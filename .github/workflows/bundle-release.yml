@@ -1,0 +1,171 @@
+name: Bundle Release (verify-and-publish)
+
+# Manual-only workflow that verifies a drafted VEP bundle release matches the
+# `bundles/manifest.json` entry before a maintainer publishes it.
+#
+# See docs/bundle-release-runbook.md for the end-to-end release sequence.
+# This workflow runs step 6 of that runbook.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to verify (e.g., bundle-v2.0.0)"
+        required: true
+        type: string
+      bundle_key:
+        description: "Manifest key to verify against"
+        required: true
+        type: choice
+        default: "vep_bundle"
+        options:
+          - vep_bundle
+
+concurrency:
+  group: bundle-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify bundle asset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve manifest entry
+        id: manifest
+        run: |
+          python <<'PY'
+          import json, os, pathlib, sys
+
+          manifest_path = pathlib.Path("bundles/manifest.json")
+          manifest = json.loads(manifest_path.read_text())
+
+          key = "${{ inputs.bundle_key }}"
+          entry = manifest.get("bundles", {}).get(key)
+          if entry is None:
+              print(f"::error::manifest has no entry for bundle key {key!r}")
+              sys.exit(1)
+
+          required = ("version", "url", "sha256", "size_bytes")
+          missing = [f for f in required if not entry.get(f)]
+          if missing:
+              print(f"::error::manifest entry {key!r} is missing fields: {missing}")
+              sys.exit(1)
+
+          out = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a") as fh:
+              fh.write(f"version={entry['version']}\n")
+              fh.write(f"url={entry['url']}\n")
+              fh.write(f"sha256={entry['sha256']}\n")
+              fh.write(f"size_bytes={entry['size_bytes']}\n")
+              fh.write(f"min_app_version={entry.get('min_app_version', '')}\n")
+
+          print(
+              f"Resolved {key} -> version={entry['version']} "
+              f"size={entry['size_bytes']} url={entry['url']}"
+          )
+          PY
+
+      - name: Assert release tag matches manifest version
+        run: |
+          tag="${{ inputs.release_tag }}"
+          manifest_version="${{ steps.manifest.outputs.version }}"
+          expected="bundle-${manifest_version}"
+          if [ "$tag" != "$expected" ]; then
+            echo "::error::release_tag '$tag' does not match manifest version '$manifest_version' (expected '$expected')"
+            exit 1
+          fi
+          echo "Tag matches manifest version: $tag"
+
+      - name: Download release asset
+        run: |
+          mkdir -p artifacts
+          url="${{ steps.manifest.outputs.url }}"
+          echo "Fetching $url"
+          curl -fL --retry 3 --retry-delay 10 -o artifacts/vep_bundle.db "$url"
+          ls -la artifacts/
+
+      - name: Verify SHA-256
+        run: |
+          expected="${{ steps.manifest.outputs.sha256 }}"
+          actual=$(sha256sum artifacts/vep_bundle.db | awk '{print $1}')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::SHA-256 mismatch: expected $expected, got $actual"
+            exit 1
+          fi
+          echo "SHA-256 OK: $actual"
+
+      - name: Verify size in bytes
+        run: |
+          expected="${{ steps.manifest.outputs.size_bytes }}"
+          actual=$(stat -c %s artifacts/vep_bundle.db)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::size_bytes mismatch: expected $expected, got $actual"
+            exit 1
+          fi
+          echo "size_bytes OK: $actual"
+
+      - name: Verify internal bundle_metadata.bundle_version
+        run: |
+          python <<'PY'
+          import sqlite3, sys
+
+          manifest_version = "${{ steps.manifest.outputs.version }}"
+          conn = sqlite3.connect("artifacts/vep_bundle.db")
+          try:
+              row = conn.execute(
+                  "SELECT value FROM bundle_metadata WHERE key = 'bundle_version'"
+              ).fetchone()
+          except sqlite3.OperationalError as exc:
+              print(f"::error::bundle SQLite missing bundle_metadata table: {exc}")
+              sys.exit(1)
+          finally:
+              conn.close()
+
+          if row is None:
+              print(
+                  "::error::bundle_metadata has no 'bundle_version' row — "
+                  f"manifest expects {manifest_version}. Rebuild with "
+                  "`scripts/build_vep_bundle.py --bundle-version <semver>`."
+              )
+              sys.exit(1)
+
+          internal = row[0]
+          if internal != manifest_version:
+              print(
+                  f"::error::bundle_metadata.bundle_version={internal!r} "
+                  f"does not match manifest.version={manifest_version!r}"
+              )
+              sys.exit(1)
+
+          print(f"Internal bundle_version OK: {internal}")
+          PY
+
+      - name: Summary
+        run: |
+          {
+            echo "## Bundle release verification: ${{ inputs.release_tag }}"
+            echo ""
+            echo "- Manifest key: \`${{ inputs.bundle_key }}\`"
+            echo "- Manifest version: \`${{ steps.manifest.outputs.version }}\`"
+            echo "- min_app_version: \`${{ steps.manifest.outputs.min_app_version }}\`"
+            echo "- Asset URL: ${{ steps.manifest.outputs.url }}"
+            echo "- SHA-256: \`${{ steps.manifest.outputs.sha256 }}\`"
+            echo "- size_bytes: \`${{ steps.manifest.outputs.size_bytes }}\`"
+            echo ""
+            echo "All checks passed. A maintainer can now flip the draft release to public:"
+            echo ""
+            echo "\`\`\`"
+            echo "gh release edit ${{ inputs.release_tag }} --draft=false"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
