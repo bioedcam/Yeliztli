@@ -361,6 +361,67 @@ class TestParseVepVCF:
         assert stats.variants_stored == 3
         assert len(stats.unique_genes) >= 3
 
+    def test_union_input_no_duplicates(self, tmp_path: Path) -> None:
+        """Step 2: when the union-VCF input from step 1 contains the same
+        (rsid, alt) twice — overlap between 23andMe and AncestryDNA catalogs —
+        the bundle stores one row per (rsid, alt), not two."""
+        csq_hdr = (
+            "Allele|Consequence|IMPACT|SYMBOL|Gene"
+            "|Feature_type|Feature|BIOTYPE|EXON|INTRON"
+            "|HGVSc|HGVSp|STRAND|FLAGS|MANE_SELECT"
+        )
+        meta = f'##INFO=<ID=CSQ,Number=.,Type=String,Description="Format: {csq_hdr}">'
+        csq = (
+            "A|missense_variant|MODERATE|MTHFR|4524"
+            "|Transcript|ENST00000376592|protein_coding"
+            "|5/11||ENST00000376592:c.665C>T"
+            "|ENST00000376592:p.Ala222Val|-1||NM_005957.5"
+        )
+        apoe_csq = (
+            "C|missense_variant|MODERATE|APOE|348"
+            "|Transcript|ENST00000252486|protein_coding"
+            "|4/4||ENST00000252486:c.388T>C"
+            "|ENST00000252486:p.Cys130Arg|1|mane_select|NM_000041.4"
+        )
+        # Same (rsid, alt) appears twice (simulating union overlap); a unique
+        # rsid appears once. Expected: 2 rows total, not 3.
+        lines = [
+            "##fileformat=VCFv4.2",
+            meta,
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+            f"1\t11856378\trs1801133\tG\tA\t.\t.\tCSQ={csq}",
+            f"1\t11856378\trs1801133\tG\tA\t.\t.\tCSQ={csq}",
+            f"19\t44908684\trs429358\tT\tC\t.\t.\tCSQ={apoe_csq}",
+        ]
+        vcf_path = tmp_path / "union.vcf"
+        vcf_path.write_text("\n".join(lines) + "\n")
+
+        stats = BuildStats()
+        rows = parse_vep_vcf(vcf_path, stats)
+
+        rsids = sorted(r["rsid"] for r in rows)
+        assert rsids == ["rs1801133", "rs429358"]
+        assert len(rows) == 2, f"expected 2 unique rows, got {len(rows)}"
+        assert stats.total_input_lines == 3
+        assert stats.variants_stored == 2
+
+        # And the built database carries the union row count (no duplicates).
+        db_path = tmp_path / "union.db"
+        build_bundle_db(
+            rows,
+            db_path,
+            ensembl_version="112",
+            bundle_version="v2.0.0",
+        )
+        with sqlite3.connect(str(db_path)) as conn:
+            db_count = conn.execute("SELECT count(*) FROM vep_annotations").fetchone()[0]
+            meta_rows = dict(
+                conn.execute("SELECT key, value FROM bundle_metadata").fetchall()
+            )
+        assert db_count == 2
+        assert int(meta_rows["variant_count"]) == 2
+        assert meta_rows["bundle_version"] == "v2.0.0"
+
 
 # ── Database Building ───────────────────────────────────────────────────
 
@@ -431,6 +492,40 @@ class TestBuildBundleDB:
         assert meta["ensembl_version"] == "112"
         assert meta["schema_version"] == "1"
         assert int(meta["variant_count"]) == len(seed_rows)
+
+    def test_bundle_version_round_trips_to_metadata(
+        self, tmp_path: Path, seed_rows: list[dict]
+    ) -> None:
+        """Step 2: --bundle-version writes to bundle_metadata.bundle_version
+        alongside ensembl_version/build_date/variant_count/schema_version
+        (Plan §5.5)."""
+        db_path = tmp_path / "test_vep.db"
+        build_bundle_db(
+            seed_rows,
+            db_path,
+            ensembl_version="112",
+            bundle_version="v2.0.0",
+        )
+
+        with sqlite3.connect(str(db_path)) as conn:
+            meta = dict(conn.execute("SELECT key, value FROM bundle_metadata").fetchall())
+        assert meta["bundle_version"] == "v2.0.0"
+        assert meta["ensembl_version"] == "112"
+        assert meta["schema_version"] == "1"
+        assert "build_date" in meta
+        assert int(meta["variant_count"]) == len(seed_rows)
+
+    def test_bundle_version_omitted_when_none(
+        self, tmp_path: Path, seed_rows: list[dict]
+    ) -> None:
+        """bundle_version key is absent when the arg is not supplied —
+        bundles built before v2.0.0 (Plan §5.5 contract clause 3)."""
+        db_path = tmp_path / "test_vep.db"
+        build_bundle_db(seed_rows, db_path, ensembl_version="112")
+
+        with sqlite3.connect(str(db_path)) as conn:
+            meta = dict(conn.execute("SELECT key, value FROM bundle_metadata").fetchall())
+        assert "bundle_version" not in meta
 
     def test_returns_sha256(self, tmp_path: Path, seed_rows: list[dict]) -> None:
         db_path = tmp_path / "test_vep.db"
@@ -581,6 +676,31 @@ class TestCLI:
         with sqlite3.connect(str(output)) as conn:
             count = conn.execute("SELECT count(*) FROM vep_annotations").fetchone()[0]
         assert count >= 50
+
+    def test_cli_bundle_version_round_trips(self, tmp_path: Path) -> None:
+        """Step 2: --bundle-version on the CLI round-trips into bundle_metadata."""
+        output = tmp_path / "vep_bundle.db"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--seed-csv",
+                str(VEP_SEED_CSV),
+                "--output",
+                str(output),
+                "--ensembl-version",
+                "112",
+                "--bundle-version",
+                "v2.0.0",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Script failed:\n{result.stderr}"
+        with sqlite3.connect(str(output)) as conn:
+            meta = dict(conn.execute("SELECT key, value FROM bundle_metadata").fetchall())
+        assert meta["bundle_version"] == "v2.0.0"
+        assert meta["ensembl_version"] == "112"
 
     def test_write_stats_json(self, tmp_path: Path) -> None:
         """--write-stats produces a JSON stats file."""

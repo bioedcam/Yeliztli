@@ -10,9 +10,9 @@ for fast batch lookups — no live VEP required.
 
 Usage::
 
-    # From VEP VCF output:
+    # From VEP VCF output (union 23andMe v5 ∪ AncestryDNA v2.0 catalog):
     python scripts/build_vep_bundle.py --vep-vcf vep_output.vcf.gz \\
-        --output vep_bundle.db --ensembl-version 112
+        --output vep_bundle.db --ensembl-version 112 --bundle-version v2.0.0
 
     # From seed CSV (testing / development):
     python scripts/build_vep_bundle.py --seed-csv tests/fixtures/seed_csvs/vep_seed.csv \\
@@ -539,6 +539,7 @@ def build_bundle_db(
     *,
     ensembl_version: str,
     build_date: str | None = None,
+    bundle_version: str | None = None,
 ) -> str:
     """Create the vep_bundle.db SQLite file from parsed rows.
 
@@ -547,6 +548,10 @@ def build_bundle_db(
         output_path: Path for the output SQLite file.
         ensembl_version: Ensembl release number (e.g., "112").
         build_date: Optional build date string (ISO format).
+        bundle_version: Optional semver string (e.g., "v2.0.0") recorded under
+            ``bundle_metadata.bundle_version``. The manifest's `version` is the
+            authoritative semver consulted by the staleness gate; this value
+            is informational/audit only (Plan §5.5).
 
     Returns:
         SHA-256 hex digest of the created file.
@@ -591,6 +596,8 @@ def build_bundle_db(
             "variant_count": str(len(rows)),
             "schema_version": "1",
         }
+        if bundle_version is not None:
+            metadata["bundle_version"] = bundle_version
         for key, value in metadata.items():
             conn.execute(
                 "INSERT OR REPLACE INTO bundle_metadata (key, value) VALUES (?, ?)",
@@ -703,6 +710,15 @@ Examples:
         help="Ensembl release version (default: 112).",
     )
     parser.add_argument(
+        "--bundle-version",
+        default=None,
+        help=(
+            "Bundle semver written to bundle_metadata.bundle_version "
+            "(e.g., 'v2.0.0'). Informational/audit only; the authoritative "
+            "version lives in bundles/manifest.json (Plan §5.5)."
+        ),
+    )
+    parser.add_argument(
         "--rsid-catalog",
         type=Path,
         help="Optional rsid catalog file (one rsid per line) for coverage report.",
@@ -731,6 +747,8 @@ Examples:
     print(f"  Input:           {input_path}")
     print(f"  Output:          {args.output}")
     print(f"  Ensembl version: {args.ensembl_version}")
+    if args.bundle_version:
+        print(f"  Bundle version:  {args.bundle_version}")
     if args.dry_run:
         print("  Mode:            DRY RUN")
     print("=" * 60)
@@ -771,6 +789,7 @@ Examples:
             rows,
             args.output,
             ensembl_version=args.ensembl_version,
+            bundle_version=args.bundle_version,
         )
 
         build_elapsed = time.monotonic() - build_start
