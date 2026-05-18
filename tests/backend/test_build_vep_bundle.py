@@ -415,9 +415,7 @@ class TestParseVepVCF:
         )
         with sqlite3.connect(str(db_path)) as conn:
             db_count = conn.execute("SELECT count(*) FROM vep_annotations").fetchone()[0]
-            meta_rows = dict(
-                conn.execute("SELECT key, value FROM bundle_metadata").fetchall()
-            )
+            meta_rows = dict(conn.execute("SELECT key, value FROM bundle_metadata").fetchall())
         assert db_count == 2
         assert int(meta_rows["variant_count"]) == 2
         assert meta_rows["bundle_version"] == "v2.0.0"
@@ -515,9 +513,7 @@ class TestBuildBundleDB:
         assert "build_date" in meta
         assert int(meta["variant_count"]) == len(seed_rows)
 
-    def test_bundle_version_omitted_when_none(
-        self, tmp_path: Path, seed_rows: list[dict]
-    ) -> None:
+    def test_bundle_version_omitted_when_none(self, tmp_path: Path, seed_rows: list[dict]) -> None:
         """bundle_version key is absent when the arg is not supplied —
         bundles built before v2.0.0 (Plan §5.5 contract clause 3)."""
         db_path = tmp_path / "test_vep.db"
