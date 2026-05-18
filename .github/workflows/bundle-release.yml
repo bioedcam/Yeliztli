@@ -101,7 +101,7 @@ jobs:
           release_url=$(gh release view "$tag" \
             --repo "${GITHUB_REPOSITORY}" \
             --json assets \
-            --jq ".assets[] | select(.name == \"${asset_name}\") | .url")
+            --jq ".assets[] | select(.name == \"${asset_name}\") | .browser_download_url")
           if [ -z "$release_url" ]; then
             echo "::error::asset '${asset_name}' not found in release '$tag'"
             exit 1
