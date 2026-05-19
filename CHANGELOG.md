@@ -153,3 +153,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ##### Changed
 
 - Two-phase SSE progress messages refreshed to match the Plan §7.3 vocabulary: the initial running message is now `"Annotating…"` (was `"Starting annotation"`) and the bridge into analysis modules is `"Analyzing…"` (was `"Running analysis modules..."`). Per-batch (`"Annotated X/Y variants"`) and per-module (`"Analyzing: <module> (i/n)"`) detail messages are unchanged.
+
+#### Step 11 — Staleness service
+
+##### Added
+
+- New `backend/services/` package with `staleness.py::is_sample_stale(sample_id) -> bool` (Plan §7.4 step 3). Reads the per-sample `annotation_state.value WHERE key='vep_bundle_version'` and compares its `packaging.version.Version` major against the installed `database_versions['vep_bundle'].version` major. Minor/patch differences are not stale.
+- Missing-state fallback (defensive contract): a per-sample DB without an `annotation_state` table, without a `vep_bundle_version` row, or with a value that cannot be parsed as a semver is treated as `v1.0.0`. The helper emits a structured `annotation_state_missing` warning with a `reason` field and never raises on a malformed per-sample DB. When the installed `vep_bundle` row is missing or malformed, the helper logs `vep_bundle_version_unreadable` and declines to gate.
+- New `tests/backend/test_staleness.py` (10 cases): fresh sample, minor/patch-difference fresh, stale (lower sample major), missing `annotation_state` table → stale + warning against installed v2 / fresh against installed v1, missing `vep_bundle_version` row, malformed recorded version, no-raise contract on malformed per-sample DB, missing installed version → not stale + `vep_bundle_version_unreadable` warning, missing sample row → fallback with `reason="sample_row_missing"`.
