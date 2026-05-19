@@ -138,3 +138,18 @@ export interface BundleGatePayload {
   size_bytes: number
   checksum_sha256: string | null
 }
+
+/**
+ * HTTP 409 payload returned by ``POST /api/setup/import-backup`` when the
+ * backup's recorded VEP bundle major doesn't match the installed bundle's
+ * major (Plan §7.6, ADNA-00f). Either direction blocks; the restore is
+ * transactional with respect to ``data_dir`` extraction — no files are
+ * written when this fires.
+ */
+export interface BundleVersionMismatchPayload {
+  error: 'bundle_version_mismatch'
+  installed_version: string
+  backup_version: string
+  direction: 'backup_below_installed' | 'backup_above_installed'
+  sample_member: string
+}

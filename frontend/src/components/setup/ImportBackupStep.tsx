@@ -5,7 +5,11 @@
  */
 
 import { useCallback, useRef, useState } from 'react'
-import { useDetectExisting, useImportBackup } from '@/api/setup'
+import {
+  BundleVersionMismatchError,
+  useDetectExisting,
+  useImportBackup,
+} from '@/api/setup'
 import { cn } from '@/lib/utils'
 import {
   AlertTriangle,
@@ -15,6 +19,7 @@ import {
   FolderSearch,
   Upload,
 } from 'lucide-react'
+import RestoreStep from './RestoreStep'
 
 interface ImportBackupStepProps {
   onNext: () => void
@@ -75,8 +80,31 @@ export default function ImportBackupStep({
     try {
       await importMutation.mutateAsync(selectedFile)
     } catch {
-      // Error state handled by importMutation.isError
+      // Error state handled by importMutation.isError (covers both the
+      // generic error path and the §7.6 bundle-version mismatch banner).
     }
+  }
+
+  function handleMismatchRetry() {
+    setSelectedFile(null)
+    setFileError(null)
+    importMutation.reset()
+    fileInputRef.current?.click()
+  }
+
+  // §7.6 bundle-version mismatch — short-circuits the rest of the step
+  // because no files were written to data_dir.
+  if (
+    importMutation.isError &&
+    importMutation.error instanceof BundleVersionMismatchError
+  ) {
+    return (
+      <RestoreStep
+        payload={importMutation.error.payload}
+        onRetry={handleMismatchRetry}
+        onBack={onBack}
+      />
+    )
   }
 
   // Auto-detected existing installation

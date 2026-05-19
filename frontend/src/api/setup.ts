@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   AcceptDisclaimerResult,
   BundleGatePayload,
+  BundleVersionMismatchPayload,
   CredentialsData,
   DatabaseListResult,
   DetectExistingResult,
@@ -42,6 +43,36 @@ function isBundleGatePayload(value: unknown): value is BundleGatePayload {
     typeof obj.required_version === 'string' &&
     obj.vendor === 'ancestrydna' &&
     typeof obj.update_url === 'string'
+  )
+}
+
+/**
+ * Error raised when `/api/setup/import-backup` returns HTTP 409 with the
+ * §7.6 mismatch payload. Carries enough context for the wizard's
+ * RestoreStep banner to render both versions.
+ */
+export class BundleVersionMismatchError extends Error {
+  readonly status = 409
+  readonly payload: BundleVersionMismatchPayload
+
+  constructor(payload: BundleVersionMismatchPayload) {
+    super('bundle_version_mismatch')
+    this.name = 'BundleVersionMismatchError'
+    this.payload = payload
+  }
+}
+
+function isBundleVersionMismatchPayload(
+  value: unknown,
+): value is BundleVersionMismatchPayload {
+  if (!value || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return (
+    obj.error === 'bundle_version_mismatch' &&
+    typeof obj.installed_version === 'string' &&
+    typeof obj.backup_version === 'string' &&
+    (obj.direction === 'backup_below_installed' ||
+      obj.direction === 'backup_above_installed')
   )
 }
 
@@ -110,7 +141,14 @@ async function postImportBackup(file: File): Promise<ImportBackupResult> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    const detail = body?.detail || `Import failed: ${res.status}`
+    if (res.status === 409 && isBundleVersionMismatchPayload(body?.detail)) {
+      throw new BundleVersionMismatchError(
+        body.detail as BundleVersionMismatchPayload,
+      )
+    }
+    const detail =
+      (typeof body?.detail === 'string' ? body.detail : null) ||
+      `Import failed: ${res.status}`
     throw new Error(detail)
   }
   return res.json()
