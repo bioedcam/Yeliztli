@@ -180,3 +180,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ##### Tests
 
 - The step's gate verification is the existing drift-guard parametrization in `tests/backend/test_stale_sample_dependency.py` (Plan §7.5 enumeration check). All 101 parametrized cases pass post wire-up. Route-level HTTP 423 assertions on every gated route are scoped to step 18 (Phase 0 backend test sweep — closure) per Plan §16.6 / ADNA-00e.
+
+#### Step 14 — Frontend `<StaleSampleGate>` + Dashboard wrap
+
+##### Added
+
+- New `frontend/src/components/layout/StaleSampleGate.tsx` (Plan §7.5). Probes the active sample (URL param `sample_id`) by issuing a single `GET /api/variants/count?sample_id=<id>` request — a representative sample-scoped gated route from step 13. A `423` response is parsed into the `{installed_version, required_version, update_url, reannotate_url}` payload (Plan §7.5) and rendered as a full-page banner with the canonical copy ("This sample was annotated against bundle vX; re-annotate against vY to view results."). The single CTA fires `POST` against `reannotate_url` — the existing `POST /api/annotation/{sample_id}` escape hatch carried in the 423 payload by `require_fresh_sample`. On success the staleness probe is invalidated so the gate lifts automatically once `run_annotation_task` upserts a fresh `vep_bundle_version` row (Plan §7.3). Any other probe outcome — 2xx, 4xx other than 423, network error — passes `children` through unchanged; the gate is concerned only with the staleness contract.
+- `frontend/src/pages/Dashboard.tsx` wraps its active-sample layout with `<StaleSampleGate>`, blocking the status bar / annotation panel / module cards / findings preview / QC sections behind the gate when the active sample is stale.
+- New `frontend/src/test/stale-sample-gate.test.tsx` (5 cases): banner renders payload-driven `installed_version` / `required_version` and the bundle-update link on 423; children render on 200; no probe fires when `sample_id` is absent from the URL; CTA POSTs to the payload's `reannotate_url` and surfaces success state; a 500 from re-annotation populates the in-banner error message without removing the gate.

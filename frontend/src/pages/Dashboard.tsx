@@ -11,6 +11,7 @@ import AnnotationPanel from '@/components/dashboard/AnnotationPanel'
 import ModuleCardsGrid from '@/components/dashboard/ModuleCardsGrid'
 import FindingsPreview from '@/components/dashboard/FindingsPreview'
 import QualityControl from '@/components/dashboard/QualityControl'
+import StaleSampleGate from '@/components/layout/StaleSampleGate'
 import { useSamples } from '@/api/samples'
 import { useTotalVariantCount, useQCStats } from '@/api/variants'
 import { parseSampleId } from '@/lib/format'
@@ -60,24 +61,26 @@ export default function Dashboard() {
   // ── Active sample: full dashboard layout ──────────────────
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {/* Status bar */}
-      <StatusBar
-        sample={activeSample}
-        variantCount={variantCount ?? null}
-      />
+    <StaleSampleGate>
+      <div className="p-6 max-w-5xl mx-auto space-y-6">
+        {/* Status bar */}
+        <StatusBar
+          sample={activeSample}
+          variantCount={variantCount ?? null}
+        />
 
-      {/* Annotation panel */}
-      <AnnotationPanel sampleId={activeSample.id} variantCount={variantCount ?? null} />
+        {/* Annotation panel */}
+        <AnnotationPanel sampleId={activeSample.id} variantCount={variantCount ?? null} />
 
-      {/* Module cards grid */}
-      <ModuleCardsGrid sampleId={activeSample.id} />
+        {/* Module cards grid */}
+        <ModuleCardsGrid sampleId={activeSample.id} />
 
-      {/* High-confidence findings */}
-      <FindingsPreview sampleId={activeSample.id} />
+        {/* High-confidence findings */}
+        <FindingsPreview sampleId={activeSample.id} />
 
-      {/* Collapsible QC */}
-      <QualityControl variantCount={variantCount ?? null} qcStats={qcStats ?? null} />
-    </div>
+        {/* Collapsible QC */}
+        <QualityControl variantCount={variantCount ?? null} qcStats={qcStats ?? null} />
+      </div>
+    </StaleSampleGate>
   )
 }
