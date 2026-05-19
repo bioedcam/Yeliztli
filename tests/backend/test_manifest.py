@@ -605,3 +605,54 @@ class TestRepoManifest:
         assert vep.size_bytes >= 100_000_000  # release-asset territory (>100 MB)
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["bundles"]["vep_bundle"]["min_app_version"] == "0.2.0"
+
+
+# ── committed v2 manifest fixture (Step 18 / Plan §16.1) ──────────────
+
+
+class TestManifestV2Fixture:
+    """Phase 0 closure: `tests/fixtures/manifest_v2.json` loads cleanly.
+
+    The committed fixture is the shared test artifact for Phase 0 — keeps
+    other test modules from re-declaring V2_PAYLOAD inline and gives the
+    AncestryDNA fixture chain a single source of truth.
+    """
+
+    FIXTURE_PATH = (
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifest_v2.json"
+    )
+
+    def test_fixture_exists(self):
+        assert self.FIXTURE_PATH.is_file()
+
+    def test_fixture_loads_with_v2_0_0_fields(self, monkeypatch):
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(self.FIXTURE_PATH))
+        m = fetch_manifest()
+
+        vep = m.bundles["vep_bundle"]
+        assert vep.version == "v2.0.0"
+        assert vep.url.endswith("/bundle-v2.0.0/vep_bundle.db")
+        assert vep.size_bytes == 600_000_000
+        assert vep.min_app_version == "0.2.0"
+
+        # LAI v1.1.0 normalized (Plan §12.2 LAI-00a).
+        lai = m.bundles["lai_bundle"]
+        assert lai.version == "v1.1.0"
+        assert lai.min_app_version == "0.2.0"
+
+    def test_fixture_passes_min_app_version_check_at_threshold(self, monkeypatch):
+        """An app at 0.2.0 sees no advisory warning against the v2 fixture."""
+        from structlog.testing import capture_logs
+
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(self.FIXTURE_PATH))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.2.0")
+
+        with capture_logs() as cap_logs:
+            fetch_manifest()
+
+        events = [
+            e
+            for e in cap_logs
+            if e.get("event") == "manifest_min_app_version_below_threshold"
+        ]
+        assert events == []

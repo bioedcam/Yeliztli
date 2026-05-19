@@ -62,11 +62,13 @@ from backend.annotation.mondo_hpo import load_mondo_hpo_from_csv
 from backend.db.sample_schema import create_sample_tables
 from backend.db.tables import (
     annotated_variants,
+    annotation_state,
     clinvar_variants,
     database_versions,
     raw_variants,
     reference_metadata,
     sample_metadata_table,
+    update_history,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -885,6 +887,101 @@ class TestCoverageStatsPayload:
         result = run_annotation(sample_engine, mock_registry)
         assert result.total_variants == 0
         assert result.coverage_stats == {}
+
+
+class TestCoverageStatsSideEffects:
+    """Phase 0 closure (Step 18) / Plan §5.6 + §16.6 negative-side assertions.
+
+    `run_annotation` returns coverage telemetry on the result dataclass but
+    must NOT side-effect any reference- or per-sample-DB state. Provenance
+    is written by `huey_tasks.run_annotation_task` only after
+    `run_all_analyses` returns (Plan §5.6, §7.3, §7.4). These assertions lock
+    the contract so a future refactor can't quietly push provenance writes
+    back into the engine and re-introduce the half-fresh-gate failure mode.
+    """
+
+    def test_update_history_row_count_unchanged(
+        self,
+        sample_with_variants: sa.Engine,
+        mock_registry: MagicMock,
+    ) -> None:
+        """`run_annotation` never writes to `update_history`."""
+        _stamp_bundle_version(mock_registry.reference_engine, "v2.0.0")
+        _stamp_sample_metadata(sample_with_variants, file_format="23andme_v5")
+
+        ref_engine = mock_registry.reference_engine
+        with ref_engine.connect() as conn:
+            before = conn.execute(
+                sa.select(sa.func.count()).select_from(update_history)
+            ).scalar_one()
+
+        result = run_annotation(sample_with_variants, mock_registry)
+        assert result.total_variants > 0
+
+        with ref_engine.connect() as conn:
+            after = conn.execute(
+                sa.select(sa.func.count()).select_from(update_history)
+            ).scalar_one()
+        assert after == before == 0
+
+    def test_database_versions_vep_bundle_row_unchanged(
+        self,
+        sample_with_variants: sa.Engine,
+        mock_registry: MagicMock,
+    ) -> None:
+        """`run_annotation` never mutates the `vep_bundle` row in `database_versions`."""
+        _stamp_bundle_version(mock_registry.reference_engine, "v2.0.0")
+        _stamp_sample_metadata(sample_with_variants, file_format="23andme_v5")
+
+        ref_engine = mock_registry.reference_engine
+        with ref_engine.connect() as conn:
+            before_rows = conn.execute(
+                sa.select(database_versions).where(
+                    database_versions.c.db_name == "vep_bundle"
+                )
+            ).fetchall()
+
+        result = run_annotation(sample_with_variants, mock_registry)
+        assert result.coverage_stats["bundle_version"] == "v2.0.0"
+
+        with ref_engine.connect() as conn:
+            after_rows = conn.execute(
+                sa.select(database_versions).where(
+                    database_versions.c.db_name == "vep_bundle"
+                )
+            ).fetchall()
+
+        # Same row count, same version string, same downloaded_at timestamp —
+        # the engine read but did not write.
+        assert len(after_rows) == len(before_rows) == 1
+        assert before_rows[0].version == after_rows[0].version == "v2.0.0"
+        assert before_rows[0].downloaded_at == after_rows[0].downloaded_at
+
+    def test_annotation_state_untouched_by_engine(
+        self,
+        sample_with_variants: sa.Engine,
+        mock_registry: MagicMock,
+    ) -> None:
+        """Per-sample `annotation_state` has zero rows touched by `run_annotation` alone.
+
+        The Huey-task wrapper is responsible for upserting provenance after
+        analysis returns; the engine itself must leave the table empty.
+        """
+        _stamp_bundle_version(mock_registry.reference_engine, "v2.0.0")
+        _stamp_sample_metadata(sample_with_variants, file_format="23andme_v5")
+
+        with sample_with_variants.connect() as conn:
+            before = conn.execute(
+                sa.select(sa.func.count()).select_from(annotation_state)
+            ).scalar_one()
+        assert before == 0
+
+        result = run_annotation(sample_with_variants, mock_registry)
+        assert result.coverage_stats != {}
+
+        with sample_with_variants.connect() as conn:
+            after_rows = conn.execute(sa.select(annotation_state)).fetchall()
+        assert after_rows == []
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -165,6 +165,41 @@ class TestRegenerateFixtures:
             count = conn.execute("SELECT count(*) FROM vep_annotations").fetchone()[0]
         assert count >= 50, f"Expected >=50 VEP rows, got {count}"
 
+    def test_mini_vep_bundle_carries_v2_0_0_metadata(self, tmp_path: Path) -> None:
+        """Phase 0 closure (Step 18): mini bundle mirrors v2.0.0 schema.
+
+        The production VEP bundle writes `bundle_metadata` with at minimum
+        `bundle_version`, `build_date`, `schema_version`, `ensembl_version`,
+        and `variant_count` (see `scripts/build_vep_bundle.py`). The mini
+        fixture must align so `update_manager.run_vep_bundle_update`'s parity
+        check exercises the same code path against the fixture.
+        AncestryDNA rsID coverage in the seed CSV is added later in step 39.
+        """
+        _run_script(tmp_path)
+        with sqlite3.connect(str(tmp_path / "mini_vep_bundle.db")) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            assert "bundle_metadata" in tables
+
+            metadata = dict(conn.execute("SELECT key, value FROM bundle_metadata"))
+
+        for required in (
+            "bundle_version",
+            "build_date",
+            "schema_version",
+            "ensembl_version",
+            "variant_count",
+        ):
+            assert required in metadata, f"missing bundle_metadata key: {required}"
+        assert metadata["bundle_version"] == "v2.0.0"
+        assert metadata["schema_version"] == "1"
+        # `variant_count` matches the seed CSV row count exactly.
+        assert int(metadata["variant_count"]) >= 50
+
     def test_mini_gnomad_has_data(self, tmp_path: Path) -> None:
         _run_script(tmp_path)
         with sqlite3.connect(str(tmp_path / "mini_gnomad_af.db")) as conn:

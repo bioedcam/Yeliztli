@@ -224,6 +224,19 @@ VEP_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_vep_chrom_pos ON vep_annotations(chrom, pos)",
 ]
 
+# `bundle_metadata` mirrors the production v2.0.0 VEP bundle schema written by
+# `scripts/build_vep_bundle.py`. The mini fixture must carry the same keys so
+# Phase 0 readers (e.g. `update_manager.run_vep_bundle_update`'s parity check
+# against `bundle_metadata.bundle_version`) work identically against the
+# fixture.
+MINI_VEP_BUNDLE_METADATA: dict[str, str] = {
+    "ensembl_version": "112",
+    "build_date": "2026-05-18",
+    "variant_count": "0",
+    "schema_version": "1",
+    "bundle_version": "v2.0.0",
+}
+
 GNOMAD_SCHEMA: list[tuple[str, str]] = [
     ("rsid", "TEXT"),
     ("chrom", "TEXT"),
@@ -541,6 +554,22 @@ def build_standalone_db(
 
         for idx_sql in indexes:
             conn.execute(idx_sql)
+
+        # Mirror the production VEP bundle's `bundle_metadata` so the mini
+        # fixture aligns with Phase 0's v2.0.0 schema (see Plan §5.2, §5.5,
+        # §12.1). Other standalone DBs do not carry this table.
+        if db_name == "mini_vep_bundle.db":
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS bundle_metadata "
+                "(key TEXT PRIMARY KEY, value TEXT)"
+            )
+            metadata = dict(MINI_VEP_BUNDLE_METADATA)
+            metadata["variant_count"] = str(len(rows))
+            for key, value in metadata.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO bundle_metadata (key, value) VALUES (?, ?)",
+                    (key, value),
+                )
 
     size = db_path.stat().st_size
     summary.append(f"Created {db_path} ({_human_size(size)}): {table_name} with {len(rows)} rows")
