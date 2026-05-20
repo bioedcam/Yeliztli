@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Phase 1 — Download the gnomAD HGDP+1KG phased haplotypes + genetic maps.
+#
+# Re-runnable: gsutil cp / wget are idempotent and skip existing files.
+# Source: gs://gcp-public-data--gnomad/resources/hgdp_1kg/phased_haplotypes_v2
+# Output: $RAW_DIR/hgdp1kgp_chr{1..22}.filtered.SNV_INDEL.phased.shapeit5.bcf{,.csi}
+#         $RAW_DIR/gnomad_meta_updated.tsv
+#         $RAW_DIR/genetic_maps_grch38/plink.chr{1..22}.GRCh38.map
+#
+# Plan §6.4 reuses the v1.1 download for v2 unless gnomAD republishes the
+# panel — record any version swap in docs/lai-bundle-release-runbook.md.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PHASE_NAME=01_download_panel
+# shellcheck source=env.sh
+source "$SCRIPT_DIR/env.sh"
+
+require gsutil
+require wget
+require unzip
+
+phase_log "downloading gnomAD HGDP+1KG phased haplotypes to $RAW_DIR"
+
+cd "$RAW_DIR"
+
+for chr in $CHROMS; do
+  pattern="hgdp1kgp_chr${chr}.filtered.SNV_INDEL.phased.shapeit5.bcf"
+  if [ -s "$pattern" ] && [ -s "${pattern}.csi" ]; then
+    phase_log "chr${chr}: BCF + index already present, skipping"
+    continue
+  fi
+  gsutil -m cp "${GNOMAD_BUCKET}/${pattern}"*  .
+done
+
+if [ ! -s gnomad_meta_updated.tsv ]; then
+  gsutil cp "$GNOMAD_META_URL" .
+fi
+
+mkdir -p genetic_maps_grch38
+if [ -z "$(ls -A genetic_maps_grch38 2>/dev/null)" ]; then
+  phase_log "downloading GRCh38 genetic maps for Beagle"
+  wget -q -O plink.GRCh38.map.zip "$GENETIC_MAPS_URL"
+  unzip -o plink.GRCh38.map.zip -d genetic_maps_grch38/
+  rm -f plink.GRCh38.map.zip
+fi
+
+phase_log "phase 1 complete"

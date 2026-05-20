@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Phase 7 — Assemble the final bundle tarball + CHECKSUMS.md5 + metadata.json.
+#
+# Output:
+#   $BUNDLE_DIR/{phasing_panel,genetic_maps,gnomix_models,liftover,beagle}/
+#   $BUNDLE_DIR/metadata.json     — provenance per Plan §6.5
+#   $BUNDLE_DIR/README.md         — citation + build summary
+#   $BUNDLE_DIR/CHECKSUMS.md5
+#   $WORKDIR/genomeinsight_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz
+#
+# Plan §6.4 phase 7 — bundle layout unchanged from v1.1; only the per-chrom
+# panel and model sizes grow (~30% bigger total).
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PHASE_NAME=07_assemble_bundle
+# shellcheck source=env.sh
+source "$SCRIPT_DIR/env.sh"
+
+require python
+require md5sum
+require tar
+
+cd "$BUNDLE_DIR"
+
+phase_log "assembling bundle layout"
+mkdir -p phasing_panel genetic_maps gnomix_models liftover beagle metadata
+
+for chr in $CHROMS; do
+  cp "$PANEL_DIR/ref_panel_chr${chr}.vcf.gz" phasing_panel/
+  cp "$PANEL_DIR/ref_panel_chr${chr}.vcf.gz.tbi" phasing_panel/
+  cp "$RAW_DIR/genetic_maps_grch38/plink.chr${chr}.GRCh38.map" genetic_maps/ || true
+  mkdir -p "gnomix_models/chr${chr}"
+  cp -r "$GNOMIX_DIR/output_chr${chr}/." "gnomix_models/chr${chr}/"
+done
+
+cp "$LIFTOVER_DIR/hg19ToHg38.over.chain.gz" liftover/
+cp "$LIFTOVER_DIR/rsid_to_grch38.tsv" liftover/array_site_mapping.tsv
+
+cp "$BEAGLE_JAR" beagle/beagle.jar
+
+phase_log "writing metadata.json (Plan §6.5)"
+python "$SCRIPT_DIR/07_write_metadata.py" \
+  --bundle-dir "$BUNDLE_DIR" \
+  --union-catalog "$UNION_CATALOG_TSV" \
+  --validation-dir "$VALIDATION_DIR" \
+  --git-commit "$GIT_COMMIT" \
+  --build-host "$BUILD_HOST" \
+  --build-date "$BUILD_DATE" \
+  --bundle-version "$LAI_BUNDLE_VERSION" \
+  --admixture-seed "$ADMIXTURE_SEED"
+
+phase_log "generating CHECKSUMS.md5"
+find . -type f ! -name CHECKSUMS.md5 -print0 | xargs -0 md5sum > CHECKSUMS.md5
+
+phase_log "creating tarball"
+tarball="$WORKDIR/genomeinsight_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz"
+tar -czf "$tarball" -C "$BUNDLE_DIR" .
+sha256sum "$tarball" > "${tarball}.sha256"
+
+phase_log "tarball: $(du -sh "$tarball" | awk '{print $1}'); sha256: $(awk '{print $1}' "${tarball}.sha256")"
+phase_log "phase 7 complete"
