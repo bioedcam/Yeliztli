@@ -107,6 +107,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Phase 1 — AncestryDNA Single-Sample Ingestion
 
+#### Step 28 — Chromosome normalizers
+
+##### Added
+
+- New `backend/ingestion/chromosomes.py` (ADNA-08c; Plan §8.4) declaring the per-vendor chromosome remap surface that step 30's AncestryDNA parser and the future step-29 23andMe refactor both consume. Two vendor-specific maps live as module-level constants: `_23ANDME_MAP = {"23": "X", "24": "Y", "25": "MT", "26": "MT"}` (legacy 23andMe convention — both 25 and 26 collapse onto MT) and `_ANCESTRYDNA_MAP = {"23": "X", "24": "Y", "25": "X", "26": "MT"}` (AncestryDNA collapses chr-25 / PAR onto X to match the VEP bundle's single-X representation; chr-26 is MT). `_VENDOR_MAPS` indexes them by `SourceVendor`. `_VALID = frozenset([str(n) for n in range(1, 23)] + ["X", "Y", "MT"])` is the canonical-pass-through set. `normalize_for(vendor, chrom)` strips + uppercases the raw input, returns the per-vendor remap when present, returns the canonical value unchanged when already in `_VALID`, and raises `MalformedDataError(f"Invalid chromosome value: {chrom!r}")` otherwise (`!r`-quoting preserves whitespace / control characters for log-line forensics, matching the 23andMe parser's existing style). `__all__` pins the public surface so `from backend.ingestion.chromosomes import normalize_for` lines stay stable across step 30 + the step 29 refactor.
+- New `tests/backend/test_chromosomes.py` (ADNA-08c; Plan §8.4) — 105 cases pinning the contract. **Per-vendor remap tables (8 cases):** two parametrize blocks lock the 23andMe `25 → MT, 26 → MT` and AncestryDNA `25 → X (PAR), 26 → MT` mappings. **PAR divergence (1 case):** explicitly asserts the load-bearing `25` divergence (`23andme.25 → MT` vs `ancestrydna.25 → X`) so future bundle alignments cannot silently regress. **Canonical pass-through (50 cases):** parametrize over both vendors × `{1..22, X, Y, MT}` confirms no remap fires for already-canonical values. **Whitespace + case normalisation (16 cases):** both vendors × ` 23 ` / `\t24\t` / lowercase `x`/`y`/`mt` / mixed-case `Mt` / leading or trailing spaces around `X`/`Y` all normalise correctly. **Invalid inputs (28 cases):** both vendors × `27` / `0` / `-1` / `100` / empty / whitespace-only / `Z` / `chr1` / `chrX` / `1.0` / `1a` / `*` / `?` / `\x00` raise `MalformedDataError` with the raw value quoted in the message. **Public surface (2 cases):** `__all__` exact symbol audit + `_VENDOR_MAPS` total-coverage probe (every `SourceVendor` member resolves a remap table — otherwise a future enum addition would surface as an opaque `KeyError` instead of a typed parser error).
+
+##### Notes
+
+- Scope is intentionally narrow per the per-step PR convention: this PR ships only the new normalizer module + its tests. The existing in-module `normalize_chromosome` in `backend/ingestion/parser_23andme.py` stays untouched and continues to back `parse_23andme`; the refactor that retires it and routes 23andMe through `normalize_for` lands in step 29 (a full-sweep step per CLAUDE.md). The AncestryDNA parser (step 30) is the first new consumer.
+- Risk-register touch points (Plan §1.3): **R-04** (parser regression). The new module ships behind no callers in this step, so no behavioral surface to regress on yet; the load-bearing PAR-collapse + per-vendor `25` divergence assertions land here so step-30's AncestryDNA parser tests can rely on a stable normaliser. Bio-validator sign-off on the PAR-collapse choice (Plan §8.4) is in scope when the AncestryDNA parser surface lands in step 30; this step ships the table that decision will sign off on.
+
 #### Step 27 — Dispatcher with `detect_vendor()` + `parse()`
 
 ##### Added
