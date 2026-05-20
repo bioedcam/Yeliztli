@@ -223,6 +223,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New `alembic/versions/008_annotation_state_backfill.py` (Plan §7.4 step 2, §17.1). Per-sample backfill only — no reference-DB schema change. Walks every row in `samples`, resolves `db_path` against the bind's data directory when relative, opens each per-sample SQLite, and runs `CREATE TABLE IF NOT EXISTS annotation_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)` + `INSERT OR IGNORE INTO annotation_state (key, value) VALUES ('vep_bundle_version', 'v1.0.0')`. `INSERT OR IGNORE` preserves any row a freshly re-annotated sample already wrote (Plan §7.4's idempotency contract). Missing / non-SQLite / corrupt per-sample DBs are tolerated: each emits a structured `alembic_008_sample_db_skipped` warning with a `reason` field (`"missing"`, `"sqlalchemy_error"`, `"empty_db_path"`) and the migration moves on — a single bad sample DB never blocks the reference-DB schema bump. `downgrade()` is a deliberate no-op: per-sample provenance rows reflect real state and the staleness service relies on them.
 - Extended `tests/backend/test_alembic_backfill.py` with `TestMigration008AnnotationStateBackfill` (9 cases) + `TestMigration008Helpers` (5 cases): table-creation + `v1.0.0` seed on a fresh sample DB; idempotent re-run preserves a pre-existing `v2.0.0` row; missing / corrupt / empty-`db_path` sample rows each emit the structured warning without raising; relative `samples.db_path` resolves against `data_dir`; empty `samples` table is a clean no-op; reference-DB schema is byte-identical before and after upgrade; downgrade-then-inspect confirms per-sample rows are intentionally left in place. Helper tests cover `_data_dir_from_bind` (memory-DB → `None`) and `_resolve_sample_db_path` (absolute pass-through, relative join, `None` `data_dir` fallback). Uses `structlog.testing.capture_logs` for structured-event assertions, matching the project's convention from `tests/backend/test_staleness.py`.
 
+#### Step 22a — LAI runner: merged + backward-compat tests + retire `scripts/lai_runner.py`
+
+##### Added
+
+- New `tests/backend/test_lai_runner_merged_sample.py` (7 cases) locks the three-key uppercase `S1` / `S2` / `both` dispatch contract for merged samples (Plan §6.6). Builds an inline merged-sample payload with hits in each source bucket plus an autosomal off-bundle drop in `S1` and `S2`; asserts the resulting telemetry has exactly the three uppercase keys, per-bucket hit/drop counts (`S1: 2/1`, `S2: 2/1`, `both: 2/0`), per-source counts sum to matched/dropped totals, and no `""` / lowercase leakage. Two parametrize blocks lock the source-driven dispatch override: any non-empty `source` collapses to three-key regardless of `file_format` (`23andme_v5`, `ancestrydna_v2.0`, `merged_v1`, `""`), and a `merged_v1` file_format with only empty-source rows still emits three keys with zero counts for the missing buckets.
+- New `tests/backend/test_lai_runner_backward_compat.py` (12 parametrized cases) locks the pre-Phase-3 single-key derivation. Builds an in-memory sample DB on the current schema (no `raw_variants.source` column — Phase-3 step 63 will add it) stamped with each shipped vendor, then asserts (a) `_read_sample_genotypes` defaults every genotype's `source=""`, (b) the accumulator only populates the empty-source bucket (no `S1` / `S2` / `both` leakage), and (c) `_build_coverage_telemetry` collapses to single-key `{<vendor>: {hits, drops}}`. The `LAIRunner._build_coverage_telemetry` parametrize block locks the exact `file_format.split("_", 1)[0].lower()` derivation across `23andme_v3..v5`, `ancestrydna_v2.0`, and case-insensitive `ANCESTRYDNA_v2.0` / `23andMe_v5`.
+- New `tests/backend/test_scripts_lai_runner_removed.py` (3 cases) locks the deletion invariants: (1) `scripts/lai_runner.py` is absent from the working tree, (2) `git grep` of the deletion-PR pattern across `backend/`, `tests/`, `scripts/`, `frontend/` returns zero hits (excludes the test file itself via `:(exclude)` pathspec), (3) a stdlib `rglob` walk catches untracked references the `git grep` pre-deletion guard would miss.
+
+##### Removed
+
+- `scripts/lai_runner.py` — superseded by `backend/analysis/lai_runner.py` (the in-repo runner that already replaces the bcftools/bgzip/tabix subprocess flow with pysam). Pre-deletion verification: `git grep -nE "scripts/lai_runner|from scripts.lai_runner|import scripts.lai_runner"` across `backend/`, `tests/`, `scripts/`, `frontend/` returned zero hits after retiring the lone docstring reference in `backend/analysis/lai_runner.py`. The legacy file was untracked, so deletion was a bare `rm` (Plan §6.6).
+
+##### Changed
+
+- `backend/analysis/lai_runner.py` module docstring rewritten to drop the "Replaces ``scripts/lai_runner.py``" pointer so the step-22a removal-invariant grep stays clean across `backend/`.
+
+##### Notes
+
+- Risk-register touch points (Plan §1.3): **R-15a** (LAI bundle coverage) — locks the merged-sample telemetry contract that step 22's implementation made available; lets step 24's frontend surface render the three-row source-breakdown table without ambiguity about the key casing or dispatch ordering.
+
 #### Step 22 — LAI runner per-source dropout telemetry — implementation + core tests
 
 ##### Added

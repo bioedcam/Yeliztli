@@ -8,9 +8,9 @@ Orchestrates the full LAI pipeline:
   5. Run Gnomix inference using re-exported models (numpy + xgboost)
   6. Aggregate into global ancestry proportions + chromosome painting
 
-Replaces ``scripts/lai_runner.py`` — subprocess calls to bcftools/bgzip/tabix
-are replaced by pysam.  Gnomix inference is handled by
-``gnomix_inference.py`` instead of calling the gnomix.py script.
+Subprocess calls to bcftools/bgzip/tabix are replaced by pysam; Gnomix
+inference is handled by ``gnomix_inference.py`` instead of calling the
+gnomix.py script.
 """
 
 from __future__ import annotations
