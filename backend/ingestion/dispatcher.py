@@ -31,6 +31,7 @@ from typing import TextIO
 
 from backend.ingestion import parser_23andme
 from backend.ingestion.base import (
+    ParserError,
     ParseResult,
     SourceVendor,
     UnsupportedFormatError,
@@ -177,4 +178,4 @@ def parse(file_or_path: str | Path | TextIO) -> ParseResult:
     raise UnsupportedFormatError("unreachable")  # pragma: no cover
 
 
-__all__ = ["detect_vendor", "parse"]
+__all__ = ["ParserError", "detect_vendor", "parse"]

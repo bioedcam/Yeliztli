@@ -1,6 +1,6 @@
 """Ingestion API endpoints (P1-13).
 
-POST /api/ingest        — Upload a 23andMe file, parse, store, return 202
+POST /api/ingest        — Upload a 23andMe or AncestryDNA file, parse, store, return 202
 GET  /api/ingest/status/{job_id} — Poll parse job progress (SSE)
 """
 
@@ -22,10 +22,7 @@ from backend.db.database_registry import DATABASES
 from backend.db.manifest import get_bundle_info
 from backend.db.sample_schema import create_sample_tables
 from backend.db.tables import database_versions, jobs, raw_variants, sample_metadata_table, samples
-from backend.ingestion.parser_23andme import (
-    ParserError,
-    parse_23andme,
-)
+from backend.ingestion.dispatcher import ParserError, parse
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +106,7 @@ def _vep_bundle_blocks_ancestrydna(reference_engine: sa.Engine) -> tuple[bool, s
 
 
 def _ingest_file(file_bytes: bytes, filename: str) -> dict:
-    """Parse a 23andMe file and persist to a new sample database.
+    """Parse a vendor raw-data file (23andMe or AncestryDNA) and persist it.
 
     This is the synchronous core of the ingest endpoint. For v1 (< 2 min
     parse time), this runs inline. Huey background tasks will wrap this
@@ -123,11 +120,14 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
     # Compute SHA-256 of the uploaded file
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    # Parse the file content (pure, no side effects)
+    # Parse the file content (pure, no side effects). The dispatcher routes
+    # by vendor head-line and returns a unified ``base.ParseResult`` with a
+    # string ``version`` field (Plan \u00a78.7).
     text = file_bytes.decode("utf-8", errors="replace")
     if "\ufffd" in text:
         logger.warning("File %s contains invalid UTF-8 sequences that were replaced", filename)
-    result = parse_23andme(io.StringIO(text))
+    result = parse(io.StringIO(text))
+    file_format = f"{result.vendor.value}_{result.version}"
 
     # Register sample in reference.db
     now = datetime.now(UTC)
@@ -137,7 +137,7 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
             .values(
                 name=filename,
                 db_path="",  # placeholder, updated below
-                file_format=f"23andme_{result.version}",
+                file_format=file_format,
                 file_hash=file_hash,
                 created_at=now,
             )
@@ -161,7 +161,7 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
             sample_metadata_table.insert().values(
                 id=1,
                 name=filename,
-                file_format=f"23andme_{result.version}",
+                file_format=file_format,
                 file_hash=file_hash,
                 created_at=now,
             )
@@ -203,13 +203,18 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
         "job_id": job_id,
         "variant_count": len(result.variants),
         "nocall_count": result.nocall_count,
-        "file_format": f"23andme_{result.version}",
+        "file_format": file_format,
     }
 
 
 @router.post("", status_code=202)
 async def ingest_file(file: UploadFile) -> dict:
-    """Upload and parse a 23andMe raw data file.
+    """Upload and parse a 23andMe or AncestryDNA raw data file.
+
+    Routing to the per-vendor parser is delegated to
+    :func:`backend.ingestion.dispatcher.parse` (Plan §8.7). The returned
+    ``file_format`` is composed as ``f"{vendor.value}_{version}"`` (e.g.
+    ``"23andme_v5"`` or ``"ancestrydna_v2.0"``).
 
     Returns 202 Accepted with sample_id and job_id for status polling.
     AncestryDNA uploads against a pre-v2.0.0 vep_bundle return 409 with

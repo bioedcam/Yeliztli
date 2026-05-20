@@ -5,10 +5,10 @@ Three cases lock the gate:
 - AncestryDNA + bundle >= v2.0.0 → 202 (gate falls through to the parser).
 - 23andMe       + bundle < v2.0.0 → 202 (gate is vendor-scoped).
 
-The "AncestryDNA + v2 → 202" case patches ``parse_23andme`` because the
-real AncestryDNA parser does not land until Phase 1 (steps 26–31); the
-patch isolates the test to the gate's branching, which is the only
-behavior step 7 introduces.
+Step 31 (Plan §8.7) wires the ingest route to
+:func:`backend.ingestion.dispatcher.parse`, so the v2-bundle case now
+exercises the real AncestryDNA parser (step 30) end-to-end and asserts
+the dispatcher-composed ``file_format`` shape.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.db.tables import database_versions, reference_metadata
-from backend.ingestion.base import ParsedVariant, ParseResult, SourceVendor
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 V5_FILE = FIXTURES / "sample_23andme_v5.txt"
@@ -136,29 +135,21 @@ def test_ancestrydna_with_v1_bundle_returns_409(manifest_env, client_factory) ->
 
 
 def test_ancestrydna_with_v2_bundle_returns_202(manifest_env, client_factory) -> None:
-    # Real AncestryDNA parser lands in step 30; stub the parser so the test
-    # locks step 7's branching: gate not fired ⇒ ingest succeeds.
-    fake_result = ParseResult(
-        vendor=SourceVendor.TWENTYTHREEANDME,
-        version="v5",
-        build="GRCh37",
-        variants=[ParsedVariant(rsid="rs1", chrom="1", pos=100, genotype="AA")],
-        nocall_count=0,
-        total_lines=1,
-        skipped_lines=0,
-    )
+    # Step 31 (Plan §8.7): ingest route now uses dispatcher.parse, so the
+    # real AncestryDNA parser (step 30) runs end-to-end. With vep_bundle at
+    # v2.0.0 the gate falls through, the dispatcher routes the file to
+    # parser_ancestrydna, and the composed ``file_format`` proves the route
+    # built it from ``result.vendor.value`` + ``result.version``.
     client = client_factory("v2.0.0")
-    with (
-        patch("backend.api.routes.ingest.parse_23andme", return_value=fake_result),
-        open(ANCESTRY_FILE, "rb") as f,
-    ):
+    with open(ANCESTRY_FILE, "rb") as f:
         response = client.post(
             "/api/ingest",
             files={"file": ("ancestry.txt", f, "text/plain")},
         )
     assert response.status_code == 202, response.text
     body = response.json()
-    assert body["variant_count"] == 1
+    assert body["variant_count"] > 0
+    assert body["file_format"] == "ancestrydna_v2.0"
 
 
 def test_23andme_with_v1_bundle_returns_202(manifest_env, client_factory) -> None:

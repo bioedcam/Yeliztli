@@ -107,6 +107,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Phase 1 — AncestryDNA Single-Sample Ingestion
 
+#### Step 31 — Ingest route → dispatcher
+
+##### Changed
+
+- `backend/api/routes/ingest.py` (ADNA-05; Plan §8.7) — switched the route's parser entry point from `parser_23andme.parse_23andme` to `backend.ingestion.dispatcher.parse`. The import becomes `from backend.ingestion.dispatcher import ParserError, parse`; `_ingest_file` calls `parse(io.StringIO(text))` and composes the persisted `samples.file_format` (and `sample_metadata.file_format`) value as `f"{result.vendor.value}_{result.version}"` — yields the existing `"23andme_v5"` for 23andMe uploads and `"ancestrydna_v2.0"` for AncestryDNA uploads. The composed value is computed once and reused for the `samples` insert, the `sample_metadata_table` insert, and the response payload so a future vendor addition only changes one site. The bundle-version §5.4 gate (step 7 `_sniff_is_ancestrydna` + `_vep_bundle_blocks_ancestrydna`) is intentionally untouched — it remains the pre-parse 409 surface on AncestryDNA uploads against pre-`v2.0.0` bundles, ahead of the dispatcher running.
+- `backend/ingestion/dispatcher.py` — re-exported `ParserError` (imported from `backend.ingestion.base`) so the ingest route's single-symbol import line from Plan §8.7 (`from backend.ingestion.dispatcher import parse, ParserError`) resolves without dipping into `base`. `__all__` updated to `["ParserError", "detect_vendor", "parse"]`.
+- Public route docstring updated to read "Upload and parse a 23andMe or AncestryDNA raw data file" and to name `dispatcher.parse` as the routing surface; the §5.4 gate behavior description is unchanged.
+
+##### Tests
+
+- `tests/backend/test_bundle_gating.py::test_ancestrydna_with_v2_bundle_returns_202` — removed the `patch("backend.api.routes.ingest.parse_23andme", return_value=fake_result)` stub introduced in step 7. With step 30's `parser_ancestrydna` landed and step 31 wiring the dispatcher into the route, the real AncestryDNA parser now runs end-to-end on the legacy `tests/fixtures/sample_ancestrydna.txt`. Test now asserts `response.status_code == 202`, `body["variant_count"] > 0` (real parser output rather than the synthetic single-variant fake), and `body["file_format"] == "ancestrydna_v2.0"` — the load-bearing new assertion that locks the `f"{vendor.value}_{version}"` composition this step ships. The obsolete `ParsedVariant` / `ParseResult` / `SourceVendor` imports were removed alongside the stub. The other two §5.4 cases (`test_ancestrydna_with_v1_bundle_returns_409`, `test_23andme_with_v1_bundle_returns_202`) stay byte-identical green.
+
+##### Notes
+
+- Scope is the "one line" Plan §8.7 specifies, padded only by the dispatcher's `ParserError` re-export (required to keep the route's single-symbol import valid) and the v2-bundle test's stub removal (the stub's `until step 30 lands` comment promised this cleanup). The wizard-copy / rejection-string removal is step 32 (ADNA-06/07); retiring the legacy `tests/fixtures/sample_ancestrydna.txt` for `sample_ancestrydna_v2.txt` and flipping `test_rejects_ancestrydna_with_message` is step 33 (ADNA-08a); the positive AncestryDNA `test_ingestion_api.py` extension is step 43 (ADNA-10). None of those land here.
+- Risk-register touch points (Plan §1.3): **R-04** (annotation pipeline regression — refactor risk) — the 23andMe positive path is locked unchanged: the route still composes `"23andme_v5"` (now via `f"{vendor.value}_{version}"` rather than a hardcoded `"23andme_"` prefix), and the existing `test_ingestion_api.py` suite (all `file_format == "23andme_v5"` assertions plus the `test_23andme_with_v1_bundle_returns_202` gate case) stays green. **R-02** (parser format drift) — the dispatcher's head-line vendor detection is now the single sniff that determines the persisted `file_format`; a future vendor only needs to add to `SourceVendor` + a parser module for the route to pick it up without further edits.
+- Targeted local sweep (per CLAUDE.md SOP #8): step 31 is not on the canonical full-sweep list. Ran `pytest tests/backend/test_bundle_gating.py tests/backend/test_dispatcher.py tests/backend/test_ingestion_api.py tests/backend/test_ingestion_base.py tests/backend/test_parser_23andme.py tests/backend/test_parser_ancestrydna.py` end-to-end (all green). Ruff clean on every touched file.
+
 #### Step 30 — AncestryDNA parser
 
 ##### Added
