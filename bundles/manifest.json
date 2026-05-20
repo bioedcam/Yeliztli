@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-18T00:00:00Z",
+  "generated_at": "2026-05-20T00:00:00Z",
   "bundles": {
     "lai_bundle": {
-      "version": "v1.1",
-      "build_date": "2026-04-07",
-      "url": "https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v1.1/genomeinsight_lai_bundle_v1.1.tar.gz",
-      "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
-      "size_bytes": 523801111
+      "version": "v2.0.0",
+      "build_date": "2026-05-20",
+      "url": "https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 750000000,
+      "min_app_version": "0.2.0"
     },
     "vep_bundle": {
       "version": "v2.0.0",

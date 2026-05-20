@@ -28,7 +28,7 @@ SAMPLE_PAYLOAD: dict = {
     "generated_at": "2026-05-08T00:00:00Z",
     "bundles": {
         "lai_bundle": {
-            "version": "v1.1",
+            "version": "v1.1.0",
             "build_date": "2026-04-07",
             "url": "https://example.com/lai.tar.gz",
             "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
@@ -59,7 +59,7 @@ V2_PAYLOAD: dict = {
     "generated_at": "2026-05-18T00:00:00Z",
     "bundles": {
         "lai_bundle": {
-            "version": "v1.1",
+            "version": "v1.1.0",
             "build_date": "2026-04-07",
             "url": "https://example.com/lai.tar.gz",
             "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
@@ -139,7 +139,7 @@ class TestLocalOverride:
         assert m.schema_version == 1
         assert m.generated_at == "2026-05-08T00:00:00Z"
         assert "lai_bundle" in m.bundles
-        assert m.bundles["lai_bundle"].version == "v1.1"
+        assert m.bundles["lai_bundle"].version == "v1.1.0"
         assert m.bundles["lai_bundle"].size_bytes == 523_801_111
         assert m.pipeline_pins["dbnsfp"].last_known_version == "5.3.1a"
 
@@ -158,14 +158,14 @@ class TestLocalOverride:
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
 
         first = fetch_manifest()
-        assert first.bundles["lai_bundle"].version == "v1.1"
+        assert first.bundles["lai_bundle"].version == "v1.1.0"
 
         updated = json.loads(json.dumps(SAMPLE_PAYLOAD))
-        updated["bundles"]["lai_bundle"]["version"] = "v1.2"
+        updated["bundles"]["lai_bundle"]["version"] = "v1.2.0"
         _write_manifest(path, updated)
 
         second = fetch_manifest()
-        assert second.bundles["lai_bundle"].version == "v1.2"
+        assert second.bundles["lai_bundle"].version == "v1.2.0"
 
     def test_missing_local_file_raises(self, tmp_path: Path, monkeypatch):
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(tmp_path / "nope.json"))
@@ -322,7 +322,7 @@ class TestRemoteFetch:
             m = fetch_manifest()
 
         assert http_get.call_count == 2
-        assert m.bundles["lai_bundle"].version == "v1.1"
+        assert m.bundles["lai_bundle"].version == "v1.1.0"
 
 
 # ── accessor helpers ──────────────────────────────────────────────────
@@ -335,7 +335,7 @@ class TestAccessors:
 
         entry = get_bundle_info("lai_bundle")
         assert entry is not None
-        assert entry.version == "v1.1"
+        assert entry.version == "v1.1.0"
         assert entry.size_bytes == 523_801_111
 
     def test_get_bundle_info_unknown_returns_none(self, tmp_path: Path, monkeypatch):

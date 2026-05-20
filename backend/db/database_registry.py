@@ -263,9 +263,9 @@ DATABASES: dict[str, DatabaseInfo] = {
             "Local ancestry inference models for chromosome-level ancestry painting. "
             "Optional — requires ~500 MB and Java 8+."
         ),
-        url="https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v1.1/genomeinsight_lai_bundle_v1.1.tar.gz",
+        url="https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz",
         filename="lai_bundle.tar.gz",
-        expected_size_bytes=523_801_111,  # ~500 MB
+        expected_size_bytes=750_000_000,  # ~750 MB (union catalog; v2.0.0+)
         required=False,
         phase=3,
         build_mode="download",
