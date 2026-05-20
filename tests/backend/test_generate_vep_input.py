@@ -35,6 +35,20 @@ def _has_dispatcher() -> bool:
     return True
 
 
+def _has_ancestrydna_parser() -> bool:
+    """The dispatcher routes AncestryDNA to ``parser_ancestrydna`` (step 30).
+
+    Until that module exists, the dispatcher raises ``UnsupportedFormatError``
+    on AncestryDNA inputs — so the vendor-ancestrydna case must remain
+    skipped even though step 27's dispatcher is in place.
+    """
+    try:
+        import backend.ingestion.parser_ancestrydna  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _ancestrydna_fixture() -> Path | None:
     # `sample_ancestrydna_v2.txt` lands in step 34; until then fall back to
     # the legacy `sample_ancestrydna.txt`, which step 33 will delete.
@@ -47,6 +61,7 @@ def _ancestrydna_fixture() -> Path | None:
 
 _ANCESTRYDNA_FIXTURE = _ancestrydna_fixture()
 _DISPATCHER_AVAILABLE = _has_dispatcher()
+_ANCESTRYDNA_PARSER_AVAILABLE = _has_ancestrydna_parser()
 
 
 def _read_vcf_lines(path: Path) -> tuple[list[str], list[str]]:
@@ -73,8 +88,13 @@ def _read_vcf_lines(path: Path) -> tuple[list[str], list[str]]:
             "ancestrydna",
             _ANCESTRYDNA_FIXTURE,
             marks=pytest.mark.skipif(
-                not _DISPATCHER_AVAILABLE or _ANCESTRYDNA_FIXTURE is None,
-                reason=("dispatcher (step 27) or AncestryDNA fixture (step 34) not yet landed"),
+                not _DISPATCHER_AVAILABLE
+                or _ANCESTRYDNA_FIXTURE is None
+                or not _ANCESTRYDNA_PARSER_AVAILABLE,
+                reason=(
+                    "dispatcher (step 27), AncestryDNA parser (step 30), or "
+                    "AncestryDNA fixture (step 34) not yet landed"
+                ),
             ),
             id="vendor-ancestrydna",
         ),

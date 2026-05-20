@@ -18,11 +18,10 @@ Detection precedence per Plan §8.3:
 - Otherwise raises ``UnsupportedFormatError`` with a VCF / CSV / binary /
   generic guidance message.
 
-The unified ``ParseResult`` returned by :func:`parse` always carries the new
-``base.ParseResult`` shape with a string ``version`` (e.g. ``"v5"``). Step 27
-adapts the legacy 23andMe parser's enum-typed result onto the unified shape;
-step 29 retires the adapter when ``parser_23andme`` natively returns
-``base.ParseResult``.
+The unified ``ParseResult`` returned by :func:`parse` always carries the
+``base.ParseResult`` shape with a string ``version`` (e.g. ``"v5"``). Step 29
+retired the legacy enum-typed adapter once ``parser_23andme`` adopted
+``base.ParseResult`` natively.
 """
 
 from __future__ import annotations
@@ -32,12 +31,8 @@ from typing import TextIO
 
 from backend.ingestion import parser_23andme
 from backend.ingestion.base import (
-    MalformedDataError,
-    ParsedVariant,
-    ParserError,
     ParseResult,
     SourceVendor,
-    UnrecognizedVersionError,
     UnsupportedFormatError,
 )
 
@@ -48,8 +43,6 @@ _23ANDME_SUBSTRING = "23andme"
 
 _ANCESTRYDNA_SIGNATURE = "#ancestrydna"
 _ANCESTRYDNA_HEADER_COLUMNS = ("rsid", "chromosome", "position", "allele1", "allele2")
-
-_VERSION_TO_BUILD = {"v3": "GRCh36", "v4": "GRCh37", "v5": "GRCh37"}
 
 _ERR_VCF = (
     "This looks like a VCF file. GenomeInsight v1 expects 23andMe or "
@@ -154,56 +147,23 @@ def detect_vendor(file_or_path: str | Path | TextIO) -> SourceVendor:
     raise UnsupportedFormatError(_ERR_UNKNOWN)  # pragma: no cover — type guard
 
 
-def _translate_legacy_23andme_error(exc: parser_23andme.ParserError) -> ParserError:
-    if isinstance(exc, parser_23andme.UnsupportedFormatError):
-        return UnsupportedFormatError(str(exc))
-    if isinstance(exc, parser_23andme.MalformedDataError):
-        return MalformedDataError(str(exc))
-    if isinstance(exc, parser_23andme.UnrecognizedVersionError):
-        return UnrecognizedVersionError(str(exc))
-    return ParserError(str(exc))
-
-
-def _adapt_23andme(legacy_result: parser_23andme.ParseResult) -> ParseResult:
-    version_str = legacy_result.version.value
-    build = _VERSION_TO_BUILD.get(version_str, "GRCh37")
-    return ParseResult(
-        vendor=SourceVendor.TWENTYTHREEANDME,
-        version=version_str,
-        build=build,
-        variants=[
-            ParsedVariant(rsid=v.rsid, chrom=v.chrom, pos=v.pos, genotype=v.genotype)
-            for v in legacy_result.variants
-        ],
-        nocall_count=legacy_result.nocall_count,
-        total_lines=legacy_result.total_lines,
-        skipped_lines=legacy_result.skipped_lines,
-    )
-
-
 def parse(file_or_path: str | Path | TextIO) -> ParseResult:
-    """Detect vendor, route to the matching parser, and normalize the result.
+    """Detect vendor, route to the matching parser, and return its result.
 
     Returns
     -------
     ParseResult
-        The unified ``base.ParseResult`` shape. For 23andMe inputs, the
-        legacy ``parser_23andme.ParseResult`` is adapted onto this shape
-        (step 29 retires the adapter).
+        The unified ``base.ParseResult`` shape with a string ``version``.
 
     Raises
     ------
     UnsupportedFormatError, MalformedDataError, UnrecognizedVersionError
-        Re-raised from the underlying vendor parser as ``base`` module
-        subclasses so callers can catch a single hierarchy.
+        Raised by the underlying vendor parser; every parser-layer error is a
+        ``base.ParserError`` subclass so callers catch a single hierarchy.
     """
     vendor = detect_vendor(file_or_path)
     if vendor is SourceVendor.TWENTYTHREEANDME:
-        try:
-            legacy = parser_23andme.parse_23andme(file_or_path)
-        except parser_23andme.ParserError as exc:
-            raise _translate_legacy_23andme_error(exc) from exc
-        return _adapt_23andme(legacy)
+        return parser_23andme.parse_23andme(file_or_path)
     if vendor is SourceVendor.ANCESTRYDNA:
         try:
             from backend.ingestion import (

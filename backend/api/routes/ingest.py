@@ -137,7 +137,7 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
             .values(
                 name=filename,
                 db_path="",  # placeholder, updated below
-                file_format=f"23andme_{result.version.value}",
+                file_format=f"23andme_{result.version}",
                 file_hash=file_hash,
                 created_at=now,
             )
@@ -161,7 +161,7 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
             sample_metadata_table.insert().values(
                 id=1,
                 name=filename,
-                file_format=f"23andme_{result.version.value}",
+                file_format=f"23andme_{result.version}",
                 file_hash=file_hash,
                 created_at=now,
             )
@@ -203,7 +203,7 @@ def _ingest_file(file_bytes: bytes, filename: str) -> dict:
         "job_id": job_id,
         "variant_count": len(result.variants),
         "nocall_count": result.nocall_count,
-        "file_format": f"23andme_{result.version.value}",
+        "file_format": f"23andme_{result.version}",
     }
 
 

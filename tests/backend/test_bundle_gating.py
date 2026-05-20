@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.db.tables import database_versions, reference_metadata
-from backend.ingestion.parser_23andme import FormatVersion, ParsedVariant, ParseResult
+from backend.ingestion.base import ParsedVariant, ParseResult, SourceVendor
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 V5_FILE = FIXTURES / "sample_23andme_v5.txt"
@@ -139,7 +139,9 @@ def test_ancestrydna_with_v2_bundle_returns_202(manifest_env, client_factory) ->
     # Real AncestryDNA parser lands in step 30; stub the parser so the test
     # locks step 7's branching: gate not fired ⇒ ingest succeeds.
     fake_result = ParseResult(
-        version=FormatVersion.V5,
+        vendor=SourceVendor.TWENTYTHREEANDME,
+        version="v5",
+        build="GRCh37",
         variants=[ParsedVariant(rsid="rs1", chrom="1", pos=100, genotype="AA")],
         nocall_count=0,
         total_lines=1,

@@ -1,69 +1,46 @@
-"""23andMe raw data TSV parser.
+"""23andMe raw-data TSV parser.
 
-Auto-detects format version (v3/v4/v5), normalizes chromosomes,
-validates data lines, and returns a pure ParseResult with no side effects.
+Auto-detects format version (v3/v4/v5), normalizes chromosomes, validates data
+lines, and returns a pure ``base.ParseResult`` with no side effects.
+
+Refactored in step 29 onto the shared parser-layer types in
+``backend.ingestion.base``. Vendor dispatch (rejecting VCF / AncestryDNA /
+CSV / binary inputs with format-specific guidance) has moved to
+``backend.ingestion.dispatcher`` — this module assumes its caller has already
+identified the file as 23andMe and raises ``UnrecognizedVersionError`` when
+the canonical 23andMe header is absent or the version cannot be inferred.
+
+``FormatVersion`` remains as a vendor-internal helper for version detection;
+the public ``ParseResult.version`` field is a plain string (e.g. ``"v5"``).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TextIO
 
+from backend.ingestion.base import (
+    MalformedDataError,
+    ParsedVariant,
+    ParserError,
+    ParseResult,
+    SourceVendor,
+    UnrecognizedVersionError,
+    UnsupportedFormatError,
+)
+
 # ---------------------------------------------------------------------------
-# Public data types
+# Vendor-internal version enum
 # ---------------------------------------------------------------------------
 
 
 class FormatVersion(Enum):
-    """23andMe raw-data format versions."""
+    """23andMe raw-data format versions (vendor-internal)."""
 
     V3 = "v3"  # Build 36 (hg18)
     V4 = "v4"  # Build 37 (GRCh37), fewer header comment lines
     V5 = "v5"  # Build 37 (GRCh37), 15+ header comment lines
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedVariant:
-    """A single variant row extracted from a 23andMe file."""
-
-    rsid: str
-    chrom: str
-    pos: int
-    genotype: str
-
-
-@dataclass
-class ParseResult:
-    """Aggregate result of parsing a complete 23andMe file."""
-
-    version: FormatVersion
-    variants: list[ParsedVariant]
-    nocall_count: int
-    total_lines: int
-    skipped_lines: int  # comment + blank lines
-
-
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-
-class ParserError(Exception):
-    """Base parser error."""
-
-
-class UnsupportedFormatError(ParserError):
-    """File is not 23andMe format -- includes guidance message."""
-
-
-class MalformedDataError(ParserError):
-    """23andMe file but with corrupt / invalid data lines."""
-
-
-class UnrecognizedVersionError(ParserError):
-    """Looks like 23andMe but version cannot be determined."""
 
 
 # ---------------------------------------------------------------------------
@@ -81,29 +58,18 @@ _CHROM_MAP: dict[str, str] = {
     "26": "MT",
 }
 
-# Number of leading lines sampled during format detection.
+# Number of leading lines sampled during version detection.
 _DETECT_LINE_LIMIT = 50
 
 # v5 files typically have 15+ comment lines; v4 has fewer.
 _V5_COMMENT_THRESHOLD = 15
 
-# Error messages ---------------------------------------------------------
+_BUILD_BY_VERSION: dict[FormatVersion, str] = {
+    FormatVersion.V3: "GRCh36",
+    FormatVersion.V4: "GRCh37",
+    FormatVersion.V5: "GRCh37",
+}
 
-_ERR_VCF = (
-    "This looks like a VCF file. GenomeInsight v1 expects 23andMe raw data "
-    "format. VCF support is planned for a future release."
-)
-_ERR_ANCESTRY = (
-    "This looks like an AncestryDNA file. GenomeInsight v1 supports 23andMe "
-    "format only. AncestryDNA support is planned for a future release."
-)
-_ERR_CSV = (
-    "This file appears to be comma-separated. 23andMe raw data files use tab-separated format."
-)
-_ERR_BINARY = "This file contains binary data and is not a valid 23andMe text file."
-_ERR_UNKNOWN = (
-    "Unrecognized file format. GenomeInsight expects 23andMe raw data (tab-separated, .txt)."
-)
 _ERR_VERSION = (
     "Header pattern not recognized as 23andMe v3/v4/v5. "
     "Expected: '# rsid\\tchromosome\\tposition\\tgenotype'. "
@@ -118,7 +84,7 @@ _ERR_VERSION = (
 
 
 def normalize_chromosome(chrom: str) -> str:
-    """Normalize a raw chromosome string to one of 1-22, X, Y, MT.
+    """Normalize a raw 23andMe chromosome string to one of 1-22, X, Y, MT.
 
     Raises ``MalformedDataError`` if the value is not recognisable.
     """
@@ -136,28 +102,17 @@ def normalize_chromosome(chrom: str) -> str:
 
 
 def _validate_line(parts: list[str], line_num: int) -> ParsedVariant:
-    """Validate a single tab-split data line and return a ``ParsedVariant``.
-
-    Parameters
-    ----------
-    parts:
-        Already-split columns (expected length 4).
-    line_num:
-        1-based line number in the source file, used in error messages.
-    """
+    """Validate a single tab-split data line and return a ``ParsedVariant``."""
     if len(parts) != 4:
         raise MalformedDataError(f"Line {line_num}: expected 4 columns, got {len(parts)}")
 
     rsid_raw, chrom_raw, pos_raw, genotype_raw = (p.strip() for p in parts)
 
-    # -- rsid (must be non-empty) ------------------------------------------
     if not rsid_raw:
         raise MalformedDataError(f"Line {line_num}: empty rsid")
 
-    # -- chromosome --------------------------------------------------------
     chrom = normalize_chromosome(chrom_raw)
 
-    # -- position ----------------------------------------------------------
     try:
         pos = int(pos_raw)
     except ValueError:
@@ -165,7 +120,6 @@ def _validate_line(parts: list[str], line_num: int) -> ParsedVariant:
     if pos < 0:
         raise MalformedDataError(f"Line {line_num}: negative position {pos}")
 
-    # -- genotype (keep as-is, including "--" for no-calls) ----------------
     if not genotype_raw:
         raise MalformedDataError(f"Line {line_num}: empty genotype")
 
@@ -173,30 +127,19 @@ def _validate_line(parts: list[str], line_num: int) -> ParsedVariant:
 
 
 # ---------------------------------------------------------------------------
-# Format / version detection helpers
+# Internal IO helpers
 # ---------------------------------------------------------------------------
-
-
-def _check_binary(head: bytes) -> bool:
-    """Return True if *head* looks like binary content."""
-    # Null bytes are a reliable indicator of non-text data.
-    return b"\x00" in head
 
 
 def _open_input(file_or_path: str | Path | TextIO) -> tuple[TextIO, bool]:
     """Return (readable text stream, should_close).
 
-    Accepts a path (str / Path) or an already-open text stream.
+    Accepts a path (str / Path) or an already-open text stream. Vendor
+    dispatch (binary rejection, format detection) is the dispatcher's job;
+    this helper assumes the caller already determined the file is 23andMe.
     """
     if isinstance(file_or_path, (str, Path)):
-        path = Path(file_or_path)
-        # Quick binary check on the first 512 bytes.
-        raw = path.read_bytes()[:512]
-        if _check_binary(raw):
-            raise UnsupportedFormatError(_ERR_BINARY)
-        return open(path, encoding="utf-8", errors="replace"), True
-
-    # Already a TextIO -- caller manages lifetime.
+        return open(Path(file_or_path), encoding="utf-8", errors="replace"), True
     return file_or_path, False
 
 
@@ -204,21 +147,11 @@ def _read_head_lines(
     file_or_path: str | Path | TextIO,
     limit: int = _DETECT_LINE_LIMIT,
 ) -> list[str]:
-    """Read up to *limit* lines from the beginning of a file.
-
-    For path inputs the file is opened, partially read, and closed.
-    For TextIO inputs the stream position is saved and restored when
-    possible (seekable streams), otherwise the lines are consumed.
-    """
+    """Read up to *limit* lines from the beginning of a 23andMe file."""
     if isinstance(file_or_path, (str, Path)):
-        path = Path(file_or_path)
-        raw = path.read_bytes()[:512]
-        if _check_binary(raw):
-            raise UnsupportedFormatError(_ERR_BINARY)
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(Path(file_or_path), encoding="utf-8", errors="replace") as fh:
             return [fh.readline() for _ in range(limit)]
 
-    # TextIO path
     stream: TextIO = file_or_path
     seekable = hasattr(stream, "seekable") and stream.seekable()
     if seekable:
@@ -229,35 +162,12 @@ def _read_head_lines(
     return lines
 
 
-def _reject_non_23andme(lines: list[str]) -> None:
-    """Raise ``UnsupportedFormatError`` if the file matches a known
-    non-23andMe format, or ``UnsupportedFormatError`` with a generic
-    message if no pattern is recognised at all.
-    """
-    joined = "".join(lines)
-    lower = joined.lower()
-
-    # VCF
-    if "##fileformat=vcf" in lower or "#chrom\tpos\tid" in lower:
-        raise UnsupportedFormatError(_ERR_VCF)
-
-    # AncestryDNA
-    if "#ancestrydna" in lower:
-        raise UnsupportedFormatError(_ERR_ANCESTRY)
-
-    # Comma-separated (heuristic: majority of non-comment lines have commas)
-    data_lines = [ln for ln in lines if ln.strip() and not ln.startswith("#")]
-    if data_lines:
-        comma_count = sum(1 for ln in data_lines if "," in ln)
-        if comma_count > len(data_lines) * 0.5:
-            raise UnsupportedFormatError(_ERR_CSV)
-
-    raise UnsupportedFormatError(_ERR_UNKNOWN)
+# ---------------------------------------------------------------------------
+# Version detection
+# ---------------------------------------------------------------------------
 
 
-def _detect_version_from_header(
-    comment_lines: list[str],
-) -> FormatVersion:
+def _detect_version_from_header(comment_lines: list[str]) -> FormatVersion:
     """Determine the 23andMe format version from collected comment lines."""
     lower_comments = " ".join(comment_lines).lower()
 
@@ -265,31 +175,19 @@ def _detect_version_from_header(
         return FormatVersion.V3
 
     if "build 37" in lower_comments or "grch37" in lower_comments:
-        # Distinguish v4 vs v5 by comment-line count.
         if len(comment_lines) >= _V5_COMMENT_THRESHOLD:
             return FormatVersion.V5
         return FormatVersion.V4
 
-    # Fallback: if we saw the canonical column header but no build string,
-    # treat as unrecognised.
     raise UnrecognizedVersionError(_ERR_VERSION)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-def detect_format(file_or_path: str | Path | TextIO) -> FormatVersion:
+def _detect_format(file_or_path: str | Path | TextIO) -> FormatVersion:
     """Detect the 23andMe format version by inspecting the file header.
 
-    Raises
-    ------
-    UnsupportedFormatError
-        If the file is not a 23andMe raw-data file.
-    UnrecognizedVersionError
-        If the file appears to be 23andMe but the version cannot be
-        determined.
+    Raises ``UnrecognizedVersionError`` when the canonical column header is
+    absent or the version cannot be inferred. Vendor dispatch (rejection of
+    non-23andMe files) is now the dispatcher's responsibility.
     """
     lines = _read_head_lines(file_or_path)
 
@@ -308,32 +206,35 @@ def detect_format(file_or_path: str | Path | TextIO) -> FormatVersion:
             break  # first data line — stop scanning
 
     if not has_column_header:
-        _reject_non_23andme(lines)
+        raise UnrecognizedVersionError(_ERR_VERSION)
 
     return _detect_version_from_header(comment_lines)
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def parse_23andme(file_or_path: str | Path | TextIO) -> ParseResult:
-    """Parse a 23andMe raw-data file and return a ``ParseResult``.
+    """Parse a 23andMe raw-data file and return a ``base.ParseResult``.
 
     The function is **pure**: it reads the file and produces an in-memory
-    result — no database writes, no side effects.
+    result — no database writes, no side effects. ``ParseResult.version`` is
+    a plain string (``"v3"`` / ``"v4"`` / ``"v5"``); callers compose
+    ``f"{vendor.value}_{version}"`` into ``samples.file_format``.
 
     Raises
     ------
     ValueError
-        If *file_or_path* is a non-seekable TextIO stream (wrap in
-        ``io.StringIO(stream.read())`` first).
-    UnsupportedFormatError
-        If the file is not a 23andMe raw-data file.
+        If *file_or_path* is a non-seekable TextIO stream.
     UnrecognizedVersionError
-        If the file appears to be 23andMe but the version cannot be
-        determined.
+        If the canonical 23andMe column header is missing or the format
+        version cannot be determined.
     MalformedDataError
-        If a data line has an invalid structure (wrong column count,
-        bad chromosome, non-numeric position, etc.).
+        If a data line has an invalid structure (wrong column count, bad
+        chromosome, non-numeric position, etc.).
     """
-    # Reject non-seekable streams to prevent silent data loss.
     if not isinstance(file_or_path, (str, Path)):
         if not (hasattr(file_or_path, "seekable") and file_or_path.seekable()):
             raise ValueError(
@@ -341,10 +242,8 @@ def parse_23andme(file_or_path: str | Path | TextIO) -> ParseResult:
                 "in io.StringIO(stream.read()) before calling parse_23andme."
             )
 
-    # -- Detect version first (rewinds / re-opens as needed) ---------------
-    version = detect_format(file_or_path)
+    version = _detect_format(file_or_path)
 
-    # -- Full parse --------------------------------------------------------
     stream, should_close = _open_input(file_or_path)
     try:
         variants: list[ParsedVariant] = []
@@ -356,7 +255,6 @@ def parse_23andme(file_or_path: str | Path | TextIO) -> ParseResult:
             total_lines += 1
             line = raw_line.rstrip("\n\r")
 
-            # Skip blank lines and comments.
             if not line or line.startswith("#"):
                 skipped_lines += 1
                 continue
@@ -369,7 +267,9 @@ def parse_23andme(file_or_path: str | Path | TextIO) -> ParseResult:
                 nocall_count += 1
 
         return ParseResult(
-            version=version,
+            vendor=SourceVendor.TWENTYTHREEANDME,
+            version=version.value,
+            build=_BUILD_BY_VERSION[version],
             variants=variants,
             nocall_count=nocall_count,
             total_lines=total_lines,
@@ -378,3 +278,16 @@ def parse_23andme(file_or_path: str | Path | TextIO) -> ParseResult:
     finally:
         if should_close:
             stream.close()
+
+
+__all__ = [
+    "FormatVersion",
+    "MalformedDataError",
+    "ParsedVariant",
+    "ParseResult",
+    "ParserError",
+    "UnrecognizedVersionError",
+    "UnsupportedFormatError",
+    "normalize_chromosome",
+    "parse_23andme",
+]
