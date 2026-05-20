@@ -458,6 +458,112 @@ class TestNoDispatchHelpers:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Step 38 (ADNA-08d) — 23andMe regression via the dispatcher
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDispatcherRegressionFor23andMe:
+    """Step 38 / ADNA-08d: routing a 23andMe input through ``dispatcher.parse``
+    returns the same ``ParseResult`` as calling ``parse_23andme`` directly.
+
+    The dispatcher's only job for a 23andMe file is (a) head-line inspection
+    to identify the vendor and (b) handing off to ``parse_23andme``. Once
+    routing has occurred, the dispatcher must add zero transformation on top
+    of the parser — same vendor, same string ``version``, same build, same
+    variant list. This class locks that invariant on the load-bearing
+    ``sample_23andme_v5.txt`` fixture called out in Plan §13.1 ADNA-08d, plus
+    the v3 + v4 fixtures so the post-step-29 string-version contract is
+    asserted across every 23andMe version the parser auto-detects.
+
+    Sits alongside ``TestNoDispatchHelpers`` (step 29), which locks that
+    ``parser_23andme`` itself does not carry its own vendor-dispatch helpers;
+    this class extends that surface audit to ``dispatcher``'s ``_looks_like_*``
+    helpers, which must stay in the dispatcher and not migrate back into the
+    bare 23andMe parser.
+    """
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected_version", "expected_build", "expected_variant_count"),
+        [
+            (V5_FILE, "v5", "GRCh37", 1000),
+            (V4_FILE, "v4", "GRCh37", 100),
+            (V3_FILE, "v3", "GRCh36", 100),
+        ],
+    )
+    def test_dispatcher_parse_matches_direct_call(
+        self,
+        fixture: Path,
+        expected_version: str,
+        expected_build: str,
+        expected_variant_count: int,
+    ) -> None:
+        legacy = parse_23andme(fixture)
+        via_dispatcher = dispatcher.parse(fixture)
+
+        # Load-bearing Plan §13.1 ADNA-08d trio: vendor, string version, count.
+        assert via_dispatcher.vendor is SourceVendor.TWENTYTHREEANDME
+        assert via_dispatcher.vendor is legacy.vendor
+        assert isinstance(via_dispatcher.version, str)
+        assert via_dispatcher.version == expected_version
+        assert via_dispatcher.version == legacy.version
+        assert len(via_dispatcher.variants) == expected_variant_count
+        assert len(via_dispatcher.variants) == len(legacy.variants)
+
+        # Build + full variant-list parity: dispatcher must not re-order or
+        # transform parsed variants on its way through.
+        assert via_dispatcher.build == expected_build
+        assert via_dispatcher.build == legacy.build
+        assert via_dispatcher.variants == legacy.variants
+
+        # Auxiliary counters round-trip identically too — guards against a
+        # regression that drops or double-counts header / no-call lines
+        # between the dispatcher's head-line read and the parser's body read.
+        assert via_dispatcher.nocall_count == legacy.nocall_count
+        assert via_dispatcher.total_lines == legacy.total_lines
+        assert via_dispatcher.skipped_lines == legacy.skipped_lines
+
+    def test_v5_file_format_composition_matches_plan_8_7(self) -> None:
+        """Plan §8.7: the ingest route composes ``samples.file_format`` as
+        ``f"{vendor.value}_{version}"``. Lock the v5 case so a future change
+        to either the vendor enum value or the parser version string trips
+        the ADNA-08d regression at the caller-visible surface, not just
+        inside the parser."""
+        result = dispatcher.parse(V5_FILE)
+        assert f"{result.vendor.value}_{result.version}" == "23andme_v5"
+
+    @pytest.mark.parametrize(
+        "name",
+        ["_looks_like_23andme", "_looks_like_ancestrydna", "_reject_with_guidance"],
+    )
+    def test_dispatcher_side_helpers_absent_from_parser_23andme(self, name: str) -> None:
+        """ADNA-08d second clause: vendor-dispatch helpers stay on the
+        dispatcher. ``parser_23andme`` may keep its vendor-*internal* version
+        detector (``_detect_format``) since that's a 23andMe-only concern, but
+        the vendor-routing predicates ``_looks_like_23andme`` /
+        ``_looks_like_ancestrydna`` and the format-guidance fallback
+        ``_reject_with_guidance`` must not have been re-imported here."""
+        assert not hasattr(parser_23andme, name), (
+            f"`parser_23andme.{name}` belongs in `backend.ingestion.dispatcher` — "
+            "vendor dispatch was relocated there in step 29 and must not "
+            "drift back into the bare 23andMe parser."
+        )
+
+    @pytest.mark.parametrize(
+        "name", ["_looks_like_23andme", "_looks_like_ancestrydna", "detect_vendor"]
+    )
+    def test_dispatcher_side_helpers_present_on_dispatcher(self, name: str) -> None:
+        """Negative sibling: the helpers do still exist on ``dispatcher``. A
+        regression that moved any of them out (rather than back into
+        ``parser_23andme``) trips here, so the absence-on-parser assertion
+        above cannot trivially pass by way of the helpers having simply
+        vanished from the codebase."""
+        assert hasattr(dispatcher, name), (
+            f"`dispatcher.{name}` should still live in the dispatcher — "
+            "did vendor dispatch get moved out of `backend.ingestion.dispatcher`?"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Step 33 (ADNA-08a) — flipped rejection test for AncestryDNA inputs
 # ═══════════════════════════════════════════════════════════════════════════
 
