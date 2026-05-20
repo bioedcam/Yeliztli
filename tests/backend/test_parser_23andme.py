@@ -6,6 +6,13 @@ Vendor dispatch (rejection of VCF / AncestryDNA / CSV / binary inputs with
 format-specific guidance) lives in ``backend.ingestion.dispatcher`` and is
 covered by ``tests/backend/test_dispatcher.py``; the post-step-29 parser
 assumes its caller has already identified the file as 23andMe.
+
+The single-class ``TestDispatcherFlipForAncestryDNA`` at the bottom of the
+file is step 33's flip of the historical ``test_rejects_ancestrydna_with_message``
+test: where the legacy assertion locked that ``parse_23andme(<AncestryDNA>)``
+*raises*, the flipped assertion locks that ``dispatcher.parse(<AncestryDNA>)``
+*succeeds*, with the bare 23andMe parser still raising
+``UnrecognizedVersionError`` on the same input.
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ import sqlalchemy as sa
 
 from backend.db.sample_schema import create_sample_tables
 from backend.db.tables import raw_variants
-from backend.ingestion import parser_23andme
+from backend.ingestion import dispatcher, parser_23andme
 from backend.ingestion.base import SourceVendor
 from backend.ingestion.parser_23andme import (
     MalformedDataError,
@@ -39,6 +46,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 V5_FILE = FIXTURES / "sample_23andme_v5.txt"
 V3_FILE = FIXTURES / "sample_23andme_v3.txt"
 V4_FILE = FIXTURES / "sample_23andme_v4.txt"
+ANCESTRY_V2_FILE = FIXTURES / "sample_ancestrydna_v2.txt"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -447,3 +455,43 @@ class TestNoDispatchHelpers:
         result = parse_23andme(V5_FILE)
         assert isinstance(result.version, str)
         assert result.version == "v5"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 33 (ADNA-08a) — flipped rejection test for AncestryDNA inputs
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDispatcherFlipForAncestryDNA:
+    """The historical ``test_rejects_ancestrydna_with_message`` test asserted
+    that ``parse_23andme(<AncestryDNA fixture>)`` raises a vendor-rejection
+    error. After step 29 moved vendor dispatch into
+    ``backend.ingestion.dispatcher`` and step 30 landed
+    ``parser_ancestrydna``, the dispatcher now successfully routes
+    AncestryDNA inputs to the new parser. Step 33 retired the legacy
+    fixture (`sample_ancestrydna.txt`) in favor of
+    `sample_ancestrydna_v2.txt` and flipped the assertion shape:
+
+    - ``dispatcher.parse(<AncestryDNA v2 fixture>)`` succeeds with
+      ``vendor == ANCESTRYDNA``, ``version == "v2.0"``, ``build ==
+      "GRCh37"`` and the Plan §8.7 composed ``file_format`` shape.
+    - The bare 23andMe parser still raises ``UnrecognizedVersionError`` on
+      the same input — vendor dispatch is no longer the parser's job.
+    """
+
+    def test_dispatcher_parses_ancestrydna_v2_successfully(self) -> None:
+        result = dispatcher.parse(ANCESTRY_V2_FILE)
+        assert result.vendor is SourceVendor.ANCESTRYDNA
+        assert result.version == "v2.0"
+        assert result.build == "GRCh37"
+        assert isinstance(result.version, str)
+        assert len(result.variants) > 0
+        # Plan §8.7 composed file_format shape (samples.file_format column).
+        assert f"{result.vendor.value}_{result.version}" == "ancestrydna_v2.0"
+
+    def test_parse_23andme_still_raises_on_ancestrydna_input(self) -> None:
+        """Vendor dispatch is the dispatcher's job — the bare parser must
+        not silently accept non-23andMe content. Locks the post-step-29
+        contract on the new v2 fixture."""
+        with pytest.raises(UnrecognizedVersionError):
+            parse_23andme(ANCESTRY_V2_FILE)

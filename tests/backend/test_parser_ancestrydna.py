@@ -7,11 +7,12 @@ hemizygous X/Y handling, trailing blank-line tolerance, CRLF handling, and
 ``errors="replace"`` on stray non-UTF-8 bytes.
 
 The bulk of positive-path + raise-path coverage lives in steps 36 and 37
-(`test_parser_ancestrydna.py` extension + `test_parser_ancestrydna_raise_paths.py`),
-which depend on bio-validator's curated `sample_ancestrydna_v2.txt` fixture
-(step 34). Step 30 ships a smoke surface against the legacy
-`sample_ancestrydna.txt` fixture + inline `io.StringIO` payloads so the new
-module is non-trivially exercised in CI from the moment it lands.
+(`test_parser_ancestrydna.py` extension + `test_parser_ancestrydna_raise_paths.py`).
+Step 30 shipped a smoke surface against the legacy `sample_ancestrydna.txt`
+fixture + inline `io.StringIO` payloads; step 33 retired the legacy file in
+favor of ``sample_ancestrydna_v2.txt`` (the §8.6 edge-case-covering fixture
+landed inline per step 33's ordering note while PR-2 ships ahead of PR-3 —
+step 34 will expand it to bio-validator's 500–1000 rsID curation).
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from backend.ingestion.parser_ancestrydna import (
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-LEGACY_FIXTURE = FIXTURES / "sample_ancestrydna.txt"
+FIXTURE_V2 = FIXTURES / "sample_ancestrydna_v2.txt"
 
 
 # --------------------------------------------------------------------------- #
@@ -106,15 +107,18 @@ def test_canonical_genotype(a1: str, a2: str, expected: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-class TestParseLegacyFixture:
-    """Locks parse contract against the legacy `sample_ancestrydna.txt`.
+class TestParseV2Fixture:
+    """Locks parse contract against ``sample_ancestrydna_v2.txt``.
 
-    Step 33 will swap this fixture for `sample_ancestrydna_v2.txt`; the test
-    references the legacy filename so the rename is mechanical.
+    Step 33 retired the legacy ``sample_ancestrydna.txt`` and migrated all
+    references here. The v2 fixture keeps the legacy row contract intact
+    (APOE, MTHFR, chrX, sorted-pair locus) and layers in the §8.6 edge cases
+    (``00`` no-call, chr25 PAR, chr26 MT, indels in both ``I/D`` and ``D/I``
+    orderings, legacy ``kgp*`` passthrough, hemizygous chrY).
     """
 
     def test_result_shape(self) -> None:
-        result = parse_ancestrydna(LEGACY_FIXTURE)
+        result = parse_ancestrydna(FIXTURE_V2)
         assert isinstance(result, ParseResult)
         assert result.vendor is SourceVendor.ANCESTRYDNA
         assert result.version == "v2.0"
@@ -124,26 +128,29 @@ class TestParseLegacyFixture:
         assert f"{result.vendor.value}_{result.version}" == "ancestrydna_v2.0"
 
     def test_variant_count_matches_data_rows(self) -> None:
-        result = parse_ancestrydna(LEGACY_FIXTURE)
-        # Legacy fixture has 7 comment + 1 header + 20 data rows = 28 lines;
+        result = parse_ancestrydna(FIXTURE_V2)
+        # v2 fixture has 8 comment + 1 header + 35 data rows = 44 lines;
         # total_lines counts every line in the body loop (matching the
         # 23andMe parser contract), skipped_lines counts comments + header.
-        assert len(result.variants) == 20
-        assert result.total_lines == 28
-        assert result.skipped_lines == 8
+        assert len(result.variants) == 35
+        assert result.total_lines == 44
+        assert result.skipped_lines == 9
         assert result.total_lines == result.skipped_lines + len(result.variants)
 
-    def test_partial_no_call_canonicalized(self) -> None:
-        """rs2032597 (chrY, C/0) → "--", increments nocall_count."""
-        result = parse_ancestrydna(LEGACY_FIXTURE)
-        nocalls = [v for v in result.variants if v.genotype == "--"]
-        assert len(nocalls) == 1
-        assert nocalls[0].rsid == "rs2032597"
-        assert nocalls[0].chrom == "Y"
-        assert result.nocall_count == 1
+    def test_no_calls_canonicalized(self) -> None:
+        """§8.6 #1 + #2 — both the partial (C/0 on chrY) and full (0/0 on
+        chr1) no-call rows canonicalize to ``"--"`` and contribute to
+        ``nocall_count``."""
+        result = parse_ancestrydna(FIXTURE_V2)
+        nocalls = {v.rsid for v in result.variants if v.genotype == "--"}
+        assert nocalls == {"rs2032597", "rs9999001"}
+        assert result.nocall_count == 2
+        by_rsid = {v.rsid: v for v in result.variants}
+        assert by_rsid["rs2032597"].chrom == "Y"
+        assert by_rsid["rs9999001"].chrom == "1"
 
     def test_apoe_rsids_present(self) -> None:
-        result = parse_ancestrydna(LEGACY_FIXTURE)
+        result = parse_ancestrydna(FIXTURE_V2)
         by_rsid = {v.rsid: v for v in result.variants}
         assert by_rsid["rs429358"].chrom == "19"
         assert by_rsid["rs429358"].genotype == "TT"
@@ -152,14 +159,14 @@ class TestParseLegacyFixture:
 
     def test_chr_x_call_preserved(self) -> None:
         """rs6655587 (chrX 2699555 A G) is sorted to "AG" on chromosome X."""
-        result = parse_ancestrydna(LEGACY_FIXTURE)
+        result = parse_ancestrydna(FIXTURE_V2)
         by_rsid = {v.rsid: v for v in result.variants}
         assert by_rsid["rs6655587"].chrom == "X"
         assert by_rsid["rs6655587"].genotype == "AG"
 
     def test_sorted_pair_canonicalization_on_data(self) -> None:
         """rs3892097 (G, A) must canonicalize to "AG" (sorted)."""
-        result = parse_ancestrydna(LEGACY_FIXTURE)
+        result = parse_ancestrydna(FIXTURE_V2)
         by_rsid = {v.rsid: v for v in result.variants}
         assert by_rsid["rs3892097"].genotype == "AG"
 

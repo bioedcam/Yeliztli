@@ -26,7 +26,7 @@ from backend.db.tables import database_versions, reference_metadata
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 V5_FILE = FIXTURES / "sample_23andme_v5.txt"
-ANCESTRY_FILE = FIXTURES / "sample_ancestrydna.txt"
+ANCESTRY_FILE = FIXTURES / "sample_ancestrydna_v2.txt"
 REPO_MANIFEST = Path(__file__).resolve().parents[2] / "bundles" / "manifest.json"
 
 

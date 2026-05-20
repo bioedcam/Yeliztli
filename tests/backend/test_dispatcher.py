@@ -44,7 +44,7 @@ def test_detect_vendor_23andme_fixtures(filename: str) -> None:
 
 
 def test_detect_vendor_ancestrydna_fixture() -> None:
-    vendor = dispatcher.detect_vendor(FIXTURES / "sample_ancestrydna.txt")
+    vendor = dispatcher.detect_vendor(FIXTURES / "sample_ancestrydna_v2.txt")
     assert vendor == SourceVendor.ANCESTRYDNA
 
 

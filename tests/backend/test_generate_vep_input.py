@@ -50,13 +50,10 @@ def _has_ancestrydna_parser() -> bool:
 
 
 def _ancestrydna_fixture() -> Path | None:
-    # `sample_ancestrydna_v2.txt` lands in step 34; until then fall back to
-    # the legacy `sample_ancestrydna.txt`, which step 33 will delete.
-    for name in ("sample_ancestrydna_v2.txt", "sample_ancestrydna.txt"):
-        path = FIXTURES / name
-        if path.exists():
-            return path
-    return None
+    # Step 33 retired the legacy `sample_ancestrydna.txt` in favor of the
+    # §8.6 edge-case-covering `sample_ancestrydna_v2.txt`.
+    path = FIXTURES / "sample_ancestrydna_v2.txt"
+    return path if path.exists() else None
 
 
 _ANCESTRYDNA_FIXTURE = _ancestrydna_fixture()
@@ -93,7 +90,7 @@ def _read_vcf_lines(path: Path) -> tuple[list[str], list[str]]:
                 or not _ANCESTRYDNA_PARSER_AVAILABLE,
                 reason=(
                     "dispatcher (step 27), AncestryDNA parser (step 30), or "
-                    "AncestryDNA fixture (step 34) not yet landed"
+                    "AncestryDNA v2 fixture (step 33) not yet landed"
                 ),
             ),
             id="vendor-ancestrydna",
