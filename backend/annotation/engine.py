@@ -82,6 +82,10 @@ class AnnotationEngineResult:
 
     total_variants: int = 0
     vep_matched: int = 0
+    # Subset of ``vep_matched`` that resolved via the (chrom, pos) fallback
+    # rather than rsid lookup. Populated by Plan §5.1's defense-in-depth path
+    # for AncestryDNA-style `kgp*` / internal IDs without rsid mapping.
+    vep_coord_fallback_matched: int = 0
     clinvar_matched: int = 0
     gnomad_matched: int = 0
     dbnsfp_matched: int = 0
@@ -578,6 +582,68 @@ def _bulk_upsert(
     return written
 
 
+# ── VEP coord-fallback (Plan §5.1) ──────────────────────────────────────
+
+
+def _vep_coord_fallback(
+    batch_rsids: list[str],
+    raw_by_rsid: dict[str, sa.Row],
+    vep_engine: sa.Engine,
+    vep_data: dict[str, dict],
+    result: AnnotationEngineResult,
+) -> int:
+    """Resolve unmatched rsids via (chrom, pos) lookup in the VEP bundle.
+
+    Mutates ``vep_data`` in place with any coord-matched annotations and adds
+    coord-fallback wall-clock time onto ``result.timing_vep_s``. Returns the
+    number of variants resolved here so the caller can roll the count into
+    ``result.vep_coord_fallback_matched``.
+
+    The plan calls this "defense-in-depth" for AncestryDNA `kgp*` IDs: the
+    rsid string is internal-only, but the (chrom, pos) tuple still hits a
+    bundle row carrying a different rsid.
+    """
+    from backend.annotation.vep_bundle import lookup_vep_by_positions
+
+    unmatched_rsids = [r for r in batch_rsids if r not in vep_data]
+    if not unmatched_rsids:
+        return 0
+
+    positions: list[tuple[str, int, str]] = []
+    for rsid in unmatched_rsids:
+        raw = raw_by_rsid.get(rsid)
+        if raw is None:
+            continue
+        chrom = getattr(raw, "chrom", None)
+        pos = getattr(raw, "pos", None)
+        if chrom and pos is not None:
+            try:
+                positions.append((chrom, int(pos), rsid))
+            except (TypeError, ValueError):
+                continue
+
+    if not positions:
+        return 0
+
+    t0 = time.perf_counter()
+    matches = lookup_vep_by_positions(positions, vep_engine)
+    result.timing_vep_s += time.perf_counter() - t0
+
+    for sample_rsid, annot in matches.items():
+        vep_data[sample_rsid] = {
+            "gene_symbol": annot.gene_symbol,
+            "transcript_id": annot.transcript_id,
+            "consequence": annot.consequence,
+            "hgvs_coding": annot.hgvs_coding,
+            "hgvs_protein": annot.hgvs_protein,
+            "strand": annot.strand,
+            "exon_number": annot.exon_number,
+            "intron_number": annot.intron_number,
+            "mane_select": annot.mane_select,
+        }
+    return len(matches)
+
+
 # ── Timed lookup wrapper (P4-22) ────────────────────────────────────────
 
 
@@ -847,6 +913,32 @@ def run_annotation(
             result.timing_gnomad_s += source_timings.get("gnomad", 0.0)
             result.timing_dbnsfp_s += source_timings.get("dbnsfp", 0.0)
 
+            # 5a. VEP coord-fallback for unmatched rsids (Plan §5.1, §5.6).
+            # AncestryDNA's `kgp*` / internal IDs have a known coordinate but
+            # no rsid mapping in the bundle; they resolve here. Runs after the
+            # concurrent futures so gene-phenotype sees the augmented `vep_data`.
+            # Mirrors the future-result error trap: a failing coord lookup
+            # (e.g. a partially-built bundle with no `vep_annotations` table)
+            # must not abort the engine — it logs and continues.
+            if vep_engine is not None:
+                try:
+                    vep_coord_count = _vep_coord_fallback(
+                        batch_rsids,
+                        raw_by_rsid,
+                        vep_engine,
+                        vep_data,
+                        result,
+                    )
+                except Exception as exc:
+                    msg = f"vep coord-fallback lookup failed: {exc}"
+                    logger.warning(
+                        "annotation_source_error",
+                        extra={"source": "vep_coord_fallback", "error": str(exc)},
+                    )
+                    result.errors.append(msg)
+                else:
+                    result.vep_coord_fallback_matched += vep_coord_count
+
             # 5b. Gene-phenotype lookup (depends on VEP gene_symbol results)
             gene_phenotype_data: dict[str, dict] = {}
             if vep_data:
@@ -896,14 +988,15 @@ def run_annotation(
 
     result.rows_written = total_written
 
-    # 9. Coverage telemetry (Plan §5.6). VEP currently has no coord fallback;
-    # reserve the field at 0 so downstream consumers see the stable shape.
+    # 9. Coverage telemetry (Plan §5.6). `vep_matched` aggregates both rsid
+    # and (chrom, pos) hits; subtract the coord-fallback subset so the
+    # payload reports each bucket independently.
     result.coverage_stats = _build_coverage_stats(
         sample_engine,
         registry,
         total_variants=result.total_variants,
-        vep_rsid_hits=result.vep_matched,
-        vep_coord_fallback_hits=0,
+        vep_rsid_hits=result.vep_matched - result.vep_coord_fallback_matched,
+        vep_coord_fallback_hits=result.vep_coord_fallback_matched,
     )
 
     # 10. WAL checkpoint
