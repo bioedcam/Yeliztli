@@ -27,6 +27,7 @@ import OverlaysView from '@/pages/OverlaysView'
 import ReportBuilder from '@/pages/ReportBuilder'
 import FindingsExplorer from '@/pages/FindingsExplorer'
 import GeneDetailPage from '@/pages/GeneDetailPage'
+import IndividualDetail from '@/pages/IndividualDetail'
 import Settings from '@/pages/Settings'
 import SetupWizard from '@/pages/SetupWizard'
 import Login from '@/pages/Login'
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/variants" element={<VariantExplorer />} />
           <Route path="/variants/:rsid" element={<VariantDetailPage />} />
           <Route path="/genes/:symbol" element={<GeneDetailPage />} />
+          <Route path="/individuals/:id" element={<IndividualDetail />} />
           <Route path="/pharmacogenomics" element={<PharmacogenomicsView />} />
           <Route path="/nutrigenomics" element={<NutrigenomicsView />} />
           <Route path="/cancer" element={<CancerView />} />

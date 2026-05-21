@@ -4,7 +4,8 @@
  * When no sample is active, shows upload prompt.
  */
 
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import { useQueries } from '@tanstack/react-query'
 import FileUpload from '@/components/upload/FileUpload'
 import StatusBar from '@/components/dashboard/StatusBar'
 import AnnotationPanel from '@/components/dashboard/AnnotationPanel'
@@ -13,10 +14,12 @@ import FindingsPreview from '@/components/dashboard/FindingsPreview'
 import QualityControl from '@/components/dashboard/QualityControl'
 import StaleSampleGate from '@/components/layout/StaleSampleGate'
 import { useSamples } from '@/api/samples'
+import { useIndividuals, individualsKeys } from '@/api/individuals'
 import { useTotalVariantCount, useQCStats } from '@/api/variants'
 import { parseSampleId } from '@/lib/format'
-import { Upload } from 'lucide-react'
+import { Upload, User } from 'lucide-react'
 import PageLoading from '@/components/ui/PageLoading'
+import type { IndividualDetail } from '@/types/individuals'
 
 export default function Dashboard() {
   const [searchParams] = useSearchParams()
@@ -27,6 +30,30 @@ export default function Dashboard() {
 
   const { data: variantCount } = useTotalVariantCount(activeSampleId)
   const { data: qcStats } = useQCStats(activeSampleId)
+
+  // ── Two-level context chip (Plan §9.5) ───────────────────
+  // Walk loaded individual-detail caches to discover which individual
+  // (if any) owns the active sample. Reuses individualsKeys.detail(id)
+  // so this fans out exactly the same fetches as the top-nav selector.
+  const { data: individuals } = useIndividuals()
+  const detailQueries = useQueries({
+    queries: (individuals ?? []).map((ind) => ({
+      queryKey: individualsKeys.detail(ind.id),
+      queryFn: async (): Promise<IndividualDetail> => {
+        const res = await fetch(`/api/individuals/${ind.id}`)
+        if (!res.ok) throw new Error(`Failed to fetch individual ${ind.id}`)
+        return (await res.json()) as IndividualDetail
+      },
+      enabled: activeSampleId != null,
+    })),
+  })
+  const owningIndividual =
+    activeSampleId == null
+      ? null
+      : (detailQueries
+          .map((q) => q.data as IndividualDetail | undefined)
+          .find((d) => d?.linked_samples.some((s) => s.id === activeSampleId)) ??
+          null)
 
   // ── Loading state: avoid flash of upload prompt ───────────
 
@@ -63,6 +90,30 @@ export default function Dashboard() {
   return (
     <StaleSampleGate>
       <div className="p-6 max-w-5xl mx-auto space-y-6">
+        {/* Two-level context chip (Plan §9.5) */}
+        {owningIndividual && (
+          <div
+            className="flex items-center gap-1.5"
+            aria-label="Active context"
+            data-testid="dashboard-context-chip"
+          >
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
+              <User className="h-3 w-3" />
+              <span>Viewing:</span>
+              <Link
+                to={`/individuals/${owningIndividual.id}`}
+                className="font-medium text-foreground hover:text-primary hover:underline"
+              >
+                {owningIndividual.display_name}
+              </Link>
+              <span aria-hidden="true">/</span>
+              <span className="font-medium text-foreground">
+                {activeSample.name}
+              </span>
+            </span>
+          </div>
+        )}
+
         {/* Status bar */}
         <StatusBar
           sample={activeSample}
