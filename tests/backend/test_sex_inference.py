@@ -23,6 +23,7 @@ from backend.services.sex_inference import (
     _THRESHOLD_PAR_NOISE,
     _THRESHOLD_XY_CONFIRM,
     Classification,
+    _classify,
     infer_biological_sex,
 )
 
@@ -293,3 +294,200 @@ def test_returns_literal_alphabet(
     if rows:
         _seed(sample_engine, rows)
     assert infer_biological_sex(sample_engine) == expected
+
+
+# ── IND-09b edge-case battery (Plan §14.1) ─────────────────────────────────
+
+
+class TestIND09bEdgeCases:
+    """Plan §14.1 IND-09b edge-case battery — hardens the boundary
+    behaviors around the PAR pre-filter, the candidate-XY → chrY-confirmation
+    handoff, and the dispositive-XX short-circuit at the
+    (non-PAR het | tiny chrY noise) intersection.
+
+    Each test maps to one bullet in IND-09b:
+
+      (i)       chrM-only data → ``unknown``
+      (ii)      PAR-only het (no informative non-PAR chrX) → ``unknown``
+      (ii-bis)  PAR het + non-PAR hom with no chrY → ``unknown``
+                (candidate-XY without confirmation falls back)
+      (iii)     chrY rate in ``(_THRESHOLD_PAR_NOISE, _THRESHOLD_XY_CONFIRM]``
+                + all non-PAR chrX homozygous → ``manual_review``
+      (iii-bis) Non-PAR het + chrY noise just above PAR-noise floor → ``XX``
+                (dispositive short-circuit pinned end-to-end and by
+                direct ``_classify`` assertion)
+    """
+
+    # ── (i) chrM-only ──────────────────────────────────────────────────
+
+    def test_i_chrM_only_multiple_loci_returns_unknown(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """Multiple chrM rows + no chrX/chrY rows at all → ``unknown``.
+        Strengthens the single-row ``test_unknown_mt_only_data`` case."""
+        _seed(
+            sample_engine,
+            [
+                {
+                    "rsid": f"rs_mt_{i}",
+                    "chrom": "MT",
+                    "pos": 1000 + i,
+                    "genotype": "AA",
+                }
+                for i in range(20)
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "unknown"
+
+    # ── (ii) PAR-only het, no informative non-PAR chrX ─────────────────
+
+    def test_ii_par1_and_par2_het_only_returns_unknown(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """Het PAR1 + Het PAR2 + no non-PAR chrX + no chrY → ``unknown``.
+        Both PAR rows fall under the pre-filter so ``x_nonpar_typed`` stays
+        zero and neither the dispositive-XX nor candidate-XY branch fires."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_par1_het", "chrom": "X", "pos": _PAR1_POS, "genotype": "AG"},
+                {"rsid": "rs_par2_het", "chrom": "X", "pos": _PAR2_POS, "genotype": "CT"},
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "unknown"
+
+    def test_ii_par_het_plus_nonpar_nocall_only_returns_unknown(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """PAR1 het + non-PAR chrX no-calls only → ``unknown``. The PAR
+        row is pre-filtered; the non-PAR rows are all no-calls so
+        ``x_nonpar_typed`` is zero — neither informative-chrX branch
+        engages."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_par1_het", "chrom": "X", "pos": _PAR1_POS, "genotype": "AG"},
+                {"rsid": "rs_x_nc1", "chrom": "X", "pos": _NONPAR_X_BASE, "genotype": "--"},
+                {"rsid": "rs_x_nc2", "chrom": "X", "pos": _NONPAR_X_BASE + 1, "genotype": "00"},
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "unknown"
+
+    # ── (ii-bis) candidate-XY without chrY confirmation ────────────────
+
+    def test_ii_bis_par_het_plus_nonpar_hom_without_chrY_returns_unknown(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """PAR1 het + at least one homozygous non-PAR chrX call + **no
+        chrY data** → ``unknown``. The PAR pre-filter strips the PAR het,
+        leaving a candidate-XY pattern on non-PAR chrX; with zero chrY
+        rows ``y_rate == 0.0`` which is at/below ``_THRESHOLD_PAR_NOISE``,
+        so the algorithm falls back to ``unknown`` rather than auto-
+        assigning XY. Pinning this guards against a future regression
+        that mistakes silence on chrY for confirmation."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_par1_het", "chrom": "X", "pos": _PAR1_POS, "genotype": "AG"},
+                {"rsid": "rs_x_hom", "chrom": "X", "pos": _NONPAR_X_BASE, "genotype": "GG"},
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "unknown"
+
+    # ── (iii) chrY rate boundaries around the manual_review band ───────
+
+    def test_iii_chrY_rate_just_above_par_noise_floor_yields_manual_review(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """All non-PAR chrX hom + chrY rate **just above** the PAR-noise
+        floor → ``manual_review``. 2/18 ≈ 0.111 — strictly above 0.10 and
+        well below 0.30 (the existing mid-band case sits at 0.20)."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_x_hom", "chrom": "X", "pos": _NONPAR_X_BASE, "genotype": "AA"},
+                *_y_rows(typed=2, nocall=16),
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "manual_review"
+
+    def test_iii_chrY_rate_at_xy_confirm_threshold_yields_manual_review(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """All non-PAR chrX hom + chrY rate **exactly equal to**
+        ``_THRESHOLD_XY_CONFIRM`` (3/10 = 0.30) → ``manual_review``.
+        Locks the strict-``>`` semantics of the confirm branch — equality
+        is not enough to promote to XY."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_x_hom", "chrom": "X", "pos": _NONPAR_X_BASE, "genotype": "AA"},
+                *_y_rows(typed=3, nocall=7),
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "manual_review"
+
+    def test_iii_chrY_rate_just_above_xy_confirm_yields_xy(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """Defensive boundary mate to the equality case above: 31/100 =
+        0.31 — just above ``_THRESHOLD_XY_CONFIRM`` — promotes the
+        candidate XY to confirmed ``XY``."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_x_hom", "chrom": "X", "pos": _NONPAR_X_BASE, "genotype": "AA"},
+                *_y_rows(typed=31, nocall=69),
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "XY"
+
+    # ── (iii-bis) dispositive-XX short-circuit at the noise floor ──────
+
+    def test_iii_bis_nonpar_het_plus_chrY_just_above_floor_yields_xx(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        """Non-PAR het + chrY rate **just above** ``_THRESHOLD_PAR_NOISE``
+        (2/18 ≈ 0.111) → ``XX``. Complements the existing mid-band
+        (0.20) and above-confirm (0.80) dispositive-XX cases by pinning
+        the floor-adjacent boundary too — proves the short-circuit doesn't
+        accidentally fall through when the noise is small but non-zero."""
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rs_x_het", "chrom": "X", "pos": _NONPAR_X_BASE, "genotype": "AG"},
+                *_y_rows(typed=2, nocall=16),
+            ],
+        )
+        assert infer_biological_sex(sample_engine) == "XX"
+
+    def test_iii_bis_classify_helper_ignores_y_rate_under_dispositive_xx(
+        self,
+    ) -> None:
+        """Direct ``_classify`` assertion of the dispositive-XX short-circuit.
+
+        With ``x_nonpar_het >= 1`` the classifier returns ``"XX"`` for every
+        ``y_rate`` in the [0, 1) domain — proves chrY is never consulted
+        once a non-PAR het is in evidence. End-to-end tests above pin the
+        same invariant through the public ``infer_biological_sex`` entry
+        point; this one pins it at the decision-tree level so any future
+        re-ordering of the branches in ``_classify`` trips the test."""
+        for y_rate in (
+            0.0,
+            _THRESHOLD_PAR_NOISE,
+            _THRESHOLD_PAR_NOISE + 0.01,  # just above the floor
+            0.20,
+            _THRESHOLD_XY_CONFIRM,
+            _THRESHOLD_XY_CONFIRM + 0.01,  # just above confirm
+            0.50,
+            0.999,
+        ):
+            assert (
+                _classify(
+                    x_nonpar_het=1,
+                    x_nonpar_typed=1,
+                    x_nonpar_hom=0,
+                    y_rate=y_rate,
+                )
+                == "XX"
+            ), f"_classify lost dispositive-XX short-circuit at y_rate={y_rate}"
