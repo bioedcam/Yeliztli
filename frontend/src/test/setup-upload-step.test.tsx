@@ -232,3 +232,132 @@ describe('UploadStep — Step 15 bundle-gate banner', () => {
     expect(clickSpy).not.toHaveBeenCalled()
   })
 })
+
+/** Step 45 — Phase 1 frontend closure (ADNA-12, Plan §13.1).
+ *
+ * Explicit AncestryDNA-accept coverage on `<UploadStep>` independent of the
+ * Step 15 bundle-gate scenarios above. Locks the contract that:
+ * - the file picker accepts AncestryDNA `.txt`/`.tsv`/`.csv` filenames,
+ * - drag-and-drop accepts the same,
+ * - the request body POSTs as multipart `FormData` to `/api/ingest`,
+ * - the 200 response renders the `ancestrydna_v2.0` summary card.
+ */
+describe('UploadStep — Step 45 / ADNA-12 (AncestryDNA accept)', () => {
+  it('accepts an AncestryDNA-named .txt file via the file picker', () => {
+    mockFetch.mockImplementation(() => jsonResponse(200, {}))
+    render(<UploadStep onBack={vi.fn()} />)
+
+    selectFile('AncestryDNA.txt', '#AncestryDNA raw data')
+
+    expect(screen.getByText('AncestryDNA.txt')).toBeInTheDocument()
+    expect(screen.getByText('Upload & Parse')).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        /please select a 23andme or ancestrydna raw data file/i,
+      ),
+    ).not.toBeInTheDocument()
+  })
+
+  it('accepts AncestryDNA exports with .tsv and .csv extensions', () => {
+    mockFetch.mockImplementation(() => jsonResponse(200, {}))
+    render(<UploadStep onBack={vi.fn()} />)
+
+    selectFile('AncestryDNA.tsv', 'header\n')
+    expect(screen.getByText('AncestryDNA.tsv')).toBeInTheDocument()
+
+    selectFile('AncestryDNA.csv', 'header\n')
+    expect(screen.getByText('AncestryDNA.csv')).toBeInTheDocument()
+
+    expect(
+      screen.queryByText(
+        /please select a 23andme or ancestrydna raw data file/i,
+      ),
+    ).not.toBeInTheDocument()
+  })
+
+  it('accepts an AncestryDNA file via drag-and-drop', () => {
+    mockFetch.mockImplementation(() => jsonResponse(200, {}))
+    render(<UploadStep onBack={vi.fn()} />)
+
+    const dropZone = screen.getByRole('button', {
+      name: /select 23andme or ancestrydna raw data file to upload/i,
+    })
+    const file = new File(['#AncestryDNA raw data'], 'AncestryDNA.txt', {
+      type: 'text/plain',
+    })
+
+    fireEvent.drop(dropZone, {
+      dataTransfer: { files: [file] },
+      preventDefault: () => {},
+    })
+
+    expect(screen.getByText('AncestryDNA.txt')).toBeInTheDocument()
+    expect(screen.getByText('Upload & Parse')).toBeInTheDocument()
+  })
+
+  it('POSTs the AncestryDNA file as multipart FormData to /api/ingest', async () => {
+    let capturedBody: unknown = null
+    let capturedMethod: string | undefined
+    let capturedUrl: string | undefined
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === 'string' && url === '/api/ingest') {
+        capturedUrl = url
+        capturedMethod = init?.method
+        capturedBody = init?.body
+        return jsonResponse(200, {
+          sample_id: 7,
+          variant_count: 712_345,
+          nocall_count: 1234,
+          file_format: 'ancestrydna_v2.0',
+        })
+      }
+      return jsonResponse(200, {})
+    })
+
+    render(<UploadStep onBack={vi.fn()} />)
+
+    selectFile('AncestryDNA.txt', '#AncestryDNA raw data\nrsid\tchrom\tpos')
+    fireEvent.click(screen.getByText('Upload & Parse'))
+
+    await waitFor(() => {
+      expect(capturedUrl).toBe('/api/ingest')
+    })
+
+    expect(capturedMethod).toBe('POST')
+    expect(capturedBody).toBeInstanceOf(FormData)
+    const formData = capturedBody as FormData
+    const uploadedFile = formData.get('file')
+    expect(uploadedFile).toBeInstanceOf(File)
+    expect((uploadedFile as File).name).toBe('AncestryDNA.txt')
+  })
+
+  it('renders the AncestryDNA success card with ancestrydna_v2.0 file_format', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === 'string' && url === '/api/ingest') {
+        return jsonResponse(200, {
+          sample_id: 42,
+          variant_count: 681_234,
+          nocall_count: 945,
+          file_format: 'ancestrydna_v2.0',
+        })
+      }
+      return jsonResponse(200, {})
+    })
+
+    render(<UploadStep onBack={vi.fn()} />)
+
+    selectFile('AncestryDNA.txt', '#AncestryDNA raw data')
+    fireEvent.click(screen.getByText('Upload & Parse'))
+
+    expect(await screen.findByText('Sample Uploaded')).toBeInTheDocument()
+    expect(screen.getByText('681,234')).toBeInTheDocument()
+    expect(screen.getByText('945')).toBeInTheDocument()
+    expect(screen.getByText('ancestrydna_v2.0')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('bundle-gate-banner'),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /go to dashboard/i }),
+    ).toBeInTheDocument()
+  })
+})

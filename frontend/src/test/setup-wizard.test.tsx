@@ -1481,4 +1481,86 @@ describe('UploadStep', () => {
 
     expect(screen.getByText('Back')).toBeDisabled()
   })
+
+  // ── Step 45 / ADNA-12 — AncestryDNA ingest happy path ──────────
+
+  it('renders ancestrydna_v2.0 success card after AncestryDNA upload (ADNA-12)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          sample_id: 9,
+          job_id: 'job-ancestrydna-happy',
+          variant_count: 712_345,
+          nocall_count: 1_234,
+          file_format: 'ancestrydna_v2.0',
+        }),
+    })
+
+    render(<UploadStep onBack={vi.fn()} />)
+
+    const file = new File(['#AncestryDNA raw data'], 'AncestryDNA.txt', {
+      type: 'text/plain',
+    })
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(screen.getByText('AncestryDNA.txt')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Upload & Parse'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Sample Uploaded')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('712,345')).toBeInTheDocument()
+    expect(screen.getByText('1,234')).toBeInTheDocument()
+    expect(screen.getByText('ancestrydna_v2.0')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /go to dashboard/i }),
+    ).toBeInTheDocument()
+  })
+})
+
+/** Step 45 — Phase 1 frontend closure (ADNA-12, Plan §13.1).
+ *
+ * SetupWizard-level contract: the wizard's stepper exposes the Upload step
+ * (terminal AncestryDNA entry-point) even when the disclaimer is already
+ * accepted. The full-wizard walk + AncestryDNA upload is exercised by
+ * Playwright in `setup-wizard-ancestrydna.spec.ts` (step 44); here we lock
+ * the unit-level chrome contract.
+ */
+describe('SetupWizard — Step 45 / ADNA-12 (AncestryDNA wizard chrome)', () => {
+  it('keeps the Upload step in the stepper after the disclaimer is accepted', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === 'string' && url === '/api/setup/status') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(
+              mockSetupStatus({
+                disclaimer_accepted: true,
+              }),
+            ),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      })
+    })
+
+    render(<SetupWizard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup Wizard')).toBeInTheDocument()
+    })
+
+    // Stepper labels must include Upload (the terminal AncestryDNA entry
+    // point) — guards against regressions that drop the Upload step when
+    // disclaimer_accepted state advances past step 0.
+    expect(screen.getByText('Welcome')).toBeInTheDocument()
+    expect(screen.getByText('Upload')).toBeInTheDocument()
+  })
 })
