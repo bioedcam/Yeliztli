@@ -1,17 +1,28 @@
-"""Tests for the individuals API endpoints (Step 47 / IND-03; Plan §9.2, §9.3).
+"""Tests for the individuals API endpoints (Steps 47 + 55; Plan §9.2, §9.3, §14.1).
 
-Covers:
-- (a) Happy paths for all seven endpoints:
-       list, create, detail, patch, delete, link-sample, unlink-sample.
+Step 47 / IND-03 covered:
+- (a) Happy paths for all seven endpoints (list, create, detail, patch,
+       delete, link-sample, unlink-sample).
 - (b) 409 on double-link — linking a sample already attached to a
        different individual returns the existing link in the body.
 - (c) FK SET NULL on individual delete — DELETE on an individual with
        linked samples nulls out each ``samples.individual_id`` but leaves
        the sample rows + per-sample DB files in place. Plan §9.2.
 
-IND-09's remaining test surface (link-elsewhere, nonexistent, aggregated
-dedup) lands in step 55; sex-inference + haplogroup parity in step 54;
-migration 009 round-trip in step 46.
+Step 55 / IND-09a edge-case extensions (``TestEdgeCases``):
+- Linking against nonexistent individual / nonexistent sample → 404.
+- Unlinking against nonexistent individual / nonexistent sample → 404.
+- Aggregated-findings dedup when the same rsid appears in 3 linked
+  samples → single emission; ``linked_samples`` carries the provenance.
+- Low-evidence findings (evidence_level < 3) are excluded from the
+  aggregate.
+- Findings with NULL rsid (haplogroup / pathway-level) are counted
+  per-sample rather than deduped (Plan §9.5 carve-out).
+- 409 link-elsewhere preserves the original attachment across repeated
+  relink attempts.
+
+Sex-inference + haplogroup parity lives in step 54; migration 009
+round-trip in step 46.
 """
 
 from __future__ import annotations
@@ -82,6 +93,51 @@ def _seed_high_confidence_findings(
             ],
         )
     sample_engine.dispose()
+
+
+def _seed_extra_sample(
+    data_dir: Path,
+    *,
+    name: str,
+    db_path: str,
+    file_format: str,
+    file_hash: str,
+    findings_rows: list[dict] | None = None,
+    findings_payloads: list[dict] | None = None,
+) -> int:
+    """Seed a sample row + per-sample DB after the fixture has already started.
+
+    ``findings_rows`` is the legacy shape that mirrors the fixture's
+    bootstrap (a single annotated_variants row paired with one
+    findings_table row at the row's rsid + evidence_level). When a test
+    needs to write findings the bootstrap helper can't express — e.g.
+    NULL rsid, a custom module, evidence_level=1 — pass
+    ``findings_payloads`` directly: each dict is forwarded verbatim to
+    ``findings_table.insert()``.
+    """
+    ref_engine = sa.create_engine(f"sqlite:///{data_dir / 'reference.db'}")
+    try:
+        sample_id = _seed_sample(
+            ref_engine,
+            data_dir,
+            name=name,
+            db_path=db_path,
+            file_format=file_format,
+            file_hash=file_hash,
+        )
+    finally:
+        ref_engine.dispose()
+
+    if findings_rows:
+        _seed_high_confidence_findings(data_dir, db_path, findings_rows)
+
+    if findings_payloads:
+        sample_engine = sa.create_engine(f"sqlite:///{data_dir / db_path}")
+        with sample_engine.begin() as conn:
+            conn.execute(findings_table.insert(), findings_payloads)
+        sample_engine.dispose()
+
+    return sample_id
 
 
 @pytest.fixture
@@ -220,9 +276,7 @@ class TestHappyPaths:
         assert resp.status_code == 200
         assert resp.json()["notes"] == "follow-up next quarter"
 
-    def test_patch_with_no_fields_returns_422(
-        self, individuals_client: TestClient
-    ) -> None:
+    def test_patch_with_no_fields_returns_422(self, individuals_client: TestClient) -> None:
         ind_id = individuals_client.post(
             "/api/individuals", json={"display_name": "Original"}
         ).json()["id"]
@@ -254,9 +308,7 @@ class TestHappyPaths:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert sorted(s["id"] for s in body["linked_samples"]) == sorted(
-            [sample1_id, sample2_id]
-        )
+        assert sorted(s["id"] for s in body["linked_samples"]) == sorted([sample1_id, sample2_id])
         # 3 distinct high-confidence rsids across the two samples: rs12345
         # (shared), rs67890, rs99999.
         assert body["aggregated_findings_count"] == 3
@@ -287,37 +339,25 @@ class TestHappyPaths:
         assert [s["id"] for s in body["linked_samples"]] == [sample2_id]
 
     def test_create_minimal_body(self, individuals_client: TestClient) -> None:
-        resp = individuals_client.post(
-            "/api/individuals", json={"display_name": "Minimal"}
-        )
+        resp = individuals_client.post("/api/individuals", json={"display_name": "Minimal"})
         assert resp.status_code == 201
         body = resp.json()
         assert body["notes"] is None
         assert body["biological_sex"] is None
 
-    def test_create_rejects_empty_display_name(
-        self, individuals_client: TestClient
-    ) -> None:
-        resp = individuals_client.post(
-            "/api/individuals", json={"display_name": ""}
-        )
+    def test_create_rejects_empty_display_name(self, individuals_client: TestClient) -> None:
+        resp = individuals_client.post("/api/individuals", json={"display_name": ""})
         assert resp.status_code == 422
 
     def test_get_nonexistent_returns_404(self, individuals_client: TestClient) -> None:
         resp = individuals_client.get("/api/individuals/999")
         assert resp.status_code == 404
 
-    def test_patch_nonexistent_returns_404(
-        self, individuals_client: TestClient
-    ) -> None:
-        resp = individuals_client.patch(
-            "/api/individuals/999", json={"display_name": "Foo"}
-        )
+    def test_patch_nonexistent_returns_404(self, individuals_client: TestClient) -> None:
+        resp = individuals_client.patch("/api/individuals/999", json={"display_name": "Foo"})
         assert resp.status_code == 404
 
-    def test_delete_nonexistent_returns_404(
-        self, individuals_client: TestClient
-    ) -> None:
+    def test_delete_nonexistent_returns_404(self, individuals_client: TestClient) -> None:
         resp = individuals_client.delete("/api/individuals/999")
         assert resp.status_code == 404
 
@@ -326,17 +366,11 @@ class TestHappyPaths:
 
 
 class TestDoubleLinkConflict:
-    def test_409_returns_existing_link_in_body(
-        self, individuals_client: TestClient
-    ) -> None:
+    def test_409_returns_existing_link_in_body(self, individuals_client: TestClient) -> None:
         sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
 
-        ind_a = individuals_client.post(
-            "/api/individuals", json={"display_name": "Owner"}
-        ).json()
-        ind_b = individuals_client.post(
-            "/api/individuals", json={"display_name": "Other"}
-        ).json()
+        ind_a = individuals_client.post("/api/individuals", json={"display_name": "Owner"}).json()
+        ind_b = individuals_client.post("/api/individuals", json={"display_name": "Other"}).json()
 
         # Attach to A first.
         resp = individuals_client.post(
@@ -373,9 +407,7 @@ class TestDeleteCascadesToSetNull:
         sample2_id = individuals_client.sample2_id  # type: ignore[attr-defined]
 
         # Link both samples to one individual.
-        ind = individuals_client.post(
-            "/api/individuals", json={"display_name": "Subject"}
-        ).json()
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Subject"}).json()
         for sid in (sample1_id, sample2_id):
             individuals_client.post(
                 f"/api/individuals/{ind['id']}/link-sample",
@@ -403,9 +435,7 @@ class TestDeleteCascadesToSetNull:
 
         # Inspect the reference DB directly so the assertion doesn't
         # depend on /api/samples projecting the individual_id field.
-        ref_engine = sa.create_engine(
-            f"sqlite:///{tmp_data_dir / 'reference.db'}"
-        )
+        ref_engine = sa.create_engine(f"sqlite:///{tmp_data_dir / 'reference.db'}")
         try:
             with ref_engine.connect() as conn:
                 rows = conn.execute(
@@ -421,3 +451,276 @@ class TestDeleteCascadesToSetNull:
         # Per-sample DB files are untouched.
         assert sample1_db.is_file()
         assert sample2_db.is_file()
+
+
+# ── (d) IND-09a edge-case route tests (Step 55) ──────────────────────
+
+
+class TestEdgeCases:
+    """IND-09a — link/unlink 404 paths + aggregated-findings dedup edges.
+
+    Plan §14.1 IND-09a row. The 409-on-double-link payload assertion
+    landed in step 47 (``TestDoubleLinkConflict``); this class extends it
+    with multi-attempt preservation and exercises the remaining 404
+    branches (link / unlink against missing individual or sample id) +
+    three aggregated-findings dedup edges (3-way same-rsid dedup,
+    low-evidence exclusion, NULL-rsid per-sample counting).
+    """
+
+    # ── Link / unlink 404 paths ────────────────────────────────────
+
+    def test_link_sample_to_nonexistent_individual_returns_404(
+        self, individuals_client: TestClient
+    ) -> None:
+        sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
+        resp = individuals_client.post(
+            "/api/individuals/9999/link-sample",
+            json={"sample_id": sample1_id},
+        )
+        assert resp.status_code == 404
+        assert "9999" in resp.json()["detail"]
+
+        # The sample must remain unlinked — the 404 is raised before any
+        # write to ``samples.individual_id``.
+        ref_engine = sa.create_engine(
+            f"sqlite:///{individuals_client.data_dir / 'reference.db'}"  # type: ignore[attr-defined]
+        )
+        try:
+            with ref_engine.connect() as conn:
+                row = conn.execute(
+                    sa.select(samples.c.individual_id).where(samples.c.id == sample1_id)
+                ).fetchone()
+        finally:
+            ref_engine.dispose()
+        assert row is not None
+        assert row.individual_id is None
+
+    def test_link_nonexistent_sample_to_existing_individual_returns_404(
+        self, individuals_client: TestClient
+    ) -> None:
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Holder"}).json()
+        resp = individuals_client.post(
+            f"/api/individuals/{ind['id']}/link-sample",
+            json={"sample_id": 9999},
+        )
+        assert resp.status_code == 404
+        assert "9999" in resp.json()["detail"]
+
+        # The individual's linked_samples must still be empty.
+        detail = individuals_client.get(f"/api/individuals/{ind['id']}").json()
+        assert detail["linked_samples"] == []
+
+    def test_unlink_sample_from_nonexistent_individual_returns_404(
+        self, individuals_client: TestClient
+    ) -> None:
+        sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
+        resp = individuals_client.post(
+            "/api/individuals/9999/unlink-sample",
+            json={"sample_id": sample1_id},
+        )
+        assert resp.status_code == 404
+        assert "9999" in resp.json()["detail"]
+
+    def test_unlink_nonexistent_sample_from_existing_individual_returns_404(
+        self, individuals_client: TestClient
+    ) -> None:
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Holder"}).json()
+        resp = individuals_client.post(
+            f"/api/individuals/{ind['id']}/unlink-sample",
+            json={"sample_id": 9999},
+        )
+        assert resp.status_code == 404
+        assert "9999" in resp.json()["detail"]
+
+    # ── 409 link-elsewhere — preservation across repeated attempts ─
+
+    def test_409_link_elsewhere_preserves_original_after_multiple_attempts(
+        self, individuals_client: TestClient
+    ) -> None:
+        """Repeated relink attempts return the same 409 payload and never
+        mutate the original ``samples.individual_id``. Extends step 47's
+        single-shot assertion.
+        """
+        sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
+
+        owner = individuals_client.post("/api/individuals", json={"display_name": "Owner"}).json()
+        other_a = individuals_client.post(
+            "/api/individuals", json={"display_name": "Other A"}
+        ).json()
+        other_b = individuals_client.post(
+            "/api/individuals", json={"display_name": "Other B"}
+        ).json()
+
+        # Attach to Owner first.
+        individuals_client.post(
+            f"/api/individuals/{owner['id']}/link-sample",
+            json={"sample_id": sample1_id},
+        )
+
+        # Two distinct relink attempts each return 409 pointing at Owner.
+        for other in (other_a, other_b):
+            resp = individuals_client.post(
+                f"/api/individuals/{other['id']}/link-sample",
+                json={"sample_id": sample1_id},
+            )
+            assert resp.status_code == 409
+            detail = resp.json()["detail"]
+            assert detail["individual_id"] == owner["id"]
+            assert detail["individual_display_name"] == "Owner"
+            assert detail["sample_id"] == sample1_id
+
+        # Owner still owns the link; no leakage to A or B.
+        owner_detail = individuals_client.get(f"/api/individuals/{owner['id']}").json()
+        assert [s["id"] for s in owner_detail["linked_samples"]] == [sample1_id]
+        for other in (other_a, other_b):
+            other_detail = individuals_client.get(f"/api/individuals/{other['id']}").json()
+            assert other_detail["linked_samples"] == []
+
+    # ── Aggregated-findings dedup edges (Plan §9.5) ────────────────
+
+    def test_aggregated_findings_dedup_across_three_samples_same_rsid(
+        self, individuals_client: TestClient, tmp_data_dir: Path
+    ) -> None:
+        """3-way dedup: same rsid in 3 linked sample DBs → count == 1;
+        ``linked_samples`` provenance lists all 3 contributing samples
+        (the source data the frontend renders provenance chips from).
+        """
+        sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
+        sample2_id = individuals_client.sample2_id  # type: ignore[attr-defined]
+
+        # Seed a 3rd sample whose only high-confidence finding is also
+        # rs12345 — the same shared rsid the fixture already wrote to
+        # samples 1 and 2. (Fixture also seeds rs67890 on sample 1 and
+        # rs99999 on sample 2, so test the count edge by linking only
+        # this triplet plus the existing rsids → expected count = 3.)
+        sample3_id = _seed_extra_sample(
+            tmp_data_dir,
+            name="Third Source",
+            db_path="samples/sample_3.db",
+            file_format="merged_v1",
+            file_hash="hash_three",
+            findings_rows=[
+                {"rsid": "rs12345", "chrom": "1", "pos": 100, "evidence_level": 4},
+            ],
+        )
+
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Triplet"}).json()
+        for sid in (sample1_id, sample2_id, sample3_id):
+            resp = individuals_client.post(
+                f"/api/individuals/{ind['id']}/link-sample",
+                json={"sample_id": sid},
+            )
+            assert resp.status_code == 200
+
+        detail = individuals_client.get(f"/api/individuals/{ind['id']}").json()
+        # Three sample provenance entries, but only 3 distinct rsids
+        # across them (rs12345 shared 3-way, rs67890 unique to sample 1,
+        # rs99999 unique to sample 2). rs12345 emits once.
+        assert sorted(s["id"] for s in detail["linked_samples"]) == sorted(
+            [sample1_id, sample2_id, sample3_id]
+        )
+        assert detail["aggregated_findings_count"] == 3
+
+    def test_aggregated_findings_excludes_low_evidence(
+        self, individuals_client: TestClient, tmp_data_dir: Path
+    ) -> None:
+        """``evidence_level < 3`` rows are excluded from the aggregate."""
+        sample_id = _seed_extra_sample(
+            tmp_data_dir,
+            name="Low-Evidence Source",
+            db_path="samples/sample_lowev.db",
+            file_format="23andme_v5",
+            file_hash="hash_lowev",
+            findings_payloads=[
+                # Two below-threshold rows (must NOT count).
+                {
+                    "module": "traits",
+                    "evidence_level": 1,
+                    "rsid": "rs_low_a",
+                    "finding_text": "rs_low_a trait",
+                },
+                {
+                    "module": "traits",
+                    "evidence_level": 2,
+                    "rsid": "rs_low_b",
+                    "finding_text": "rs_low_b trait",
+                },
+                # One at-threshold row (must count).
+                {
+                    "module": "cancer",
+                    "evidence_level": 3,
+                    "rsid": "rs_high",
+                    "finding_text": "rs_high finding",
+                },
+            ],
+        )
+
+        ind = individuals_client.post(
+            "/api/individuals", json={"display_name": "Low-evidence carrier"}
+        ).json()
+        resp = individuals_client.post(
+            f"/api/individuals/{ind['id']}/link-sample",
+            json={"sample_id": sample_id},
+        )
+        assert resp.status_code == 200
+
+        detail = individuals_client.get(f"/api/individuals/{ind['id']}").json()
+        # Only the evidence_level=3 row contributes.
+        assert detail["aggregated_findings_count"] == 1
+
+    def test_aggregated_findings_null_rsid_counts_per_sample(
+        self, individuals_client: TestClient, tmp_data_dir: Path
+    ) -> None:
+        """Plan §9.5 carve-out: findings without an rsid (haplogroup /
+        pathway-level) count individually per sample rather than being
+        deduplicated by rsid (NULL would collapse them all into one).
+        """
+        # Two samples each carrying ONE NULL-rsid high-confidence finding
+        # (haplogroup-style). Expected count = 2 (one per sample), not 1.
+        sample_a = _seed_extra_sample(
+            tmp_data_dir,
+            name="Haplogroup A",
+            db_path="samples/sample_haplo_a.db",
+            file_format="23andme_v5",
+            file_hash="hash_haplo_a",
+            findings_payloads=[
+                {
+                    "module": "haplogroup",
+                    "evidence_level": 4,
+                    "rsid": None,
+                    "haplogroup": "H1a",
+                    "finding_text": "Maternal haplogroup H1a",
+                },
+            ],
+        )
+        sample_b = _seed_extra_sample(
+            tmp_data_dir,
+            name="Haplogroup B",
+            db_path="samples/sample_haplo_b.db",
+            file_format="ancestrydna_v2.0",
+            file_hash="hash_haplo_b",
+            findings_payloads=[
+                {
+                    "module": "haplogroup",
+                    "evidence_level": 4,
+                    "rsid": None,
+                    "haplogroup": "R1b",
+                    "finding_text": "Paternal haplogroup R1b",
+                },
+            ],
+        )
+
+        ind = individuals_client.post(
+            "/api/individuals", json={"display_name": "Haplogroup carrier"}
+        ).json()
+        for sid in (sample_a, sample_b):
+            individuals_client.post(
+                f"/api/individuals/{ind['id']}/link-sample",
+                json={"sample_id": sid},
+            )
+
+        detail = individuals_client.get(f"/api/individuals/{ind['id']}").json()
+        # Both haplogroup findings count — no rsid-based dedup collapses
+        # them. linked_samples carries the per-sample provenance.
+        assert detail["aggregated_findings_count"] == 2
+        assert sorted(s["id"] for s in detail["linked_samples"]) == sorted([sample_a, sample_b])
