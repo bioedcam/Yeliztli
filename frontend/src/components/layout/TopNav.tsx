@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Dna, Sun, Moon, Monitor, Search } from 'lucide-react'
-import SampleSwitcher from './SampleSwitcher'
+import IndividualSelector from './IndividualSelector'
 import CommandPalette from '@/components/CommandPalette'
 import { useThemeContext } from '@/lib/ThemeContext'
 
@@ -34,8 +34,8 @@ export default function TopNav() {
 
       <div className="flex-1" />
 
-      {/* Sample switcher (P1-16) */}
-      <SampleSwitcher />
+      {/* Two-level individual / sample selector (Step 49 / IND-05) */}
+      <IndividualSelector />
 
       {/* Command palette trigger (P2-18) */}
       <button
