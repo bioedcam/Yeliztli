@@ -43,9 +43,13 @@ function jsonResponse(body: unknown, init: { status?: number; ok?: boolean } = {
 }
 
 function makeWrapper() {
+  // gcTime: Infinity — each test gets a fresh client; without this,
+  // setQueryData entries with no observers are eligible for synchronous
+  // garbage collection and the post-mutateAsync getQueryData assertions
+  // become flaky in full-suite runs.
   const client = new QueryClient({
     defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
+      queries: { retry: false, gcTime: Infinity },
       mutations: { retry: false },
     },
   })

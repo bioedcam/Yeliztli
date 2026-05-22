@@ -374,6 +374,76 @@ describe("SampleMetadataEditor — assign to individual", () => {
     expect(createCall).toBeFalsy()
   })
 
+  it("submits Create new… on Enter and closes the input", async () => {
+    installFetchScenario(
+      [{ id: 1, name: "alice_23andme.txt", file_format: "23andme_v5" }],
+      [],
+    )
+
+    render(<SampleMetadataEditor />)
+    const select = await screen.findByTestId("assign-individual-select-1")
+    fireEvent.change(select, { target: { value: "create" } })
+
+    const nameInput = await screen.findByTestId("assign-new-name-1")
+    fireEvent.change(nameInput, { target: { value: "Charlie" } })
+    fireEvent.keyDown(nameInput, { key: "Enter" })
+
+    await waitFor(() => {
+      const createCall = mockFetch.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/individuals" &&
+          (init as RequestInit)?.method === "POST",
+      )
+      expect(createCall).toBeTruthy()
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("assign-new-name-1")).not.toBeInTheDocument()
+    })
+  })
+
+  it("cancels Create new… on Escape without creating an individual", async () => {
+    installFetchScenario(
+      [{ id: 1, name: "alice_23andme.txt", file_format: "23andme_v5" }],
+      [],
+    )
+
+    render(<SampleMetadataEditor />)
+    const select = await screen.findByTestId("assign-individual-select-1")
+    fireEvent.change(select, { target: { value: "create" } })
+
+    const nameInput = await screen.findByTestId("assign-new-name-1")
+    fireEvent.change(nameInput, { target: { value: "Charlie" } })
+    fireEvent.keyDown(nameInput, { key: "Escape" })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("assign-new-name-1")).not.toBeInTheDocument()
+    })
+    const createCall = mockFetch.mock.calls.find(
+      ([url, init]) =>
+        url === "/api/individuals" && (init as RequestInit)?.method === "POST",
+    )
+    expect(createCall).toBeFalsy()
+  })
+
+  it("surfaces a generic non-409 error from link-sample on the inline alert", async () => {
+    installFetchScenario(
+      [{ id: 1, name: "alice_23andme.txt", file_format: "23andme_v5" }],
+      [{ id: 10, display_name: "Alice", sample_ids: [] }],
+      {
+        onLink: () =>
+          jsonResponse({ detail: "server exploded" }, 500),
+      },
+    )
+
+    render(<SampleMetadataEditor />)
+    const select = await screen.findByTestId("assign-individual-select-1")
+    fireEvent.change(select, { target: { value: "10" } })
+
+    const alert = await screen.findByTestId("assign-error-1")
+    expect(alert.textContent).toMatch(/server exploded/i)
+  })
+
   it("surfaces a 409 link-conflict body as an inline error", async () => {
     installFetchScenario(
       [{ id: 1, name: "alice_23andme.txt", file_format: "23andme_v5" }],
