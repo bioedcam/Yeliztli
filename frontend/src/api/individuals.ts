@@ -22,6 +22,10 @@ import type {
   IndividualDetail,
   IndividualSummary,
   IndividualUpdate,
+  MergeCommitRequest,
+  MergeCommitResponse,
+  MergePreviewRequest,
+  MergePreviewResponse,
 } from "@/types/individuals"
 import { IndividualsApiError } from "@/types/individuals"
 
@@ -190,6 +194,64 @@ export function useUnlinkSample() {
       qc.setQueryData(individualsKeys.detail(variables.individualId), detail)
       qc.invalidateQueries({ queryKey: ["samples"] })
       qc.invalidateQueries({ queryKey: ["samples", variables.sampleId] })
+    },
+  })
+}
+
+/** Dry-run the wizard preview step (Plan §10.6).
+ *
+ * Calls `POST /api/individuals/{id}/merge/preview`; no rows written. The
+ * mutation lives alongside the link/unlink hooks so the wizard can re-fire
+ * the preview when the user toggles strategy without recomputing client-
+ * side state. */
+export function useMergePreview() {
+  return useMutation<
+    MergePreviewResponse,
+    IndividualsApiError,
+    { individualId: number; data: MergePreviewRequest }
+  >({
+    mutationFn: async ({ individualId, data }) => {
+      const res = await fetch(
+        `/api/individuals/${individualId}/merge/preview`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      )
+      if (!res.ok) await parseError(res, "Failed to preview merge")
+      return (await res.json()) as MergePreviewResponse
+    },
+  })
+}
+
+/** Commit the merge (Plan §10.6) — materialises the merged sample DB and
+ * returns `{merged_sample_id, job_id}`. `job_id` may be empty when the
+ * service's enqueue branch fell through to its warning path; the wizard
+ * handles that by surfacing a re-annotate CTA. */
+export function useMergeCommit() {
+  const qc = useQueryClient()
+  return useMutation<
+    MergeCommitResponse,
+    IndividualsApiError,
+    { individualId: number; data: MergeCommitRequest }
+  >({
+    mutationFn: async ({ individualId, data }) => {
+      const res = await fetch(`/api/individuals/${individualId}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      })
+      if (!res.ok) await parseError(res, "Failed to merge samples")
+      return (await res.json()) as MergeCommitResponse
+    },
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: individualsKeys.list() })
+      qc.invalidateQueries({
+        queryKey: individualsKeys.detail(variables.individualId),
+      })
+      // New `samples` row + `samples.individual_id` updated — refresh both.
+      qc.invalidateQueries({ queryKey: ["samples"] })
     },
   })
 }

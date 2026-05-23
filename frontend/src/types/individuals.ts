@@ -56,6 +56,59 @@ export interface LinkConflictDetail {
   message: string
 }
 
+/** Plan §10.3 — the three merge strategies surfaced by the wizard. Mirrors
+ * the backend `MergeStrategy` Literal on `POST /api/individuals/{id}/merge`. */
+export type MergeStrategy =
+  | "prefer_23andme"
+  | "prefer_ancestrydna"
+  | "flag_only"
+
+/** Concordance-bucket payload (Plan §10.4 (c)) returned by both the merge
+ * preview and persisted in `merge_provenance.concordance_summary`. Backend
+ * may add keys; the wizard reads a known subset. */
+export interface ConcordanceSummary {
+  match: number
+  filled_nocall: number
+  discordant: number
+  unique_S1: number
+  unique_S2: number
+  collapsed_rsid: number
+  [key: string]: number
+}
+
+export interface MergePreviewRequest {
+  source_sample_ids: [number, number]
+  strategy: MergeStrategy
+}
+
+export interface MergePreviewResponse {
+  concordance_summary: ConcordanceSummary
+  est_duration_seconds: number
+}
+
+export interface MergeCommitRequest {
+  source_sample_ids: [number, number]
+  strategy: MergeStrategy
+  display_name: string
+}
+
+export interface MergeCommitResponse {
+  merged_sample_id: number
+  job_id: string
+}
+
+/** 423 detail surfaced by `require_fresh_sample` when a source sample's
+ * `annotation_state.vep_bundle_version` is older than the installed bundle
+ * (Plan §7.5). Mirrored from the FastAPI dependency's structured payload. */
+export interface StaleSampleDetail {
+  sample_id?: number
+  installed_version?: string
+  required_version?: string
+  update_url?: string
+  reannotate_url?: string
+  message?: string
+}
+
 export class IndividualsApiError extends Error {
   readonly status: number
   readonly body: unknown
