@@ -1620,3 +1620,212 @@ class TestIndelDiscordance:
         )
         assert rows[0].genotype == "DI"
         assert rows[0].discordant_alt_genotype == "S1=II"
+
+
+# ── Step 77 / MRG-08a — Re-merge + hash invariants ──────────────────────
+#
+# Plan §10.5 step 5 locks ``samples.file_hash`` to
+# ``SHA-256(S1.file_hash ‖ S2.file_hash ‖ strategy ‖ SAMPLE_SCHEMA_VERSION)``.
+# ``TestFileHashRecipe`` already locks the recipe at the unit level
+# (direct ``_compute_file_hash`` calls). The class below locks the same
+# contract at the integration level by driving the live ``merge_samples``
+# round-trip twice per assertion: regenerating a merged sample (same
+# individual, same sources in the same order, same strategy) preserves
+# provenance traceability and produces an identical ``samples.file_hash``;
+# changing the strategy produces a distinct hash; swapping the source
+# order produces a distinct hash (locks Plan §10.5's
+# "order-sensitive on purpose" hashing contract).
+#
+# Each re-merge legitimately allocates a fresh ``samples`` row (Plan
+# §10.5: "the new merged sample has a distinct identity in `samples`")
+# and a fresh per-sample DB — only the deterministic ``file_hash`` should
+# carry across. The "preserves provenance traceability" leg asserts that
+# both per-sample DBs' ``merge_provenance`` rows hold the same strategy,
+# the same ``source_sample_ids`` order, the same ``source_file_hashes``
+# order, and the same ``concordance_summary``.
+
+
+class TestReMergeHashInvariants:
+    """Plan §15.1 MRG-08a — re-merge round-trip locks ``file_hash`` invariants."""
+
+    @pytest.fixture
+    def merged_setup(
+        self,
+        merge_registry: DBRegistry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[DBRegistry, int, int, int]:
+        """Two source samples linked to one individual — the canonical re-merge harness.
+
+        Mirrors :class:`TestHappyPath`'s ``merged_setup`` so the assertions
+        in this class consume the same ``S1_VARIANTS`` / ``S2_VARIANTS``
+        canonical bucket coverage. The merge call's enqueue is stubbed
+        with :func:`_noop_annotation_enqueue` so each re-merge in the
+        same test exercises the deterministic write path without firing
+        the annotation pipeline.
+        """
+        _seed_installed_vep_bundle(merge_registry, "v2.0.0")
+        _noop_annotation_enqueue(monkeypatch)
+        individual_id = _create_individual(merge_registry, "Re-merge Subject")
+        s1_id = _create_source_sample(
+            merge_registry,
+            individual_id=individual_id,
+            name="re_merge_23andme.txt",
+            file_format="23andme_v5",
+            file_hash="hash_s1",
+            variants=S1_VARIANTS,
+        )
+        s2_id = _create_source_sample(
+            merge_registry,
+            individual_id=individual_id,
+            name="re_merge_ancestrydna.txt",
+            file_format="ancestrydna_v2.0",
+            file_hash="hash_s2",
+            variants=S2_VARIANTS,
+        )
+        return merge_registry, individual_id, s1_id, s2_id
+
+    @staticmethod
+    def _read_sample_file_hash(registry: DBRegistry, sample_id: int) -> str:
+        with registry.reference_engine.connect() as conn:
+            row = conn.execute(
+                sa.select(samples.c.file_hash).where(samples.c.id == sample_id)
+            ).fetchone()
+        assert row is not None
+        return row.file_hash
+
+    def test_same_sources_same_strategy_yield_identical_file_hash(
+        self, merged_setup: tuple[DBRegistry, int, int, int]
+    ) -> None:
+        """Plan §10.5 step 5: deterministic on ``(S1, S2, strategy, schema_version)``.
+
+        Calling :func:`merge_samples` twice with identical arguments must
+        produce two ``samples`` rows whose ``file_hash`` matches byte-for-
+        byte AND whose ``merge_provenance`` rows carry the same strategy,
+        source-id order, source-hash order, and concordance summary.
+        """
+        registry, individual_id, s1_id, s2_id = merged_setup
+        first_id = merge_samples(
+            registry,
+            source_sample_ids=[s1_id, s2_id],
+            individual_id=individual_id,
+            strategy=MergeStrategy.FLAG_ONLY,
+            display_name="Re-merge attempt 1",
+        )
+        second_id = merge_samples(
+            registry,
+            source_sample_ids=[s1_id, s2_id],
+            individual_id=individual_id,
+            strategy=MergeStrategy.FLAG_ONLY,
+            display_name="Re-merge attempt 2",
+        )
+        # Each re-merge legitimately allocates a fresh samples row (Plan
+        # §10.5: "the new merged sample has a distinct identity in
+        # `samples`") — the determinism contract is about file_hash, not
+        # the row identity.
+        assert first_id != second_id
+
+        first_hash = self._read_sample_file_hash(registry, first_id)
+        second_hash = self._read_sample_file_hash(registry, second_id)
+        assert first_hash == second_hash
+        # Sanity: same inputs to the recipe must produce the same hash
+        # the unit-level _compute_file_hash test locked.
+        assert first_hash == _compute_file_hash(
+            "hash_s1", "hash_s2", MergeStrategy.FLAG_ONLY
+        )
+
+        # Provenance traceability — both per-sample DBs carry identical
+        # merge_provenance rows.
+        first_prov = _read_merge_provenance(registry, first_id)
+        second_prov = _read_merge_provenance(registry, second_id)
+        assert first_prov.strategy == second_prov.strategy == "flag_only"
+        assert (
+            json.loads(first_prov.source_sample_ids)
+            == json.loads(second_prov.source_sample_ids)
+            == [s1_id, s2_id]
+        )
+        assert (
+            json.loads(first_prov.source_file_hashes)
+            == json.loads(second_prov.source_file_hashes)
+            == ["hash_s1", "hash_s2"]
+        )
+        assert json.loads(first_prov.concordance_summary) == json.loads(
+            second_prov.concordance_summary
+        )
+
+    def test_changing_strategy_changes_file_hash(
+        self, merged_setup: tuple[DBRegistry, int, int, int]
+    ) -> None:
+        """Plan §10.5 step 5: ``strategy`` is part of the SHA-256 payload.
+
+        Re-merging the same sources under each of the three Plan §10.3
+        strategies must yield three distinct ``samples.file_hash``
+        values so the wizard's "regenerate under a different strategy"
+        flow doesn't collide with the existing merged sample's identity.
+        """
+        registry, individual_id, s1_id, s2_id = merged_setup
+        hashes: dict[MergeStrategy, str] = {}
+        for strategy in (
+            MergeStrategy.FLAG_ONLY,
+            MergeStrategy.PREFER_23ANDME,
+            MergeStrategy.PREFER_ANCESTRYDNA,
+        ):
+            new_id = merge_samples(
+                registry,
+                source_sample_ids=[s1_id, s2_id],
+                individual_id=individual_id,
+                strategy=strategy,
+                display_name=f"Re-merge {strategy.value}",
+            )
+            hashes[strategy] = self._read_sample_file_hash(registry, new_id)
+
+        # All three hashes distinct — the recipe's strategy field is
+        # load-bearing.
+        assert len(set(hashes.values())) == 3, (
+            f"strategy changes must produce distinct hashes; got {hashes}"
+        )
+
+    def test_swapping_source_order_changes_file_hash(
+        self, merged_setup: tuple[DBRegistry, int, int, int]
+    ) -> None:
+        """Plan §10.5 step 5: concatenation order is order-sensitive on purpose.
+
+        ``_compute_file_hash`` concatenates ``S1.file_hash`` and
+        ``S2.file_hash`` left-to-right. Swapping the user-supplied
+        ``source_sample_ids`` order therefore changes the SHA-256 input
+        and produces a distinct hash. This locks the rsid-collapse
+        tiebreaker invariant from §10.2 step 2 (S1 wins when neither
+        rsid is in the bundle) — merging ``[A, B]`` and ``[B, A]`` yield
+        different merged content, so they must yield different identities.
+        """
+        registry, individual_id, s1_id, s2_id = merged_setup
+        forward_id = merge_samples(
+            registry,
+            source_sample_ids=[s1_id, s2_id],
+            individual_id=individual_id,
+            strategy=MergeStrategy.FLAG_ONLY,
+            display_name="Forward order",
+        )
+        reverse_id = merge_samples(
+            registry,
+            source_sample_ids=[s2_id, s1_id],
+            individual_id=individual_id,
+            strategy=MergeStrategy.FLAG_ONLY,
+            display_name="Reverse order",
+        )
+        forward_hash = self._read_sample_file_hash(registry, forward_id)
+        reverse_hash = self._read_sample_file_hash(registry, reverse_id)
+        assert forward_hash != reverse_hash, (
+            "swapping source order must produce a distinct file_hash "
+            "(Plan §10.5: 'order-sensitive on purpose')"
+        )
+        # Each direction's provenance reflects the order it was called
+        # with — locks the contract that the recorded source_sample_ids
+        # mirrors the request, not a canonicalized sort.
+        forward_prov = _read_merge_provenance(registry, forward_id)
+        reverse_prov = _read_merge_provenance(registry, reverse_id)
+        assert json.loads(forward_prov.source_sample_ids) == [s1_id, s2_id]
+        assert json.loads(reverse_prov.source_sample_ids) == [s2_id, s1_id]
+        # And source_file_hashes mirrors the order: the swap produces a
+        # different SHA-256 input string, which is what changes the hash.
+        assert json.loads(forward_prov.source_file_hashes) == ["hash_s1", "hash_s2"]
+        assert json.loads(reverse_prov.source_file_hashes) == ["hash_s2", "hash_s1"]
