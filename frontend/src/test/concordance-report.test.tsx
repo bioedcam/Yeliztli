@@ -413,3 +413,34 @@ describe("ConcordanceReport — 404 not-merged handling", () => {
     ).not.toBeInTheDocument()
   })
 })
+
+// ═══════════════════════════════════════════════════════════════════════
+// Report-query failure (provenance OK, report 500)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("ConcordanceReport — report-query 5xx handling", () => {
+  it("renders the table-area PageError when only the report query fails", async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url === provenanceUrl())
+        return Promise.resolve(jsonResponse(PROVENANCE_PAYLOAD))
+      if (url === reportUrl(0))
+        return Promise.resolve(
+          jsonResponse({ detail: "internal server error" }, 500),
+        )
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderReport()
+
+    // Header + summary still render — only the table area degrades.
+    await waitFor(() => {
+      expect(screen.getByTestId("concordance-bucket-match")).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/internal server error/i)).toBeInTheDocument()
+    })
+    expect(
+      screen.queryByTestId("concordance-discordant-table"),
+    ).not.toBeInTheDocument()
+  })
+})
