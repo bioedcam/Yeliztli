@@ -13,6 +13,7 @@ import ModuleCardsGrid from '@/components/dashboard/ModuleCardsGrid'
 import FindingsPreview from '@/components/dashboard/FindingsPreview'
 import QualityControl from '@/components/dashboard/QualityControl'
 import StaleSampleGate from '@/components/layout/StaleSampleGate'
+import AppUpdateBanner from '@/components/layout/AppUpdateBanner'
 import { PostMergeRewatchModal } from '@/components/individuals/PostMergeRewatchModal'
 import { useSamples } from '@/api/samples'
 import { useIndividuals, individualsKeys } from '@/api/individuals'
@@ -80,21 +81,24 @@ export default function Dashboard() {
 
   if (!activeSample) {
     return (
-      <div className="p-6 max-w-4xl mx-auto">
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <div className="mt-8 flex flex-col items-center text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <Upload className="h-7 w-7 text-primary" />
-          </div>
-          <h2 className="mt-4 text-lg font-semibold text-foreground">
-            Get Started
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground max-w-md">
-            Upload a 23andMe or AncestryDNA raw data file to begin exploring
-            your genome.
-          </p>
-          <div className="mt-6 w-full max-w-md">
-            <FileUpload />
+      <div className="p-6 max-w-4xl mx-auto space-y-6">
+        <AppUpdateBanner />
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+          <div className="mt-8 flex flex-col items-center text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+              <Upload className="h-7 w-7 text-primary" />
+            </div>
+            <h2 className="mt-4 text-lg font-semibold text-foreground">
+              Get Started
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground max-w-md">
+              Upload a 23andMe or AncestryDNA raw data file to begin exploring
+              your genome.
+            </p>
+            <div className="mt-6 w-full max-w-md">
+              <FileUpload />
+            </div>
           </div>
         </div>
       </div>
@@ -106,6 +110,9 @@ export default function Dashboard() {
   return (
     <StaleSampleGate>
       <div className="p-6 max-w-5xl mx-auto space-y-6">
+        {/* App-update + LAI degraded-coverage advisories (Plan §6.7, Step 23/29) */}
+        <AppUpdateBanner />
+
         {/* Two-level context chip (Plan §9.5) */}
         {owningIndividual && (
           <div

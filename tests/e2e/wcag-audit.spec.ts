@@ -337,7 +337,7 @@ test.describe('P4-26c: WCAG 2.1 AA Audit', () => {
       await page.goto('/')
       await page.waitForLoadState('networkidle')
 
-      const announcer = page.locator('[aria-live="polite"]')
+      const announcer = page.getByTestId('route-announcer')
       await expect(announcer).toBeAttached()
 
       // Verify it contains a navigation announcement for the current page
@@ -348,7 +348,7 @@ test.describe('P4-26c: WCAG 2.1 AA Audit', () => {
       await page.goto('/settings')
       await page.waitForLoadState('networkidle')
 
-      const announcer = page.locator('[aria-live="polite"]')
+      const announcer = page.getByTestId('route-announcer')
       // Allow extra time for the announcement to update across browsers
       await expect(announcer).toContainText('Navigated to Settings', { timeout: 10000 })
     })

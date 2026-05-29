@@ -48,6 +48,7 @@ export default function RouteAnnouncer() {
 
   return (
     <div
+      data-testid="route-announcer"
       role="status"
       aria-live="polite"
       aria-atomic="true"
