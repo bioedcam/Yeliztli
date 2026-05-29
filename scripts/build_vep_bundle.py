@@ -625,15 +625,52 @@ def _compute_sha256(path: Path) -> str:
 # ── Coverage Report ──────────────────────────────────────────────────────
 
 
+def _load_catalog_rsids(catalog_path: Path) -> set[str]:
+    """Load rsids from a catalog file (1-column rsids OR 3-column rsid+chrom+pos TSV).
+
+    Auto-detects format from the first non-blank, non-`#` line. rs-prefix-only
+    by design — VEP cannot annotate kgp*/i*/VG* IDs; those flow through the
+    runtime coord-fallback (`backend/annotation/engine.py`) at annotation
+    time and are not counted in this gate (Phase B step 5 gate semantics).
+    """
+    rsids: set[str] = set()
+    detected: int | None = None
+    with catalog_path.open(encoding="utf-8") as f:
+        for line in f:
+            stripped = line.rstrip("\n\r")
+            if not stripped or stripped.startswith("#"):
+                continue
+            cols = stripped.split("\t")
+            if detected is None:
+                if len(cols) not in (1, 3):
+                    raise ValueError(
+                        f"--rsid-catalog: unexpected column count {len(cols)} "
+                        "(expected 1-col rsids or 3-col rsid+chrom+pos TSV)"
+                    )
+                detected = len(cols)
+            elif len(cols) != detected:
+                raise ValueError(
+                    f"--rsid-catalog: row column count {len(cols)} != header "
+                    f"column count {detected}"
+                )
+            rsid = cols[0].strip()
+            if rsid.startswith("rs"):
+                rsids.add(rsid)
+    return rsids
+
+
 def coverage_report(
     rows: list[dict],
     rsid_catalog_path: Path | None = None,
 ) -> dict:
     """Generate a coverage report for the VEP bundle.
 
-    If an rsid catalog file is provided (one rsid per line), computes
-    the coverage percentage against the full 23andMe v5 catalog.
-    Otherwise just reports basic stats.
+    If an rsid catalog file is provided, computes the coverage percentage
+    against it. The catalog may be a 1-column file (one rsid per line) or
+    the 3-column union TSV (``rsid<TAB>chrom<TAB>pos``) produced by
+    ``scripts/build_union_catalog.py``; the format is auto-detected by
+    :func:`_load_catalog_rsids`. Coverage is computed against the rs-prefix
+    slice only. Otherwise just reports basic stats.
 
     Returns:
         Dict with coverage statistics.
@@ -649,12 +686,7 @@ def coverage_report(
     }
 
     if rsid_catalog_path and rsid_catalog_path.exists():
-        catalog_rsids = set()
-        with rsid_catalog_path.open() as f:
-            for line in f:
-                rsid = line.strip()
-                if rsid.startswith("rs"):
-                    catalog_rsids.add(rsid)
+        catalog_rsids = _load_catalog_rsids(rsid_catalog_path)
 
         covered = stored_rsids & catalog_rsids
         report["catalog_size"] = len(catalog_rsids)
@@ -721,7 +753,13 @@ Examples:
     parser.add_argument(
         "--rsid-catalog",
         type=Path,
-        help="Optional rsid catalog file (one rsid per line) for coverage report.",
+        help=(
+            "Optional rsid catalog file for coverage report. Accepts either a "
+            "1-column file (one rsid per line) or the 3-column union TSV "
+            "(rsid<TAB>chrom<TAB>pos) produced by scripts/build_union_catalog.py. "
+            "Coverage is computed against the rs-prefix slice only (VEP cannot "
+            "annotate non-rs IDs; see the Phase B step 5 gate semantics)."
+        ),
     )
     parser.add_argument(
         "--dry-run",

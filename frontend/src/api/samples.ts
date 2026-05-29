@@ -1,7 +1,23 @@
 /** React Query hooks for sample management and file ingestion (P1-13, P1-16). */
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import type { Sample, SampleUpdate, IngestResult } from "@/types/samples"
+import {
+  keepPreviousData,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query"
+import type {
+  IngestResult,
+  MergedChild,
+  Sample,
+  SampleUpdate,
+} from "@/types/samples"
+import type {
+  ConcordanceReportResponse,
+  MergeProvenanceResponse,
+  MigrateFromSourcesResponse,
+  StaleSampleDetail,
+} from "@/types/individuals"
 
 export function useSamples() {
   return useQuery({
@@ -94,5 +110,168 @@ export function useDeleteSample() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["samples"] })
     },
+  })
+}
+
+/** API error surfaced by the concordance-report + merge-provenance hooks.
+ *
+ * Carries the HTTP status + decoded body so the ConcordanceReport page can
+ * branch on 423 (stale sample, per Plan §7.5) vs 404 (sample not merged)
+ * without having to re-parse the response. */
+export class SamplesApiError extends Error {
+  readonly status: number
+  readonly body: unknown
+
+  constructor(status: number, message: string, body: unknown) {
+    super(message)
+    this.name = "SamplesApiError"
+    this.status = status
+    this.body = body
+  }
+
+  /** `true` when this is the `require_fresh_sample` 423 from Plan §7.5. */
+  isStaleSample(): this is SamplesApiError & { body: { detail: StaleSampleDetail } } {
+    if (this.status !== 423) return false
+    const body = this.body as { detail?: unknown } | null
+    return (
+      !!body &&
+      typeof body === "object" &&
+      typeof body.detail === "object" &&
+      body.detail !== null
+    )
+  }
+}
+
+async function parseSamplesError(
+  res: Response,
+  fallback: string,
+): Promise<never> {
+  let body: unknown = null
+  try {
+    body = await res.clone().json()
+  } catch {
+    try {
+      body = await res.text()
+    } catch {
+      body = null
+    }
+  }
+  let message = fallback
+  if (body && typeof body === "object" && "detail" in (body as object)) {
+    const detail = (body as { detail?: unknown }).detail
+    if (typeof detail === "string") message = detail
+    else if (
+      detail &&
+      typeof detail === "object" &&
+      "message" in (detail as object) &&
+      typeof (detail as { message?: unknown }).message === "string"
+    ) {
+      message = (detail as { message: string }).message
+    }
+  } else if (typeof body === "string" && body.length > 0) {
+    message = body
+  }
+  throw new SamplesApiError(res.status, message, body)
+}
+
+/** Fetch the merged sample's provenance row (Plan §10.6). 404 when the
+ * sample exists but isn't a merged sample; 423 when the sample is stale. */
+export function useMergeProvenance(sampleId: number | null) {
+  return useQuery<MergeProvenanceResponse, SamplesApiError>({
+    queryKey: ["samples", sampleId, "merge-provenance"],
+    queryFn: async () => {
+      const res = await fetch(`/api/samples/${sampleId}/merge-provenance`)
+      if (!res.ok) await parseSamplesError(res, "Failed to fetch merge provenance")
+      return (await res.json()) as MergeProvenanceResponse
+    },
+    enabled: sampleId != null,
+    // Provenance is immutable once the merged sample is materialised.
+    staleTime: Infinity,
+    retry: false,
+  })
+}
+
+/** Paginated concordance report for a merged sample (Plan §10.6). The
+ * backend caps `limit` at 500 and returns 422 on out-of-range values, so
+ * the page is responsible for keeping its requested limit within that
+ * window. `placeholderData: keepPreviousData` keeps the table mounted
+ * while a new page loads to avoid the UI jumping back to a loading state
+ * on prev/next clicks (TanStack Query paginated-queries pattern). */
+export function useConcordanceReport(
+  sampleId: number | null,
+  limit: number,
+  offset: number,
+) {
+  return useQuery<ConcordanceReportResponse, SamplesApiError>({
+    queryKey: ["samples", sampleId, "concordance-report", limit, offset],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+      })
+      const res = await fetch(
+        `/api/samples/${sampleId}/concordance-report?${params.toString()}`,
+      )
+      if (!res.ok) {
+        await parseSamplesError(res, "Failed to fetch concordance report")
+      }
+      return (await res.json()) as ConcordanceReportResponse
+    },
+    enabled: sampleId != null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+    retry: false,
+  })
+}
+
+/** Post-merge re-watch candidates for a merged sample (Plan §10.6 / §10.7;
+ * Step 72 / MRG-13). Lists every `watched_variants` row from the merged
+ * sample's source samples whose rsid is not present on the merged sample
+ * — the rsid-collapse case carries the merged sample's chosen rsid in
+ * `rsid_on_merged_or_null`, the source-private case carries `null`.
+ *
+ * The route is gated by `require_fresh_merged_sample`, so an in-flight
+ * annotation cascade returns 423; the modal layers the SSE annotation
+ * channel on top via `enabled` so it never fires until annotation
+ * reports `status='complete'`. A 423 caught here is rendered as a
+ * benign "still annotating" banner by the modal (race condition with
+ * the SSE gate). */
+export function useMigrateFromSources(
+  mergedId: number | null,
+  enabled: boolean,
+) {
+  return useQuery<MigrateFromSourcesResponse, SamplesApiError>({
+    queryKey: ["samples", mergedId, "migrate-from-sources"],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/samples/${mergedId}/watched-variants/migrate-from-sources`,
+      )
+      if (!res.ok) {
+        await parseSamplesError(res, "Failed to fetch migration candidates")
+      }
+      return (await res.json()) as MigrateFromSourcesResponse
+    },
+    enabled: mergedId != null && enabled,
+    staleTime: Infinity,
+    retry: false,
+  })
+}
+
+/** Merged samples that reference this sample as a source (Plan §10.8 / Step 66).
+ *
+ * Returns ``[]`` when the sample has never been merged. The delete
+ * confirmation hook uses this to surface the cascade count + names before
+ * the user commits.
+ */
+export function useSampleMergedChildren(sampleId: number | null) {
+  return useQuery({
+    queryKey: ["samples", sampleId, "merged-children"],
+    queryFn: async (): Promise<MergedChild[]> => {
+      const res = await fetch(`/api/samples/${sampleId}/merged-children`)
+      if (!res.ok) throw new Error("Failed to fetch merged children")
+      return (await res.json()) as MergedChild[]
+    },
+    enabled: sampleId != null,
+    staleTime: 0,
   })
 }

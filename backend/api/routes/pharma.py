@@ -16,9 +16,10 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import cpic_guidelines, findings, samples
 
@@ -239,7 +240,7 @@ def list_drugs() -> DrugListResponse:
     return DrugListResponse(items=items, total=len(items))
 
 
-@router.get("/drug/{drug_name}")
+@router.get("/drug/{drug_name}", dependencies=[Depends(require_fresh_sample)])
 def drug_lookup(
     drug_name: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -325,7 +326,7 @@ def drug_lookup(
     )
 
 
-@router.get("/genes")
+@router.get("/genes", dependencies=[Depends(require_fresh_sample)])
 def gene_results(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> GeneSummaryResponse:

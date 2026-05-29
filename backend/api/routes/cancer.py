@@ -19,9 +19,10 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, samples
 from backend.disclaimers import CANCER_DISCLAIMER_TEXT, CANCER_DISCLAIMER_TITLE
@@ -211,7 +212,7 @@ def get_cancer_disclaimer() -> CancerDisclaimerResponse:
     )
 
 
-@router.get("/variants")
+@router.get("/variants", dependencies=[Depends(require_fresh_sample)])
 def list_cancer_variants(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CancerVariantsListResponse:
@@ -229,7 +230,7 @@ def list_cancer_variants(
     return CancerVariantsListResponse(items=items, total=len(items))
 
 
-@router.get("/gene/{gene_symbol}")
+@router.get("/gene/{gene_symbol}", dependencies=[Depends(require_fresh_sample)])
 def cancer_gene_detail(
     gene_symbol: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -244,7 +245,7 @@ def cancer_gene_detail(
     return CancerVariantsListResponse(items=items, total=len(items))
 
 
-@router.get("/prs")
+@router.get("/prs", dependencies=[Depends(require_fresh_sample)])
 def list_cancer_prs(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CancerPRSListResponse:
@@ -312,7 +313,7 @@ def list_cancer_prs(
     )
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run_cancer_analysis(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CancerRunResponse:

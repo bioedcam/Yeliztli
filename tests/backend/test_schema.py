@@ -163,7 +163,17 @@ class TestSampleSchema:
         db_path = tmp_path / "sample_001.db"
         self._create_sample_db(db_path)
         cols = _get_columns(db_path, "raw_variants")
-        assert cols == ["rsid", "chrom", "pos", "genotype"]
+        # Core identity + provenance columns added in v8 (AncestryDNA Plan §10.4b).
+        assert cols == [
+            "rsid",
+            "chrom",
+            "pos",
+            "genotype",
+            "source",
+            "concordance",
+            "discordant_alt_genotype",
+            "alt_rsid",
+        ]
 
     def test_annotated_variants_has_30_plus_columns(self, tmp_path):
         db_path = tmp_path / "sample_001.db"
@@ -487,8 +497,8 @@ class TestSchemaMigration:
         assert "clinvar_significance_at_watch" in cols
         assert "notes" in cols
 
-    def test_upgrade_v6_stamps_v7(self, tmp_path):
-        """Schema version is bumped to 7 after upgrade."""
+    def test_upgrade_v6_stamps_current(self, tmp_path):
+        """Schema version is bumped to current after upgrading a v6 DB."""
         db_path = tmp_path / "sample_001.db"
         engine = self._create_v6_sample_db(db_path)
 
@@ -498,7 +508,6 @@ class TestSchemaMigration:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         conn.close()
         assert version == SAMPLE_SCHEMA_VERSION
-        assert version == 7
 
     def test_watched_variants_insert_and_read(self, tmp_path):
         """Can insert and query watched_variants after migration."""

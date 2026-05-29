@@ -32,7 +32,6 @@ import hashlib
 import io
 import zipfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -831,6 +830,44 @@ def download_and_load_dbnsfp(
 # ── Version tracking ─────────────────────────────────────────────────────
 
 
+def _parse_version_tuple(version: str) -> tuple[int, ...]:
+    """Parse a dbNSFP release tag into a tuple of integer components.
+
+    dbNSFP tags follow ``MAJOR.MINOR.PATCH[suffix]`` (e.g. ``5.3.1a``).  We
+    strip any leading non-numeric prefix, split on ``.``, and reduce each
+    component to its leading run of digits (so ``1a`` → ``1``), discarding
+    components with no digits.  This yields a tuple suitable for numeric
+    ordering, fixing the string-compare misorder of e.g. ``5.10.0`` vs
+    ``5.9.0``.
+    """
+    stripped = version.lstrip("vVrR")
+    components: list[int] = []
+    for part in stripped.split("."):
+        digits = ""
+        for ch in part:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if digits:
+            components.append(int(digits))
+    return tuple(components)
+
+
+def _version_at_least(current: str, target: str) -> bool:
+    """Return True if ``current`` is the same as or newer than ``target``.
+
+    Compares numeric version components (zero-padding the shorter tuple) so
+    that e.g. ``5.10.0`` correctly sorts after ``5.9.0``.
+    """
+    cur = _parse_version_tuple(current)
+    tgt = _parse_version_tuple(target)
+    length = max(len(cur), len(tgt))
+    cur += (0,) * (length - len(cur))
+    tgt += (0,) * (length - len(tgt))
+    return cur >= tgt
+
+
 def record_dbnsfp_version(
     engine: sa.Engine,
     *,
@@ -840,38 +877,78 @@ def record_dbnsfp_version(
     checksum: str | None = None,
 ) -> None:
     """Insert or update the dbNSFP version in the database_versions table."""
-    from backend.db.tables import database_versions
+    from backend.db.database_registry import _record_db_version
 
-    with engine.begin() as conn:
-        existing = conn.execute(
-            sa.select(database_versions.c.db_name).where(database_versions.c.db_name == "dbnsfp")
-        ).first()
+    _record_db_version(
+        engine,
+        db_name="dbnsfp",
+        version=version,
+        file_size_bytes=file_size_bytes,
+        sha256=checksum,
+        file_path=file_path,
+    )
 
-        now = datetime.now(UTC)
 
-        if existing:
-            conn.execute(
-                database_versions.update()
-                .where(database_versions.c.db_name == "dbnsfp")
-                .values(
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
-        else:
-            conn.execute(
-                database_versions.insert().values(
-                    db_name="dbnsfp",
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
+def check_dbnsfp_update(
+    reference_engine: sa.Engine,
+    settings: object | None = None,
+    *,
+    timeout: float = 30.0,
+):
+    """Check whether the dbNSFP release pinned in the manifest is newer than installed.
+
+    Uses ``pipeline_pins["dbnsfp"]`` from ``bundles/manifest.json`` as the
+    authoritative source for the latest URL + release tag, then performs an
+    HTTP HEAD on the pinned URL to confirm reachability and obtain a
+    download-size estimate for the bandwidth-window check. Returns ``None``
+    when the manifest pin is missing/unreachable, the HEAD call fails, or
+    the recorded version is the same as or newer than the manifest pin
+    (numeric component compare on the release tag — dbNSFP tags follow
+    ``MAJOR.MINOR.PATCH[suffix]``).
+
+    Args:
+        reference_engine: Reference DB engine for ``database_versions`` lookup.
+        settings: Accepted for dispatch-signature parity with other
+            ``check_*_update`` functions; unused.
+        timeout: HTTP timeout in seconds for both the manifest fetch and HEAD.
+
+    Returns:
+        ``VersionInfo`` when the manifest pin is newer than the installed
+        version, otherwise ``None``.
+    """
+    del settings  # unused; kept for dispatch-signature parity
+    from backend.db.manifest import get_pipeline_pin
+    from backend.db.update_manager import VersionInfo, get_current_version
+
+    pin = get_pipeline_pin("dbnsfp", timeout=timeout)
+    if pin is None or not pin.last_known_version:
+        return None
+
+    current = get_current_version(reference_engine, "dbnsfp")
+    if current is not None and _version_at_least(current, pin.last_known_version):
+        return None
+
+    download_size = 0
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        ) as client:
+            resp = client.head(pin.url)
+            resp.raise_for_status()
+            content_length = resp.headers.get("Content-Length")
+            if content_length:
+                download_size = int(content_length)
+    except Exception as exc:
+        logger.warning("dbnsfp_update_check_failed", error=str(exc))
+        return None
+
+    return VersionInfo(
+        db_name="dbnsfp",
+        latest_version=pin.last_known_version,
+        download_url=pin.url,
+        download_size_bytes=download_size,
+    )
 
 
 # ── Annotation lookup ────────────────────────────────────────────────────

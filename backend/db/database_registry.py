@@ -96,7 +96,52 @@ def _extract_lai_bundle(tarball_path: Path, dest_path: Path) -> None:
     # Remove tarball after successful extraction
     tarball_path.unlink(missing_ok=True)
 
+    _record_lai_bundle_version(dest_path.parent, dest_dir)
+
     logger.info("lai_bundle_extracted", dest=str(dest_dir))
+
+
+def _record_lai_bundle_version(data_dir: Path, bundle_dir: Path) -> None:
+    """Write a ``database_versions`` row for the freshly extracted LAI bundle.
+
+    Pulls ``version``/``sha256`` from the bundle manifest when reachable,
+    otherwise records ``version="unknown-pre-manifest"`` so the Update Manager
+    still surfaces the bundle. Best-effort — failure to reach the reference DB
+    is logged but does not abort extraction.
+    """
+    import sqlalchemy as sa
+
+    from backend.db.manifest import get_bundle_info
+
+    entry = get_bundle_info("lai_bundle")
+    if entry is not None:
+        version = entry.version
+        sha256: str | None = entry.sha256
+    else:
+        version = "unknown-pre-manifest"
+        sha256 = None
+
+    dest_dir_size = sum(p.stat().st_size for p in bundle_dir.rglob("*") if p.is_file())
+    reference_db_path = data_dir / "reference.db"
+
+    try:
+        engine = sa.create_engine(f"sqlite:///{reference_db_path}")
+        try:
+            _record_db_version(
+                engine,
+                db_name="lai_bundle",
+                version=version,
+                file_size_bytes=dest_dir_size,
+                sha256=sha256,
+            )
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        logger.warning(
+            "lai_bundle_version_record_failed",
+            error=str(exc),
+            reference_db=str(reference_db_path),
+        )
 
 
 def detect_java() -> bool:
@@ -170,6 +215,47 @@ def _build_encode_ccres_db(raw_bed_path: Path, db_path: Path) -> None:
     # Clean up the raw BED — the SQLite DB is the final artifact
     raw_bed_path.unlink(missing_ok=True)
 
+    _record_encode_ccres_version(db_path)
+
+
+def _record_encode_ccres_version(db_path: Path) -> None:
+    """Write a ``database_versions`` row for the freshly built ENCODE cCREs DB.
+
+    Uses ``now_yyyymmdd`` (UTC) as the version since the upstream BED has no
+    embedded version. Best-effort — failure to reach the reference DB is
+    logged but does not abort the build.
+    """
+    from datetime import UTC, datetime
+
+    import sqlalchemy as sa
+
+    if not db_path.exists():
+        logger.warning("encode_ccres_version_record_skipped_missing_db", path=str(db_path))
+        return
+
+    version = datetime.now(UTC).strftime("%Y%m%d")
+    file_size = db_path.stat().st_size
+    reference_db_path = db_path.parent / "reference.db"
+
+    try:
+        engine = sa.create_engine(f"sqlite:///{reference_db_path}")
+        try:
+            _record_db_version(
+                engine,
+                db_name="encode_ccres",
+                version=version,
+                file_size_bytes=file_size,
+                sha256=None,
+            )
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        logger.warning(
+            "encode_ccres_version_record_failed",
+            error=str(exc),
+            reference_db=str(reference_db_path),
+        )
+
 
 # ── Database Definitions ──────────────────────────────────────────────
 # URLs point to GitHub Releases (placeholder URLs until actual releases
@@ -191,10 +277,13 @@ DATABASES: dict[str, DatabaseInfo] = {
     "vep_bundle": DatabaseInfo(
         name="vep_bundle",
         display_name="VEP Bundle",
-        description="Pre-computed variant effect predictions for 23andMe v5 rsids",
-        url="https://raw.githubusercontent.com/bioedcam/GenomeInsight/main/bundles/vep_bundle.db",
+        description=(
+            "Pre-computed variant effect predictions for the 23andMe v5 "
+            "∪ AncestryDNA v2.0 rsid catalog"
+        ),
+        url="https://github.com/bioedcam/GenomeInsight/releases/download/bundle-v2.0.0/vep_bundle.db",
         filename="vep_bundle.db",
-        expected_size_bytes=12_000_000,  # ~12 MB
+        expected_size_bytes=600_000_000,  # ~600 MB (union catalog; v2.0.0+)
         required=False,
         phase=2,
         build_mode="bundled",
@@ -378,8 +467,9 @@ def _record_db_version(
     engine: Engine,
     db_name: str,
     version: str,
-    file_size_bytes: int,
+    file_size_bytes: int | None,
     sha256: str | None = None,
+    file_path: str | None = None,
 ) -> None:
     """Upsert a single row in ``database_versions``.
 
@@ -405,6 +495,7 @@ def _record_db_version(
                 .where(database_versions.c.db_name == db_name)
                 .values(
                     version=version,
+                    file_path=file_path,
                     file_size_bytes=file_size_bytes,
                     downloaded_at=now,
                     checksum_sha256=sha256,
@@ -415,6 +506,7 @@ def _record_db_version(
                 database_versions.insert().values(
                     db_name=db_name,
                     version=version,
+                    file_path=file_path,
                     file_size_bytes=file_size_bytes,
                     downloaded_at=now,
                     checksum_sha256=sha256,

@@ -3,11 +3,18 @@
 T1-13: POST /api/ingest with valid file returns 202, triggers parse,
        GET /api/ingest/status reflects completion.
        GET /api/samples returns list. PATCH/DELETE sample management.
+
+ADNA-10 (Step 43; Plan §13.1): POST /api/ingest with the AncestryDNA
+fixture asserts 202 + ``file_format="ancestrydna_v2.0"`` + variant count.
+Paired with the 409-gate cases in ``test_bundle_gating.py`` — those lock
+the vendor-scoped pre-v2.0.0 block; this file locks the happy path on a
+v2.0.0+ bundle.
 """
 
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,10 +23,20 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from backend.config import Settings
-from backend.db.tables import jobs, raw_variants, reference_metadata, samples
+from backend.db.tables import (
+    database_versions,
+    jobs,
+    raw_variants,
+    reference_metadata,
+    samples,
+)
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 V5_FILE = FIXTURES / "sample_23andme_v5.txt"
+ANCESTRY_FILE = FIXTURES / "sample_ancestrydna_v2.txt"
+# AncestryDNA fixture body has 589 data rows — locked by
+# ``test_parser_ancestrydna.py::test_variant_count_matches_data_rows``.
+ANCESTRY_VARIANT_COUNT = 589
 
 
 @pytest.fixture
@@ -31,6 +48,65 @@ def client(tmp_data_dir: Path) -> TestClient:
     engine = sa.create_engine(f"sqlite:///{ref_path}")
     reference_metadata.create_all(engine)
     engine.dispose()
+
+    with (
+        patch("backend.main.get_settings", return_value=settings),
+        patch("backend.db.connection.get_settings", return_value=settings),
+        patch("backend.api.routes.ingest.get_registry") as mock_get_reg,
+        patch("backend.api.routes.samples.get_registry") as mock_get_reg2,
+    ):
+        from backend.db.connection import DBRegistry, reset_registry
+
+        reset_registry()
+
+        registry = DBRegistry(settings)
+        mock_get_reg.return_value = registry
+        mock_get_reg2.return_value = registry
+
+        from backend.main import create_app
+
+        app = create_app()
+        with TestClient(app) as tc:
+            yield tc
+
+        registry.dispose_all()
+        reset_registry()
+
+
+def _seed_vep_bundle_v2(reference_db_path: Path) -> None:
+    """Seed ``database_versions['vep_bundle'] = v2.0.0`` so AncestryDNA
+    uploads clear the Plan §5.4 ingest gate enforced by
+    :mod:`backend.api.routes.ingest`.
+    """
+    engine = sa.create_engine(f"sqlite:///{reference_db_path}")
+    with engine.begin() as conn:
+        conn.execute(
+            database_versions.insert().values(
+                db_name="vep_bundle",
+                version="v2.0.0",
+                file_path=None,
+                file_size_bytes=None,
+                downloaded_at=datetime.now(UTC),
+                checksum_sha256=None,
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def ancestrydna_client(tmp_data_dir: Path) -> TestClient:
+    """FastAPI TestClient with ``vep_bundle`` pinned to ``v2.0.0`` so the
+    AncestryDNA bundle-version gate (Plan §5.4) falls through to the
+    parser dispatcher and the happy-path 202 contract can be asserted.
+    """
+    settings = Settings(data_dir=tmp_data_dir, wal_mode=False)
+
+    ref_path = settings.reference_db_path
+    engine = sa.create_engine(f"sqlite:///{ref_path}")
+    reference_metadata.create_all(engine)
+    engine.dispose()
+
+    _seed_vep_bundle_v2(ref_path)
 
     with (
         patch("backend.main.get_settings", return_value=settings),
@@ -339,3 +415,44 @@ class TestDeleteSample:
         client.delete(f"/api/samples/{sid}")
         response = client.get(f"/api/samples/{sid}")
         assert response.status_code == 404
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# POST /api/ingest — AncestryDNA happy path (ADNA-10 / Step 43)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestIngestAncestryDNA:
+    """ADNA-10 (Plan §13.1): POST /api/ingest with the AncestryDNA fixture
+    returns 202 + ``file_format="ancestrydna_v2.0"`` + the fixture's
+    variant count on a v2.0.0+ bundle.
+
+    The 409-gated AncestryDNA + pre-v2.0.0 case lives in
+    ``test_bundle_gating.py`` (Step 7); this class is the paired
+    happy-path lock.
+    """
+
+    def test_ingest_ancestrydna_returns_202(self, ancestrydna_client):
+        with open(ANCESTRY_FILE, "rb") as f:
+            response = ancestrydna_client.post(
+                "/api/ingest",
+                files={"file": ("ancestry.txt", f, "text/plain")},
+            )
+        assert response.status_code == 202, response.text
+
+    def test_ingest_ancestrydna_returns_file_format(self, ancestrydna_client):
+        with open(ANCESTRY_FILE, "rb") as f:
+            response = ancestrydna_client.post(
+                "/api/ingest",
+                files={"file": ("ancestry.txt", f, "text/plain")},
+            )
+        assert response.json()["file_format"] == "ancestrydna_v2.0"
+
+    def test_ingest_ancestrydna_returns_variant_count(self, ancestrydna_client):
+        with open(ANCESTRY_FILE, "rb") as f:
+            response = ancestrydna_client.post(
+                "/api/ingest",
+                files={"file": ("ancestry.txt", f, "text/plain")},
+            )
+        body = response.json()
+        assert body["variant_count"] == ANCESTRY_VARIANT_COUNT

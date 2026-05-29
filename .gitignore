@@ -49,6 +49,8 @@ Thumbs.db
 data/
 !backend/data/
 !backend/data/**
+# ...but never the build artifacts the broad negation above would otherwise re-include
+backend/data/**/__pycache__/
 downloads/
 .genomeinsight/
 logs/
@@ -70,5 +72,23 @@ blob-report/
 # Claude
 .claude/
 
-# Review/planning docs (local only)
+# Review/planning docs (local only — kept on disk, never committed)
 gero.md
+/amv2.md
+/stup.md
+/prd.md
+/GenomeInsight_Spec.md
+/docs/AncestryDNA_Implementation_Steps.md
+/docs/AncestryDNA_Integration_Plan.md
+/docs/bundle-v2.0.0-build-plan.md
+/docs/bundle-v2.0.0-implementation-steps.md
+
+# Real user genotype exports — never commit (privacy + size)
+AncestryDNA.txt
+AncestryDNA.txt:Zone.Identifier
+AncestryDNAsample.txt
+AncestryDNAsample.txt:Zone.Identifier
+
+# LAI bundle artifacts — distributed via GitHub Releases, not git
+genomeinsight_lai_bundle_*.tar.gz
+lai_bundle_build/

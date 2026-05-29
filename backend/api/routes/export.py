@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, samples
 from backend.ingestion.vcf_export import export_vcf_from_rows
@@ -305,6 +306,7 @@ def export_query(body: ExportQueryRequest) -> StreamingResponse:
     Executes the filter tree against annotated_variants WITHOUT pagination
     (fetches all matching rows) and streams the result in the chosen format.
     """
+    require_fresh_sample(body.sample_id)
     sample_engine = _get_sample_engine(body.sample_id)
 
     if not _has_annotated_variants(sample_engine):
@@ -376,6 +378,7 @@ def export_sql(body: ExportSqlRequest) -> StreamingResponse:
     and streams the result. Maximum of 10,000 rows.
     VCF is not supported for SQL exports (arbitrary column schemas).
     """
+    require_fresh_sample(body.sample_id)
     _validate_read_only(body.sql)
 
     db_path = str(_resolve_sample_db_path(body.sample_id))
@@ -447,6 +450,7 @@ def export_fhir(body: ExportFhirRequest) -> StreamingResponse:
     one Observation per annotated variant.  Scope is limited to genomic
     core resources — no Condition or MedicationStatement (R-17 mitigation).
     """
+    require_fresh_sample(body.sample_id)
     from backend.reports.fhir_export import build_fhir_bundle
 
     try:

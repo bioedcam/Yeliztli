@@ -13,6 +13,13 @@ export interface DatabaseStatus {
   file_size_bytes: number | null
   auto_update: boolean
   update_available: boolean
+  /**
+   * Bandwidth window for large updates (e.g. `"02:00-06:00"`) or `null`
+   * when no window is configured. Mirrors `settings.update_download_window`
+   * server-side; surfaced so the Update Manager can show an outside-window
+   * tooltip on the "Update now" button. Optional — older backends omit it.
+   */
+  update_download_window?: string | null
 }
 
 export interface UpdateAvailable {
@@ -124,11 +131,18 @@ async function fetchReannotationPrompts(sampleId?: number): Promise<Reannotation
   return res.json()
 }
 
-async function triggerUpdate(dbName: string): Promise<TriggerUpdateResponse> {
+async function triggerUpdate(
+  dbName: string,
+  force = false,
+): Promise<TriggerUpdateResponse> {
+  // Only include `force` when truthy so legacy backends that don't know
+  // the field still see the original payload shape.
+  const body: Record<string, unknown> = { db_name: dbName }
+  if (force) body.force = true
   const res = await fetch('/api/updates/trigger', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ db_name: dbName }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -247,12 +261,18 @@ export function useReannotationPrompts(sampleId?: number) {
   })
 }
 
+export interface TriggerUpdateVariables {
+  dbName: string
+  /** Bypass the bandwidth-window check (Force update). Off by default. */
+  force?: boolean
+}
+
 /** Trigger a database update. Polls for job completion, then invalidates caches. */
 export function useTriggerUpdate() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (dbName: string) => {
-      const resp = await triggerUpdate(dbName)
+    mutationFn: async ({ dbName, force = false }: TriggerUpdateVariables) => {
+      const resp = await triggerUpdate(dbName, force)
       // Poll until the background Huey task finishes
       await pollJobUntilDone(resp.job_id)
       return resp

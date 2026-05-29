@@ -20,9 +20,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import apoe_gate, findings, samples
 from backend.disclaimers import (
@@ -185,7 +186,7 @@ def get_apoe_disclaimer() -> APOEGateDisclaimerResponse:
     )
 
 
-@router.get("/gate-status")
+@router.get("/gate-status", dependencies=[Depends(require_fresh_sample)])
 def get_gate_status(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> APOEGateStatusResponse:
@@ -201,7 +202,7 @@ def get_gate_status(
     )
 
 
-@router.post("/acknowledge-gate")
+@router.post("/acknowledge-gate", dependencies=[Depends(require_fresh_sample)])
 def acknowledge_gate(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> APOEGateAcknowledgeResponse:
@@ -250,7 +251,7 @@ def acknowledge_gate(
     )
 
 
-@router.get("/genotype")
+@router.get("/genotype", dependencies=[Depends(require_fresh_sample)])
 def get_apoe_genotype(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> APOEGenotypeResponse:
@@ -295,7 +296,7 @@ def get_apoe_genotype(
     )
 
 
-@router.get("/findings")
+@router.get("/findings", dependencies=[Depends(require_fresh_sample)])
 def list_apoe_findings(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> APOEFindingsListResponse:
@@ -353,7 +354,7 @@ def list_apoe_findings(
     return APOEFindingsListResponse(items=items, total=len(items))
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run_apoe_analysis(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> APOERunResponse:

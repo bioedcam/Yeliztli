@@ -64,6 +64,43 @@ export default function StorageStep({ onNext, onBack }: StorageStepProps) {
         </p>
       </div>
 
+      {/* Per-DB size breakdown (Plan §12.1, ADNA-00d) */}
+      <div
+        data-testid="storage-db-breakdown"
+        className="rounded-lg border bg-card p-4 space-y-2"
+      >
+        <h3 className="text-sm font-medium text-foreground">
+          Reference database size breakdown
+        </h3>
+        <p className="text-xs text-muted-foreground">
+          Required core (~4 GB) plus optional bundles. The VEP bundle alone is
+          approximately 600 MB on 0.2.0+ to cover both 23andMe v5 and
+          AncestryDNA v2.0 rsIDs.
+        </p>
+        <ul className="text-xs text-muted-foreground space-y-1 pt-1">
+          <li className="flex items-center justify-between">
+            <span>gnomAD allele frequencies</span>
+            <span className="font-medium text-foreground">~2 GB</span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span>dbNSFP pathogenicity scores</span>
+            <span className="font-medium text-foreground">~1.5 GB</span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span>VEP bundle (23andMe v5 ∪ AncestryDNA v2.0)</span>
+            <span className="font-medium text-foreground">~600 MB</span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span>LAI bundle (chromosome painting, optional)</span>
+            <span className="font-medium text-foreground">~500 MB</span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span>ClinVar, CPIC, GWAS, dbSNP, MONDO/HPO, ENCODE cCREs</span>
+            <span className="font-medium text-foreground">~420 MB</span>
+          </li>
+        </ul>
+      </div>
+
       {/* Loading state */}
       {isLoading && (
         <div className="flex items-center justify-center py-8">

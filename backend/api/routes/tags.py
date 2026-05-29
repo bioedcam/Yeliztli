@@ -17,9 +17,10 @@ from __future__ import annotations
 import logging
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import samples, tags, variant_tags
 
@@ -94,7 +95,7 @@ def _get_sample_engine(sample_id: int) -> sa.Engine:
 # ── Tag CRUD ──────────────────────────────────────────────────────
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_fresh_sample)])
 def list_tags(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> list[TagResponse]:
@@ -134,6 +135,7 @@ def list_tags(
 @router.post("", status_code=201)
 def create_tag(body: TagCreate) -> TagResponse:
     """Create a custom tag."""
+    require_fresh_sample(body.sample_id)
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=422, detail="Tag name cannot be empty.")
 
@@ -179,6 +181,7 @@ def create_tag(body: TagCreate) -> TagResponse:
 @router.post("/variant")
 def add_variant_tag(body: VariantTagAction) -> dict[str, str]:
     """Add a tag to a variant (INSERT OR IGNORE)."""
+    require_fresh_sample(body.sample_id)
     engine = _get_sample_engine(body.sample_id)
 
     with engine.begin() as conn:
@@ -195,7 +198,7 @@ def add_variant_tag(body: VariantTagAction) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.delete("/variant")
+@router.delete("/variant", dependencies=[Depends(require_fresh_sample)])
 def remove_variant_tag(
     sample_id: int = Query(..., description="Sample ID"),
     rsid: str = Query(..., description="Variant rsid"),
@@ -217,7 +220,7 @@ def remove_variant_tag(
     return {"status": "ok"}
 
 
-@router.get("/variant/{rsid}")
+@router.get("/variant/{rsid}", dependencies=[Depends(require_fresh_sample)])
 def get_variant_tags(
     rsid: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -253,7 +256,7 @@ def get_variant_tags(
     ]
 
 
-@router.get("/variants")
+@router.get("/variants", dependencies=[Depends(require_fresh_sample)])
 def get_variants_by_tag(
     sample_id: int = Query(..., description="Sample ID"),
     tag_id: int = Query(..., description="Tag ID"),
@@ -279,6 +282,7 @@ def get_variants_by_tag(
 @router.put("/{tag_id}")
 def update_tag(tag_id: int, body: TagUpdate) -> TagResponse:
     """Update a custom tag (name and/or color)."""
+    require_fresh_sample(body.sample_id)
     engine = _get_sample_engine(body.sample_id)
 
     with engine.begin() as conn:
@@ -327,7 +331,11 @@ def update_tag(tag_id: int, body: TagUpdate) -> TagResponse:
     )
 
 
-@router.delete("/{tag_id}", status_code=204)
+@router.delete(
+    "/{tag_id}",
+    status_code=204,
+    dependencies=[Depends(require_fresh_sample)],
+)
 def delete_tag(
     tag_id: int,
     sample_id: int = Query(..., description="Sample ID"),

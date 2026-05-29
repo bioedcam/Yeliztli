@@ -1,0 +1,62 @@
+# shellcheck shell=bash
+# scripts/lai_bundle_v2/env.sh
+#
+# Source this file from every phase script (or from run_rebuild.sh) to load
+# the cluster-rebuild environment. All paths are parametrized so the same
+# scripts run against either the v1.1 working directory (back-fill) or the
+# v2.0.0 working directory (forward rebuild) without edits.
+#
+# Override any variable by exporting it before invoking run_rebuild.sh.
+
+# ─── Working directories ──────────────────────────────────────────────────
+# Top-level rebuild directory on the cluster. Defaults match the v2 layout
+# documented in docs/lai-bundle-release-runbook.md and Plan §6.2.
+: "${LAI_BUNDLE_VERSION:=v2.0.0}"
+: "${WORKDIR:=$HOME/lai_bundle_v2}"
+: "${LOG_DIR:=$WORKDIR/logs}"
+
+# ─── Subdirectories (created by Phase 0 of run_rebuild.sh) ───────────────
+: "${RAW_DIR:=$WORKDIR/00_raw_downloads}"
+: "${SITES_DIR:=$WORKDIR/01_site_lists}"
+: "${LIFTOVER_DIR:=$WORKDIR/02_liftover}"
+: "${PANEL_DIR:=$WORKDIR/03_subsetted_panels}"
+: "${ADMIX_DIR:=$WORKDIR/04_admixture_filtering}"
+: "${GNOMIX_DIR:=$WORKDIR/05_gnomix_training}"
+: "${VALIDATION_DIR:=$WORKDIR/06_validation}"
+: "${BUNDLE_DIR:=$WORKDIR/07_final_bundle}"
+
+# ─── Inputs that must be supplied by the caller ──────────────────────────
+# Union catalog TSV (rsid, chrom, pos GRCh37). Produced by the VEP rebuild
+# (scripts/generate_vep_input.py --rsid-catalog) — Plan §6.4 phase 2.
+: "${UNION_CATALOG_TSV:=}"
+
+# ─── External tool paths ─────────────────────────────────────────────────
+: "${BEAGLE_JAR:=$HOME/tools/beagle.jar}"
+: "${GNOMIX_DIR_INSTALL:=$HOME/tools/gnomix}"
+: "${CHAIN_URL:=https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz}"
+: "${GENETIC_MAPS_URL:=https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/plink.GRCh38.map.zip}"
+: "${GNOMAD_BUCKET:=gs://gcp-public-data--gnomad/resources/hgdp_1kg/phased_haplotypes_v2}"
+: "${GNOMAD_META_URL:=gs://gcp-public-data--gnomad/release/3.1/secondary_analyses/hgdp_1kg_v2/metadata_and_qc/gnomad_meta_updated.tsv}"
+
+# ─── Build parameters ────────────────────────────────────────────────────
+: "${CHROMS:=1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22}"
+: "${BCFTOOLS_THREADS:=4}"
+: "${ADMIXTURE_K_LIST:=7 12 20}"
+: "${ADMIXTURE_SEED:=42}"  # locked — re-running with this seed reproduces labels (Plan §6.3 step 4)
+: "${SINGLE_ANCESTRY_THRESHOLD:=0.95}"
+: "${BEAGLE_XMX:=4g}"
+
+# ─── Provenance ──────────────────────────────────────────────────────────
+: "${GIT_COMMIT:=$(git -C "${BASH_SOURCE%/*}/../.." rev-parse HEAD 2>/dev/null || echo unknown)}"
+: "${BUILD_HOST:=$(hostname -s 2>/dev/null || echo unknown)}"
+: "${BUILD_DATE:=$(date -u +%Y-%m-%d)}"
+
+mkdir -p \
+  "$WORKDIR" "$LOG_DIR" "$RAW_DIR" "$SITES_DIR" "$LIFTOVER_DIR" \
+  "$PANEL_DIR" "$ADMIX_DIR" "$GNOMIX_DIR" "$VALIDATION_DIR" "$BUNDLE_DIR"
+
+# ─── Helpers ─────────────────────────────────────────────────────────────
+log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_DIR/run_rebuild.log"; }
+phase_log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_DIR/${PHASE_NAME:-phase}.log"; }
+require() { command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 1; }; }
+require_file() { [ -s "$1" ] || { echo "missing required input file: $1" >&2; exit 1; }; }

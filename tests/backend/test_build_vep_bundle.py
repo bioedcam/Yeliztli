@@ -44,7 +44,7 @@ VEP_SEED_CSV = SEED_DIR / "vep_seed.csv"
 SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "build_vep_bundle.py"
 
 
-# ── Consequence Severity ────────────────────────────────────────────────
+# ── Consequence Severity ─────────────────────────────────────
 
 
 class TestConsequenceSeverity:
@@ -85,7 +85,7 @@ class TestConsequenceSeverity:
         assert consequence_severity(compound) == consequence_severity("missense_variant")
 
 
-# ── VEPRecord ───────────────────────────────────────────────────────────
+# ── VEPRecord ─────────────────────────────────────────────
 
 
 class TestVEPRecord:
@@ -116,7 +116,7 @@ class TestVEPRecord:
         assert d["mane_select"] == 0
 
 
-# ── Seed CSV Loading ────────────────────────────────────────────────────
+# ── Seed CSV Loading ───────────────────────────────────────
 
 
 class TestLoadSeedCSV:
@@ -177,7 +177,7 @@ class TestLoadSeedCSV:
         assert len(mthfr_mane) >= 1, "MTHFR MANE Select not flagged"
 
 
-# ── VEP VCF Parsing ────────────────────────────────────────────────────
+# ── VEP VCF Parsing ──────────────────────────────────────
 
 
 class TestParseVepVCF:
@@ -424,7 +424,7 @@ class TestParseVepVCF:
         assert meta_rows["bundle_version"] == "v2.0.0"
 
 
-# ── Database Building ───────────────────────────────────────────────────
+# ── Database Building ──────────────────────────────────────
 
 
 class TestBuildBundleDB:
@@ -598,7 +598,7 @@ class TestBuildBundleDB:
         assert row[1] == "APOE"
 
 
-# ── Coverage Report ─────────────────────────────────────────────────────
+# ── Coverage Report ────────────────────────────────────────
 
 
 class TestCoverageReport:
@@ -627,7 +627,7 @@ class TestCoverageReport:
         assert report["coverage_percent"] == 40.0
 
 
-# ── CLI / Script Integration ────────────────────────────────────────────
+# ── CLI / Script Integration ───────────────────────────────────
 
 
 class TestCLI:
@@ -759,7 +759,7 @@ class TestCLI:
         assert result.returncode != 0
 
 
-# ── BuildStats ──────────────────────────────────────────────────────────
+# ── BuildStats ────────────────────────────────────────────
 
 
 class TestBuildStats:

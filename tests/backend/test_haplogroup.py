@@ -7,8 +7,12 @@ Covers:
   - T3-34: haplogroup_assignments table populated correctly after ancestry module runs
   - Bundle loading and parsing
   - Tree-walk algorithm correctness
-  - Sex inference from Y-chromosome variant presence
   - Findings storage in both haplogroup_assignments and findings tables
+
+Sex inference itself is tested in ``tests/backend/test_sex_inference.py``
+since the helper moved to ``backend/services/sex_inference.py`` at Step 54
+(see Plan §9.4). Haplogroup fixtures here include the chrX evidence the
+PAR-aware algorithm needs to confirm XY.
 """
 
 from __future__ import annotations
@@ -27,7 +31,6 @@ from backend.analysis.ancestry import (
     HaplogroupTraversalStep,
     _check_node_match,
     _collect_rsids,
-    _infer_sex_from_variants,
     _parse_tree_node,
     _tree_walk,
     assign_haplogroups,
@@ -99,6 +102,18 @@ _H1A_GENOTYPES = [
     {"rsid": "i5013404", "chrom": "MT", "pos": 13404, "genotype": "CC"},
 ]
 
+# Non-PAR chrX hom calls needed for the Plan §9.4 sex-inference algorithm
+# (Step 54) to classify a sample as candidate XY. Positions sit well past
+# PAR1 (ends at 2,699,520) and before PAR2 (starts at 154,931,044). Two
+# rows is enough — the algorithm requires "≥1 non-PAR chrX typed and every
+# typed call homozygous", and these two rows leave the legacy ``Y count >
+# 0`` heuristic with the same result (no chrY signal needed for the
+# legacy gate; the algorithm only reads chrX here).
+_NONPAR_X_HOM_GENOTYPES = [
+    {"rsid": "rs_haplo_x_hom_1", "chrom": "X", "pos": 50_000_001, "genotype": "AA"},
+    {"rsid": "rs_haplo_x_hom_2", "chrom": "X", "pos": 50_000_002, "genotype": "GG"},
+]
+
 # Known genotype fixture for R1b1a path in Y-chromosome:
 # Y-Adam → CT → F → K → K2 → P → R → R1 → R1b → R1b1 → R1b1a
 _R1B1A_GENOTYPES = [
@@ -135,15 +150,10 @@ def _seed_mt_h1a(engine: sa.Engine) -> None:
         conn.execute(sa.insert(raw_variants), _H1A_GENOTYPES)
 
 
-def _seed_xy_r1b1a(engine: sa.Engine) -> None:
-    """Seed R1b1a Y-chromosome genotypes into raw_variants."""
-    with engine.begin() as conn:
-        conn.execute(sa.insert(raw_variants), _R1B1A_GENOTYPES)
-
-
 def _seed_both(engine: sa.Engine) -> None:
-    """Seed both mt H1a and Y R1b1a genotypes."""
-    all_rows = _H1A_GENOTYPES + _R1B1A_GENOTYPES
+    """Seed mt H1a, Y R1b1a, and the chrX hom evidence the sex-inference
+    service needs to classify the sample as XY (Plan §9.4)."""
+    all_rows = _H1A_GENOTYPES + _R1B1A_GENOTYPES + _NONPAR_X_HOM_GENOTYPES
     with engine.begin() as conn:
         conn.execute(sa.insert(raw_variants), all_rows)
 
@@ -441,40 +451,6 @@ class TestTreeWalk:
         assert "H1a" in haplogroups_in_path
 
 
-# ── Sex inference tests ─────────────────────────────────────────────────
-
-
-class TestInferSex:
-    """Test sex inference from Y-chromosome variant presence."""
-
-    def test_xx_no_y_variants(self, sample_engine: sa.Engine) -> None:
-        """No Y-chromosome variants → XX."""
-        _seed_mt_h1a(sample_engine)
-        sex = _infer_sex_from_variants(sample_engine)
-        assert sex == "XX"
-
-    def test_xy_with_y_variants(self, sample_engine: sa.Engine) -> None:
-        """Y-chromosome variants present → XY."""
-        _seed_both(sample_engine)
-        sex = _infer_sex_from_variants(sample_engine)
-        assert sex == "XY"
-
-    def test_xy_nocall_y_variants(self, sample_engine: sa.Engine) -> None:
-        """Y-chromosome variants with no-call genotypes → XX."""
-        with sample_engine.begin() as conn:
-            conn.execute(
-                sa.insert(raw_variants),
-                [{"rsid": "rs_y1", "chrom": "Y", "pos": 1000, "genotype": "--"}],
-            )
-        sex = _infer_sex_from_variants(sample_engine)
-        assert sex == "XX"
-
-    def test_empty_database(self, sample_engine: sa.Engine) -> None:
-        """Empty database → XX."""
-        sex = _infer_sex_from_variants(sample_engine)
-        assert sex == "XX"
-
-
 # ── Full haplogroup assignment tests ────────────────────────────────────
 
 
@@ -748,3 +724,94 @@ class TestRunHaplogroupAssignment:
                 )
             ).fetchall()
             assert len(f_rows) == 2
+
+
+# ── Sex-inference rewire regression (Step 54 / Plan §9.4) ───────────────
+
+
+# Heterozygous non-PAR chrX call → dispositive XX under the Plan §9.4
+# algorithm, regardless of chrY signal.
+_XX_CHROM_X_HET = [
+    {"rsid": "rs_xx_x_het_1", "chrom": "X", "pos": 50_000_001, "genotype": "AG"},
+    {"rsid": "rs_xx_x_hom_1", "chrom": "X", "pos": 50_000_002, "genotype": "GG"},
+]
+
+
+class TestHaplogroupSexInferenceRewire:
+    """Lock byte-identical ``assign_haplogroups`` output on 23andMe-shaped
+    XX and XY regression fixtures after the sex-inference rewire (Step 54).
+
+    Plan §9.4 attests that the new PAR-aware algorithm matches the legacy
+    ``y_count > 0`` heuristic on well-behaved XY/XX samples; this class is
+    the regression fence. Sex-inference branch coverage lives in
+    ``tests/backend/test_sex_inference.py``.
+    """
+
+    def test_xx_regression_fixture_yields_mt_only(
+        self,
+        bundle: HaplogroupBundle,
+        sample_engine: sa.Engine,
+    ) -> None:
+        """23andMe XX regression: mtDNA assigned, Y tree-walk skipped."""
+        from backend.services.sex_inference import infer_biological_sex
+
+        with sample_engine.begin() as conn:
+            conn.execute(sa.insert(raw_variants), _H1A_GENOTYPES + _XX_CHROM_X_HET)
+
+        assert infer_biological_sex(sample_engine) == "XX"
+
+        results = assign_haplogroups(bundle, sample_engine)
+
+        assert len(results) == 1
+        assert results[0].tree_type == "mt"
+        assert results[0].haplogroup == "H1a"
+
+    def test_xy_regression_fixture_yields_both_mt_and_y(
+        self,
+        bundle: HaplogroupBundle,
+        sample_engine: sa.Engine,
+    ) -> None:
+        """23andMe XY regression: both mtDNA + Y haplogroups assigned.
+
+        Uses ``_seed_both`` (chrX hom + chrY R1b1a + mt H1a), the same
+        fixture ``TestAssignHaplogroups.test_both_mt_and_y`` exercises,
+        which the rewire keeps byte-identical.
+        """
+        from backend.services.sex_inference import infer_biological_sex
+
+        _seed_both(sample_engine)
+
+        assert infer_biological_sex(sample_engine) == "XY"
+
+        results = assign_haplogroups(bundle, sample_engine)
+
+        assert len(results) == 2
+        mt = next(r for r in results if r.tree_type == "mt")
+        y = next(r for r in results if r.tree_type == "Y")
+        assert mt.haplogroup == "H1a"
+        # Tree-walk may descend deeper than R1b1a when child nodes also
+        # match — same prefix-lock contract as the original test.
+        assert y.haplogroup.startswith("R1b1a")
+
+    def test_haplogroup_gate_matches_direct_sex_inference_call(
+        self,
+        bundle: HaplogroupBundle,
+        sample_engine: sa.Engine,
+    ) -> None:
+        """The rewired ``assign_haplogroups`` Y-gate must observe the same
+        classification the service returns when called directly — single
+        source of truth (Plan §9.4)."""
+        from backend.services.sex_inference import infer_biological_sex
+
+        _seed_both(sample_engine)
+
+        direct_sex = infer_biological_sex(sample_engine)
+        results = assign_haplogroups(bundle, sample_engine)
+        gated_tree_types = {r.tree_type for r in results}
+
+        # XY → Y appears; anything else → Y is gated out. The rewired call
+        # path must agree with a direct service call.
+        if direct_sex == "XY":
+            assert "Y" in gated_tree_types
+        else:
+            assert "Y" not in gated_tree_types

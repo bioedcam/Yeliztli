@@ -8,9 +8,9 @@ Orchestrates the full LAI pipeline:
   5. Run Gnomix inference using re-exported models (numpy + xgboost)
   6. Aggregate into global ancestry proportions + chromosome painting
 
-Replaces ``scripts/lai_runner.py`` — subprocess calls to bcftools/bgzip/tabix
-are replaced by pysam.  Gnomix inference is handled by
-``gnomix_inference.py`` instead of calling the gnomix.py script.
+Subprocess calls to bcftools/bgzip/tabix are replaced by pysam; Gnomix
+inference is handled by ``gnomix_inference.py`` instead of calling the
+gnomix.py script.
 """
 
 from __future__ import annotations
@@ -21,12 +21,14 @@ import subprocess
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
+
+from backend.analysis.zygosity import is_no_call
 
 if TYPE_CHECKING:
     from backend.analysis.gnomix_inference import ChromosomeResult
@@ -35,6 +37,12 @@ logger = structlog.get_logger(__name__)
 
 # Threshold below which MID ancestry estimates are flagged as lower-precision
 MID_LOW_PRECISION_THRESHOLD = 0.15
+
+# Drop-rate threshold above which the LAI coverage banner is shown (Plan §6.6)
+LAI_DROP_RATE_WARNING_THRESHOLD = 0.15
+
+# Source labels for merged samples (Plan §6.6, §10.2)
+_MERGED_SOURCE_KEYS = ("S1", "S2", "both")
 
 POPULATIONS: dict[str, dict[str, str]] = {
     "AFR": {"display": "African", "color": "#E8A838"},
@@ -54,6 +62,7 @@ class LAIRunnerResult:
     global_ancestry: dict[str, dict]
     chromosome_painting: dict[str, list[dict]]
     metadata: dict
+    coverage_telemetry: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 class LAIRunner:
@@ -110,18 +119,25 @@ class LAIRunner:
         output_dir: str | Path,
         progress_callback: Callable[[str, float], None] | None = None,
         cleanup: bool = True,
+        file_format: str = "",
     ) -> LAIRunnerResult:
         """Run the full LAI pipeline.
 
         Args:
-            genotypes: List of dicts with keys: rsid, chrom, pos, genotype.
-                Typically read from the sample DB raw_variants table.
+            genotypes: List of dicts with keys: rsid, chrom, pos, genotype, and
+                optionally ``source`` (empty string on pre-Phase-3 sample DBs,
+                ``S1``/``S2``/``both`` on merged samples — Plan §6.6).
             output_dir: Directory for intermediate and output files.
             progress_callback: Optional function(message, fraction) for updates.
             cleanup: Remove intermediate files after completion.
+            file_format: ``sample_metadata.file_format`` for the sample (e.g.
+                ``"23andme_v5"``, ``"ancestrydna_v2.0"``, ``"merged_v1"``).
+                Drives single-key vs. three-key dispatch when every genotype
+                has ``source=""`` (Plan §6.6).
 
         Returns:
-            LAIRunnerResult with global_ancestry, chromosome_painting, metadata.
+            LAIRunnerResult with global_ancestry, chromosome_painting, metadata,
+            and ``coverage_telemetry`` payload keyed by source/vendor.
         """
         start_time = time.time()
         out = Path(output_dir)
@@ -139,10 +155,18 @@ class LAIRunner:
 
         # Step 2: Translate to GRCh38 and write per-chromosome VCFs
         report("Writing per-chromosome VCFs...", 0.05)
-        vcf_paths, matched = self._write_per_chrom_vcfs(filtered, out)
+        vcf_paths, matched, per_source_counts = self._write_per_chrom_vcfs(filtered, out)
         report(
             f"Mapped {matched} variants to GRCh38 across {len(vcf_paths)} chromosomes",
             0.10,
+        )
+        coverage_telemetry = self._build_coverage_telemetry(per_source_counts, file_format)
+        self._emit_coverage_telemetry(
+            total_genotypes=len(genotypes),
+            filtered=len(filtered),
+            matched=matched,
+            per_source=coverage_telemetry,
+            file_format=file_format,
         )
 
         # Step 3: Phase with Beagle
@@ -198,6 +222,7 @@ class LAIRunner:
 
         # Step 6: Metadata
         elapsed = time.time() - start_time
+        drop_rate = ((len(filtered) - matched) / len(filtered)) if filtered else 0.0
         metadata = {
             "total_genotypes": len(genotypes),
             "filtered_genotypes": len(filtered),
@@ -207,12 +232,16 @@ class LAIRunner:
             "chromosomes_failed": failed_chroms,
             "runtime_seconds": round(elapsed, 1),
             "populations": list(POPULATIONS.keys()),
+            "coverage_telemetry": coverage_telemetry,
+            "drop_rate": round(drop_rate, 4),
+            "drop_rate_warning": drop_rate > LAI_DROP_RATE_WARNING_THRESHOLD,
         }
 
         lai_result = LAIRunnerResult(
             global_ancestry=global_ancestry,
             chromosome_painting=chromosome_painting,
             metadata=metadata,
+            coverage_telemetry=coverage_telemetry,
         )
 
         # Save results
@@ -237,7 +266,13 @@ class LAIRunner:
         return lai_result
 
     def _filter_genotypes(self, genotypes: list[dict]) -> list[dict]:
-        """Filter to autosomal diploid SNP genotypes."""
+        """Filter to autosomal diploid SNP genotypes.
+
+        Carries ``source`` through to the filtered dicts so the per-source
+        telemetry accumulator in ``_write_per_chrom_vcfs`` can read it.
+        Pre-Phase-3 sample DBs that don't carry a ``source`` column fall
+        through with ``source=""`` (Plan §6.6).
+        """
         autosomal_chroms = {str(i) for i in range(1, 23)}
         filtered = []
         for gt in genotypes:
@@ -245,7 +280,7 @@ class LAIRunner:
             genotype = str(gt["genotype"])
             if chrom not in autosomal_chroms:
                 continue
-            if genotype == "--" or len(genotype) != 2:
+            if is_no_call(genotype) or len(genotype) != 2:
                 continue
             a1, a2 = genotype[0], genotype[1]
             if a1 not in "ACGT" or a2 not in "ACGT":
@@ -256,26 +291,89 @@ class LAIRunner:
                     "chrom": chrom,
                     "allele1": a1,
                     "allele2": a2,
+                    "source": gt.get("source", "") or "",
                 }
             )
         return filtered
 
+    @staticmethod
+    def _build_coverage_telemetry(
+        per_source: dict[str, dict[str, int]],
+        file_format: str,
+    ) -> dict[str, dict[str, int]]:
+        """Shape raw per-source counts into the Plan §6.6 telemetry payload.
+
+        Dispatch is ``source``-driven: any non-empty ``source`` key (or a
+        ``merged_v1`` file_format) collapses to the three-key ``S1/S2/both``
+        path. Otherwise emit a single-key ``{vendor: counts}`` where
+        ``vendor = file_format.split("_", 1)[0].lower()``.
+        """
+        has_nonempty_source = any(key for key in per_source)
+        if has_nonempty_source or file_format == "merged_v1":
+            return {
+                key: dict(per_source.get(key, {"hits": 0, "drops": 0}))
+                for key in _MERGED_SOURCE_KEYS
+            }
+
+        vendor = file_format.split("_", 1)[0].lower() if file_format else ""
+        if not vendor:
+            vendor = "unknown"
+        counts = per_source.get("", {"hits": 0, "drops": 0})
+        return {vendor: dict(counts)}
+
+    @staticmethod
+    def _emit_coverage_telemetry(
+        *,
+        total_genotypes: int,
+        filtered: int,
+        matched: int,
+        per_source: dict[str, dict[str, int]],
+        file_format: str,
+    ) -> None:
+        """Log the per-source LAI dropout telemetry line (Plan §6.6)."""
+        dropped = filtered - matched
+        drop_rate = (dropped / filtered) if filtered else 0.0
+        logger.info(
+            "lai_coverage_telemetry",
+            total_variants=total_genotypes,
+            filtered=filtered,
+            mapped=matched,
+            dropped=dropped,
+            drop_rate=round(drop_rate, 4),
+            drop_rate_warning=drop_rate > LAI_DROP_RATE_WARNING_THRESHOLD,
+            file_format=file_format or None,
+            per_source=per_source,
+        )
+
     def _write_per_chrom_vcfs(
         self, genotypes: list[dict], out: Path
-    ) -> tuple[dict[str, Path], int]:
-        """Translate rsIDs to GRCh38 and write per-chromosome VCFs using pysam."""
+    ) -> tuple[dict[str, Path], int, dict[str, dict[str, int]]]:
+        """Translate rsIDs to GRCh38 and write per-chromosome VCFs using pysam.
+
+        Returns a ``(vcf_paths, total_sites, per_source_counts)`` triple. The
+        third element accumulates per-source ``{"hits", "drops"}`` counts over
+        the input ``genotypes`` — a hit is an rsID present in the LAI bundle
+        liftover map on an autosomal contig; everything else is a drop
+        (Plan §6.6).
+        """
         vcf_dir = out / "unphased_vcfs"
         vcf_dir.mkdir(exist_ok=True)
 
         autosomal_chroms = {f"chr{i}" for i in range(1, 23)} | {str(i) for i in range(1, 23)}
         chrom_genotypes: dict[str, list[dict]] = defaultdict(list)
+        per_source: dict[str, dict[str, int]] = {}
         for gt in genotypes:
             rsid = gt["rsid"]
+            src = gt.get("source", "") or ""
+            counts = per_source.setdefault(src, {"hits": 0, "drops": 0})
             if rsid not in self.rsid_lookup:
+                counts["drops"] += 1
                 continue
             chrom, pos38 = self.rsid_lookup[rsid]
             if chrom not in autosomal_chroms:
+                counts["drops"] += 1
                 continue
+            counts["hits"] += 1
             chrom_genotypes[chrom].append(
                 {
                     "chrom": chrom,
@@ -295,7 +393,7 @@ class LAIRunner:
             vcf_paths[chrom] = vcf_path
             total_sites += len(sites)
 
-        return vcf_paths, total_sites
+        return vcf_paths, total_sites, per_source
 
     def _write_single_vcf(self, chrom: str, sites: list[dict], vcf_path: Path) -> None:
         """Write a single-sample VCF for one chromosome using pysam."""

@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.analysis.custom_panels import (
@@ -36,6 +36,7 @@ from backend.analysis.rare_variant_finder import (
     find_rare_variants,
     store_rare_variant_findings,
 )
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import samples
 
@@ -265,7 +266,7 @@ def delete_panel(panel_id: int) -> dict[str, str]:
     return {"status": "deleted", "panel_id": str(panel_id)}
 
 
-@router.post("/{panel_id}/search")
+@router.post("/{panel_id}/search", dependencies=[Depends(require_fresh_sample)])
 def search_with_panel(
     panel_id: int,
     sample_id: int = Query(..., description="Sample ID"),

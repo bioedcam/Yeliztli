@@ -34,6 +34,7 @@ from typing import Any
 import sqlalchemy as sa
 import structlog
 
+from backend.analysis.zygosity import is_no_call
 from backend.db.tables import findings, raw_variants
 
 logger = structlog.get_logger(__name__)
@@ -178,11 +179,6 @@ def _normalise_genotype(genotype: str) -> str:
     return "".join(sorted(genotype))
 
 
-def _is_no_call(genotype: str) -> bool:
-    """Check if a genotype represents a no-call (e.g. "--", "00", "DD", "II")."""
-    return genotype in {"--", "00", "DD", "II", "DI", "ID", "D", "I", "-"}
-
-
 def determine_apoe_genotype(sample_engine: sa.Engine) -> APOEResult:
     """Determine the APOE diplotype from raw variant genotypes.
 
@@ -220,7 +216,7 @@ def determine_apoe_genotype(sample_engine: sa.Engine) -> APOEResult:
         )
 
     # Check for no-call genotypes
-    if _is_no_call(rs429358_gt) or _is_no_call(rs7412_gt):
+    if is_no_call(rs429358_gt) or is_no_call(rs7412_gt):
         logger.warning(
             "apoe_no_call",
             rs429358=rs429358_gt,

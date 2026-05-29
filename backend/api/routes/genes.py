@@ -17,9 +17,10 @@ from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.config import get_settings
 from backend.db.connection import get_registry
 from backend.db.tables import (
@@ -556,7 +557,11 @@ def _fetch_population_af(gene_symbol: str, sample_engine: sa.Engine) -> list[Pop
 # ── Endpoints ────────────────────────────────────────────────────────
 
 
-@router.get("/{symbol}", response_model=GeneDetailResponse)
+@router.get(
+    "/{symbol}",
+    response_model=GeneDetailResponse,
+    dependencies=[Depends(require_fresh_sample)],
+)
 def get_gene_detail(
     symbol: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -613,7 +618,11 @@ def get_gene_detail(
     )
 
 
-@router.get("/{symbol}/variants", response_model=GeneVariantsResponse)
+@router.get(
+    "/{symbol}/variants",
+    response_model=GeneVariantsResponse,
+    dependencies=[Depends(require_fresh_sample)],
+)
 def get_gene_variants(
     symbol: str,
     sample_id: int = Query(..., description="Sample ID"),

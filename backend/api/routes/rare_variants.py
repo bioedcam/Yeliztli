@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -27,12 +27,17 @@ from backend.analysis.rare_variant_finder import (
     find_rare_variants,
     store_rare_variant_findings,
 )
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, findings, samples
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/analysis/rare-variants", tags=["rare-variants"])
+router = APIRouter(
+    prefix="/analysis/rare-variants",
+    tags=["rare-variants"],
+    dependencies=[Depends(require_fresh_sample)],
+)
 
 
 # ── Request / response models ────────────────────────────────────────

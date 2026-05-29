@@ -18,16 +18,21 @@ import logging
 from pathlib import Path
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, samples
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/analysis/findings", tags=["findings"])
+router = APIRouter(
+    prefix="/analysis/findings",
+    tags=["findings"],
+    dependencies=[Depends(require_fresh_sample)],
+)
 
 
 # ── Response models ──────────────────────────────────────────────────

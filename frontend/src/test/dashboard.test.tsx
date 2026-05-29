@@ -112,6 +112,13 @@ function setupFetchMocks(options: {
     if (url.includes('/api/samples')) {
       return Promise.resolve(mockSamplesResponse(options.samples ?? []))
     }
+    if (url.includes('/api/individuals')) {
+      // Dashboard's two-level context chip (Step 50) calls
+      // useIndividuals() to discover the owning individual of the active
+      // sample. Tests don't exercise that surface, so return an empty
+      // list to keep the chip suppressed without breaking renders.
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] })
+    }
     if (url.includes('/api/variants/qc-stats')) {
       return Promise.resolve(mockQCStatsResponse())
     }
@@ -168,13 +175,92 @@ describe('Dashboard', () => {
     setupFetchMocks()
     baseRender(<Dashboard />, { wrapper: createWrapper() })
     expect(await screen.findByText('Get Started')).toBeInTheDocument()
-    expect(screen.getByText(/Upload a 23andMe raw data file/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Upload a 23andMe or AncestryDNA raw data file/),
+    ).toBeInTheDocument()
   })
 
   it('renders dashboard layout when sample is active', async () => {
     setupFetchMocks({ samples: [SAMPLE], variantCount: 500000 })
     baseRender(<Dashboard />, { wrapper: createWrapper(['/?sample_id=1']) })
     expect(await screen.findByText('Eduardo')).toBeInTheDocument()
+  })
+
+  it('renders the Viewing context chip when the active sample is linked to an individual (Step 50)', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/samples')) {
+        return Promise.resolve(mockSamplesResponse([SAMPLE]))
+      }
+      if (url === '/api/individuals') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              id: 99,
+              display_name: 'Alice',
+              notes: null,
+              biological_sex: null,
+              created_at: '2026-05-01T00:00:00',
+              updated_at: null,
+              sample_count: 1,
+              vendors: ['23andme'],
+              last_activity: null,
+            },
+          ],
+        })
+      }
+      if (/^\/api\/individuals\/99/.test(url)) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 99,
+            display_name: 'Alice',
+            notes: null,
+            biological_sex: null,
+            created_at: '2026-05-01T00:00:00',
+            updated_at: null,
+            linked_samples: [
+              {
+                id: 1,
+                name: 'Eduardo',
+                file_format: '23andme_v5',
+                vendor: '23andme',
+                created_at: '2026-05-01T00:00:00',
+                updated_at: null,
+              },
+            ],
+            aggregated_findings_count: 0,
+          }),
+        })
+      }
+      if (url.includes('/api/variants/qc-stats')) {
+        return Promise.resolve(mockQCStatsResponse())
+      }
+      if (url.includes('/api/variants/count')) {
+        return Promise.resolve(mockVariantCountResponse(500000))
+      }
+      if (url.includes('/api/updates/status')) {
+        return Promise.resolve(mockUpdateStatusResponse())
+      }
+      if (url.includes('/api/updates/check')) {
+        return Promise.resolve(mockUpdateCheckResponse())
+      }
+      if (url.includes('/api/databases')) {
+        return Promise.resolve(mockDatabaseListResponse())
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    baseRender(<Dashboard />, { wrapper: createWrapper(['/?sample_id=1']) })
+
+    const chip = await screen.findByTestId('dashboard-context-chip')
+    expect(chip).toHaveTextContent(/Viewing:/)
+    expect(chip).toHaveTextContent('Alice')
+    expect(chip).toHaveTextContent('Eduardo')
+    const link = screen.getByRole('link', { name: 'Alice' })
+    expect(link).toHaveAttribute('href', '/individuals/99')
   })
 })
 

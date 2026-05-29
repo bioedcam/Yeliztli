@@ -39,6 +39,7 @@ from backend.api.routes.gene_health import router as gene_health_router
 from backend.api.routes.genes import cache_router as uniprot_cache_router
 from backend.api.routes.genes import router as genes_router
 from backend.api.routes.igv_tracks import router as igv_tracks_router
+from backend.api.routes.individuals import router as individuals_router
 from backend.api.routes.ingest import router as ingest_router
 from backend.api.routes.liftover import router as liftover_router
 from backend.api.routes.methylation import router as methylation_router
@@ -70,7 +71,7 @@ from backend.tasks.huey_tasks import recover_orphaned_jobs
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────
@@ -160,6 +161,7 @@ def create_app() -> FastAPI:
     api_router.include_router(genes_router)
     api_router.include_router(uniprot_cache_router)
     api_router.include_router(igv_tracks_router)
+    api_router.include_router(individuals_router)
     api_router.include_router(ingest_router)
     api_router.include_router(liftover_router)
     api_router.include_router(methylation_router)

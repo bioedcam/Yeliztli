@@ -156,11 +156,12 @@ jobs:
 
       - name: Verify health endpoint (quick start/stop)
         run: |
-          cleanup() { kill $SERVER_PID 2>/dev/null || true; }
+          # shellcheck disable=SC2329  # cleanup is invoked via the EXIT trap below
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
           trap cleanup EXIT
           uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
           SERVER_PID=$!
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8000/api/health; then
               echo "Health check passed"
               exit 0
@@ -187,7 +188,7 @@ jobs:
         run: |
           docker compose up -d
           sleep 10
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8000/api/health; then
               echo "Docker health check passed"
               docker compose down -v
@@ -256,3 +257,23 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # ── Workflow lint (actionlint) ──────────────────────────
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: reviewdog/action-actionlint@v1
+        with:
+          # fail_level: error == the deprecated `fail_on_error: true` (level defaults to error)
+          fail_level: error
+          # The repo's default workflow token is read-only (no pull-requests scope),
+          # so the default github-pr-check reporter 403s ("Resource not accessible by
+          # integration") fetching the PR diff. The local reporter makes no GitHub API
+          # calls; nofilter lints every workflow (not just PR-diff lines). Combined with
+          # fail_level: error the job still fails on any actionlint error-level finding.
+          reporter: local
+          filter_mode: nofilter

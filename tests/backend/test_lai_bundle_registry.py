@@ -10,11 +10,13 @@ T-DL-05: Bundle validation checks all 22 chromosome model files
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from backend.db import manifest as manifest_mod
 from backend.db.database_registry import (
     DATABASES,
     detect_java,
@@ -36,6 +38,10 @@ class TestLAIBundleRegistry:
         assert db.name == "lai_bundle"
         assert db.display_name == "LAI Bundle (Chromosome Painting)"
         assert db.filename == "lai_bundle.tar.gz"
+        # Current published asset is v1.1 (523 MB), renamed to the lai-bundle-v1.1.0
+        # release in §0h. Phase D/Step 32 bumps this to the ~750 MB v2.0.0 union
+        # bundle (23andMe v5 ∪ AncestryDNA v2.0, ~840k sites — Plan §6.4) once
+        # lai-bundle-v2.0.0 is actually published.
         assert db.expected_size_bytes == 523_801_111
         assert db.build_mode == "download"
         assert db.target_db == "standalone"
@@ -48,13 +54,80 @@ class TestLAIBundleRegistry:
 
     def test_lai_bundle_url_set(self):
         db = DATABASES["lai_bundle"]
-        assert db.url != ""
-        assert "lai-bundle" in db.url
+        # Current published asset: lai-bundle-v1.1.0 (renamed from v1.1 in §0h).
+        # Phase D/Step 32 repoints this to the lai-bundle-v2.0.0 release once published.
+        assert db.url == (
+            "https://github.com/bioedcam/GenomeInsight/releases/download/"
+            "lai-bundle-v1.1.0/genomeinsight_lai_bundle_v1.1.tar.gz"
+        )
 
     def test_get_database_returns_lai_bundle(self):
         db = get_database("lai_bundle")
         assert db is not None
         assert db.name == "lai_bundle"
+
+
+# ── Step 21: v2.0.0 manifest fixture exposes the new bundle version ──
+
+
+class TestLAIBundleManifestV2:
+    """Plan §12.2 LAI-00e item v: ``lai_bundle.version`` reads as ``"v2.0.0"``
+    for the v2 manifest fixture, alongside ``min_app_version = "0.2.0"`` per
+    runbook §10."""
+
+    V2_PAYLOAD = {
+        "schema_version": 1,
+        "generated_at": "2026-05-20T00:00:00Z",
+        "bundles": {
+            "lai_bundle": {
+                "version": "v2.0.0",
+                "build_date": "2026-05-20",
+                "url": (
+                    "https://github.com/bioedcam/GenomeInsight/releases/download/"
+                    "lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz"
+                ),
+                "sha256": "0" * 64,
+                "size_bytes": 750_000_000,
+                "min_app_version": "0.2.0",
+            },
+        },
+        "pipeline_pins": {},
+    }
+
+    @pytest.fixture(autouse=True)
+    def _clear_manifest_cache(self):
+        manifest_mod.reset_cache()
+        yield
+        manifest_mod.reset_cache()
+
+    def _write(self, tmp_path: Path) -> Path:
+        path = tmp_path / "manifest.json"
+        path.write_text(json.dumps(self.V2_PAYLOAD), encoding="utf-8")
+        return path
+
+    def test_v2_manifest_exposes_lai_bundle_v2_0_0(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        path = self._write(tmp_path)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        m = manifest_mod.fetch_manifest()
+        entry = m.bundles["lai_bundle"]
+        assert entry.version == "v2.0.0"
+        assert entry.min_app_version == "0.2.0"
+        assert entry.size_bytes == 750_000_000
+        assert entry.url.endswith("/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz")
+
+    def test_v2_manifest_sha256_placeholder_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Pre-publish placeholder SHA (64 zeros) is accepted by the parser —
+        the real sha lands when the cluster build produces the tarball."""
+        path = self._write(tmp_path)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        m = manifest_mod.fetch_manifest()
+        assert m.bundles["lai_bundle"].sha256 == "0" * 64
 
 
 # ── T-DL-02: LAI bundle marked as optional ───────────────────────────

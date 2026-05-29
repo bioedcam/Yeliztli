@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -42,7 +42,12 @@ from backend.annotation.gnomad import (
     lookup_gnomad_by_positions,
     lookup_gnomad_by_rsids,
 )
-from backend.db.tables import annotated_variants, raw_variants
+from backend.db.tables import (
+    annotated_variants,
+    database_versions,
+    raw_variants,
+    sample_metadata_table,
+)
 
 if TYPE_CHECKING:
     from backend.db.connection import DBRegistry
@@ -77,6 +82,10 @@ class AnnotationEngineResult:
 
     total_variants: int = 0
     vep_matched: int = 0
+    # Subset of ``vep_matched`` that resolved via the (chrom, pos) fallback
+    # rather than rsid lookup. Populated by Plan §5.1's defense-in-depth path
+    # for AncestryDNA-style `kgp*` / internal IDs without rsid mapping.
+    vep_coord_fallback_matched: int = 0
     clinvar_matched: int = 0
     gnomad_matched: int = 0
     dbnsfp_matched: int = 0
@@ -92,6 +101,9 @@ class AnnotationEngineResult:
     timing_gene_phenotype_s: float = 0.0
     timing_merge_s: float = 0.0
     timing_upsert_s: float = 0.0
+    # §5.6 coverage telemetry payload (populated at the end of run_annotation).
+    # Empty dict for runs that processed zero variants.
+    coverage_stats: dict[str, Any] = field(default_factory=dict)
 
     @property
     def total_matched(self) -> int:
@@ -570,6 +582,68 @@ def _bulk_upsert(
     return written
 
 
+# ── VEP coord-fallback (Plan §5.1) ──────────────────────────────────────
+
+
+def _vep_coord_fallback(
+    batch_rsids: list[str],
+    raw_by_rsid: dict[str, sa.Row],
+    vep_engine: sa.Engine,
+    vep_data: dict[str, dict],
+    result: AnnotationEngineResult,
+) -> int:
+    """Resolve unmatched rsids via (chrom, pos) lookup in the VEP bundle.
+
+    Mutates ``vep_data`` in place with any coord-matched annotations and adds
+    coord-fallback wall-clock time onto ``result.timing_vep_s``. Returns the
+    number of variants resolved here so the caller can roll the count into
+    ``result.vep_coord_fallback_matched``.
+
+    The plan calls this "defense-in-depth" for AncestryDNA `kgp*` IDs: the
+    rsid string is internal-only, but the (chrom, pos) tuple still hits a
+    bundle row carrying a different rsid.
+    """
+    from backend.annotation.vep_bundle import lookup_vep_by_positions
+
+    unmatched_rsids = [r for r in batch_rsids if r not in vep_data]
+    if not unmatched_rsids:
+        return 0
+
+    positions: list[tuple[str, int, str]] = []
+    for rsid in unmatched_rsids:
+        raw = raw_by_rsid.get(rsid)
+        if raw is None:
+            continue
+        chrom = getattr(raw, "chrom", None)
+        pos = getattr(raw, "pos", None)
+        if chrom and pos is not None:
+            try:
+                positions.append((chrom, int(pos), rsid))
+            except (TypeError, ValueError):
+                continue
+
+    if not positions:
+        return 0
+
+    t0 = time.perf_counter()
+    matches = lookup_vep_by_positions(positions, vep_engine)
+    result.timing_vep_s += time.perf_counter() - t0
+
+    for sample_rsid, annot in matches.items():
+        vep_data[sample_rsid] = {
+            "gene_symbol": annot.gene_symbol,
+            "transcript_id": annot.transcript_id,
+            "consequence": annot.consequence,
+            "hgvs_coding": annot.hgvs_coding,
+            "hgvs_protein": annot.hgvs_protein,
+            "strand": annot.strand,
+            "exon_number": annot.exon_number,
+            "intron_number": annot.intron_number,
+            "mane_select": annot.mane_select,
+        }
+    return len(matches)
+
+
 # ── Timed lookup wrapper (P4-22) ────────────────────────────────────────
 
 
@@ -584,6 +658,129 @@ def _timed_lookup(
     res = fn(*args)
     source_timings[source_name] = time.perf_counter() - t0
     return res
+
+
+# ── Coverage telemetry (Plan §5.6) ───────────────────────────────────────
+
+
+def _read_bundle_version(registry: DBRegistry) -> str | None:
+    """Read `vep_bundle.version` from the reference DB's `database_versions`.
+
+    Returns ``None`` when the row is missing or the reference DB is
+    unavailable — telemetry collection must never abort the engine run.
+    """
+    try:
+        reference_engine = registry.reference_engine
+    except Exception:
+        logger.debug("coverage_stats_reference_engine_unavailable", exc_info=True)
+        return None
+    try:
+        with reference_engine.connect() as conn:
+            row = conn.execute(
+                sa.select(database_versions.c.version).where(
+                    database_versions.c.db_name == "vep_bundle"
+                )
+            ).fetchone()
+    except Exception:
+        logger.debug("coverage_stats_bundle_version_query_failed", exc_info=True)
+        return None
+    return row.version if row is not None else None
+
+
+def _read_sample_file_format(sample_engine: sa.Engine) -> str | None:
+    """Read `file_format` from the per-sample `sample_metadata` row."""
+    try:
+        with sample_engine.connect() as conn:
+            row = conn.execute(
+                sa.select(sample_metadata_table.c.file_format).where(
+                    sample_metadata_table.c.id == 1
+                )
+            ).fetchone()
+    except Exception:
+        logger.debug("coverage_stats_file_format_query_failed", exc_info=True)
+        return None
+    return row.file_format if row is not None else None
+
+
+# Plan §10.5 step 5: merged samples carry this canonical ``file_format`` so
+# every reader (dashboard, variant table, coverage telemetry below) can branch
+# on it without re-deriving from per-row state. Duplicated from
+# ``backend/services/sample_merge.py::_MERGED_FILE_FORMAT`` to keep the engine
+# free of services-layer imports.
+_MERGED_FILE_FORMAT = "merged_v1"
+
+# Plan §10.4(b): ``raw_variants.source`` is populated only on merged samples;
+# unmerged samples carry the empty-string default. The three-key by_source
+# shape always emits every slot — bucket counts of zero are still meaningful
+# (Plan §5.6 / §15.1 MRG-09b: ``S1`` / ``S2`` / ``both`` is the canonical
+# key set for merged-sample telemetry, parity with the
+# ``merge_provenance.concordance_summary`` ``unique_S1`` / ``unique_S2``
+# suffix tokens).
+_MERGED_SOURCE_KEYS: tuple[str, ...] = ("S1", "S2", "both")
+
+
+def _zero_source_bucket() -> dict[str, int]:
+    return {
+        "vep_bundle_rsid_hits": 0,
+        "vep_bundle_coord_fallback_hits": 0,
+        "vep_misses": 0,
+    }
+
+
+def _build_coverage_stats(
+    sample_engine: sa.Engine,
+    registry: DBRegistry,
+    *,
+    total_variants: int,
+    vep_rsid_hits: int,
+    vep_coord_fallback_hits: int,
+    source_counters: dict[str, dict[str, int]] | None = None,
+) -> dict[str, Any]:
+    """Compose the Plan §5.6 coverage telemetry payload.
+
+    Top-level rollup mirrors the cross-source totals (Plan §5.6: "the top-level
+    rollup is the sum across all ``by_source`` keys"). ``by_source`` keys
+    depend on whether the sample is a merge artefact:
+
+    * **Unmerged** (file_format ≠ ``merged_v1``) — single-key on the vendor
+      derived from ``sample_metadata.file_format`` (``"23andme_v5" → "23andme"``,
+      ``"ancestrydna_v2.0" → "ancestrydna"``). ``source_counters`` is ignored
+      because every row carries the empty-string ``source`` default.
+    * **Merged** (file_format == ``merged_v1``) — three-key uppercase
+      ``"S1"`` / ``"S2"`` / ``"both"`` populated from ``source_counters``
+      (which the engine accumulated per-batch from ``raw_variants.source``).
+      Every slot is emitted even when its bucket count is zero so downstream
+      consumers can read a stable shape. The keys match the
+      ``raw_variants.source`` enum (Plan §10.4b) and the suffix tokens on
+      ``merge_provenance.concordance_summary.unique_S1`` / ``unique_S2``
+      (Plan §15.1 MRG-09b).
+    """
+    vep_misses = max(total_variants - vep_rsid_hits - vep_coord_fallback_hits, 0)
+
+    bundle_version = _read_bundle_version(registry)
+    file_format = _read_sample_file_format(sample_engine)
+
+    if file_format == _MERGED_FILE_FORMAT:
+        provided = source_counters or {}
+        by_source = {key: provided.get(key, _zero_source_bucket()) for key in _MERGED_SOURCE_KEYS}
+    else:
+        vendor = file_format.split("_", 1)[0].lower() if file_format else "unknown"
+        by_source = {
+            vendor: {
+                "vep_bundle_rsid_hits": vep_rsid_hits,
+                "vep_bundle_coord_fallback_hits": vep_coord_fallback_hits,
+                "vep_misses": vep_misses,
+            }
+        }
+
+    return {
+        "bundle_version": bundle_version,
+        "total_variants": total_variants,
+        "vep_bundle_rsid_hits": vep_rsid_hits,
+        "vep_bundle_coord_fallback_hits": vep_coord_fallback_hits,
+        "vep_misses": vep_misses,
+        "by_source": by_source,
+    }
 
 
 # ── Engine availability checks ───────────────────────────────────────────
@@ -634,7 +831,10 @@ def run_annotation(
     """
     result = AnnotationEngineResult()
 
-    # 1. Read all raw variants
+    # 1. Read all raw variants. ``source`` (Plan §10.4b) keys the merged-sample
+    # coverage telemetry under ``S1`` / ``S2`` / ``both`` (Plan §5.6 / §15.1
+    # MRG-09b); unmerged samples carry the empty-string default and the
+    # downstream telemetry branch ignores it.
     with sample_engine.connect() as conn:
         raw_rows = conn.execute(
             sa.select(
@@ -642,6 +842,7 @@ def run_annotation(
                 raw_variants.c.chrom,
                 raw_variants.c.pos,
                 raw_variants.c.genotype,
+                raw_variants.c.source,
             )
         ).fetchall()
 
@@ -662,6 +863,21 @@ def run_annotation(
     # Reuse a single ThreadPoolExecutor across all batches to avoid
     # repeated thread creation/teardown overhead (P4-22 optimization).
     total_written = 0
+
+    # Per-source bucket counts for the Plan §5.6 ``by_source`` payload. Keys
+    # are ``raw_variants.source`` values verbatim (``S1`` / ``S2`` / ``both``
+    # on merged samples; empty string on unmerged). The merged-sample branch
+    # in ``_build_coverage_stats`` reads this dict; the unmerged branch
+    # ignores it and re-derives the single vendor bucket from the rollup
+    # counts so existing test contracts stay unchanged.
+    source_counters: dict[str, dict[str, int]] = {}
+
+    def _bump_source(source: str, key: str) -> None:
+        bucket = source_counters.get(source)
+        if bucket is None:
+            bucket = _zero_source_bucket()
+            source_counters[source] = bucket
+        bucket[key] += 1
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
         for batch_start in range(0, len(raw_rows), batch_size):
@@ -758,6 +974,52 @@ def run_annotation(
             result.timing_gnomad_s += source_timings.get("gnomad", 0.0)
             result.timing_dbnsfp_s += source_timings.get("dbnsfp", 0.0)
 
+            # Snapshot rsid-hit keys before the coord-fallback augments
+            # ``vep_data`` so the per-sample-source bucket counter (Plan §5.6
+            # / §15.1 MRG-09b) can separate rsid hits from coord-fallback hits.
+            vep_rsid_hit_keys = set(vep_data.keys())
+
+            # 5a. VEP coord-fallback for unmatched rsids (Plan §5.1, §5.6).
+            # AncestryDNA's `kgp*` / internal IDs have a known coordinate but
+            # no rsid mapping in the bundle; they resolve here. Runs after the
+            # concurrent futures so gene-phenotype sees the augmented `vep_data`.
+            # Mirrors the future-result error trap: a failing coord lookup
+            # (e.g. a partially-built bundle with no `vep_annotations` table)
+            # must not abort the engine — it logs and continues.
+            if vep_engine is not None:
+                try:
+                    vep_coord_count = _vep_coord_fallback(
+                        batch_rsids,
+                        raw_by_rsid,
+                        vep_engine,
+                        vep_data,
+                        result,
+                    )
+                except Exception as exc:
+                    msg = f"vep coord-fallback lookup failed: {exc}"
+                    logger.warning(
+                        "annotation_source_error",
+                        extra={"source": "vep_coord_fallback", "error": str(exc)},
+                    )
+                    result.errors.append(msg)
+                else:
+                    result.vep_coord_fallback_matched += vep_coord_count
+
+            # Per-source bucket attribution (Plan §5.6 / §15.1 MRG-09b).
+            # For merged samples ``raw.source`` is ``"S1"`` / ``"S2"`` /
+            # ``"both"``; for unmerged samples it is the empty-string default
+            # and the merged-sample branch of ``_build_coverage_stats``
+            # ignores this dict, so the unmerged shape stays unchanged.
+            for raw in batch_rows:
+                rsid = raw.rsid
+                source_value = raw.source or ""
+                if rsid in vep_rsid_hit_keys:
+                    _bump_source(source_value, "vep_bundle_rsid_hits")
+                elif rsid in vep_data:
+                    _bump_source(source_value, "vep_bundle_coord_fallback_hits")
+                else:
+                    _bump_source(source_value, "vep_misses")
+
             # 5b. Gene-phenotype lookup (depends on VEP gene_symbol results)
             gene_phenotype_data: dict[str, dict] = {}
             if vep_data:
@@ -807,7 +1069,21 @@ def run_annotation(
 
     result.rows_written = total_written
 
-    # 9. WAL checkpoint
+    # 9. Coverage telemetry (Plan §5.6). `vep_matched` aggregates both rsid
+    # and (chrom, pos) hits; subtract the coord-fallback subset so the
+    # payload reports each bucket independently. ``source_counters`` carries
+    # the per-``raw_variants.source`` breakdown the merged-sample branch
+    # (Plan §15.1 MRG-09b) needs; unmerged samples ignore it.
+    result.coverage_stats = _build_coverage_stats(
+        sample_engine,
+        registry,
+        total_variants=result.total_variants,
+        vep_rsid_hits=result.vep_matched - result.vep_coord_fallback_matched,
+        vep_coord_fallback_hits=result.vep_coord_fallback_matched,
+        source_counters=source_counters,
+    )
+
+    # 10. WAL checkpoint
     _wal_checkpoint(sample_engine)
 
     logger.info(
@@ -829,6 +1105,7 @@ def run_annotation(
             "timing_gene_phenotype_s": round(result.timing_gene_phenotype_s, 3),
             "timing_merge_s": round(result.timing_merge_s, 3),
             "timing_upsert_s": round(result.timing_upsert_s, 3),
+            "coverage_stats": result.coverage_stats,
         },
     )
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "genomeinsight"
-version = "0.1.0"
+version = "0.2.0"
 description = "Personal genomics analysis platform for 23andMe raw data"
 readme = "README.md"
 license = "MIT"
@@ -43,7 +43,10 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
-    "ruff",
+    # Pinned: ruff's formatter output can change across releases; an exact pin
+    # keeps `ruff format --check` deterministic between local and CI (bump
+    # intentionally + reformat the tree in the same PR).
+    "ruff==0.15.15",
     "mypy",
     "pyyaml",
     "pandas",
@@ -74,4 +77,5 @@ markers = [
     "e2e: marks end-to-end tests",
     "integration: marks integration tests",
     "requires_java: marks tests that need a real Java runtime (skipped when unavailable)",
+    "requires_real_bundle: marks tests that need the real production LAI/VEP bundle on disk (skipped when absent; consumed by the nightly slow-tier workflow)",
 ]

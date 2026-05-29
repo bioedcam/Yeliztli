@@ -56,6 +56,7 @@ import sqlalchemy as sa
 import structlog
 
 from backend.analysis.evidence import assign_cpic_evidence_level
+from backend.analysis.zygosity import is_no_call
 from backend.annotation.cpic import CPIC_GENES
 from backend.annotation.engine import CPIC_BIT
 from backend.db.tables import (
@@ -136,11 +137,9 @@ def _count_alt_alleles(genotype: str, ref: str, alt: str) -> int | None:
         Number of alt alleles (0, 1, or 2), or None if the genotype
         cannot be interpreted (no-call, indel, unexpected bases).
     """
-    if not genotype or len(genotype) < 2:
+    if is_no_call(genotype):
         return None
-
-    # No-call genotypes
-    if genotype in ("--", "00", "DD", "II", "DI", "ID"):
+    if len(genotype) < 2:
         return None
 
     # For indel-type alleles (multi-char ref or alt), array data is unreliable

@@ -327,7 +327,9 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Error: not a regular file: {args.input}", file=sys.stderr)
         sys.exit(1)
 
-    print_stats = args.stats
+    # Auto-emit summary stats to stderr when writing to a file (PR-0z UX),
+    # in addition to the explicit --stats flag. stderr never pollutes the VCF.
+    print_stats = args.stats or args.output is not None
 
     try:
         if args.rsid_catalog:

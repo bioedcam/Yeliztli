@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 import sqlalchemy as sa
 import structlog
 
@@ -40,7 +41,6 @@ from backend.db.tables import (
     cpic_alleles,
     cpic_diplotypes,
     cpic_guidelines,
-    database_versions,
 )
 
 if TYPE_CHECKING:
@@ -400,36 +400,104 @@ def record_cpic_version(
     checksum: str | None = None,
 ) -> None:
     """Insert or update the CPIC version in the database_versions table."""
-    with engine.begin() as conn:
-        existing = conn.execute(
-            sa.select(database_versions.c.db_name).where(database_versions.c.db_name == "cpic")
-        ).first()
+    from backend.db.database_registry import _record_db_version
 
-        now = datetime.now(UTC)
+    _record_db_version(
+        engine,
+        db_name="cpic",
+        version=version,
+        file_size_bytes=file_size_bytes,
+        sha256=checksum,
+        file_path=file_path,
+    )
 
-        if existing:
-            conn.execute(
-                database_versions.update()
-                .where(database_versions.c.db_name == "cpic")
-                .values(
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
+
+def check_cpic_update(
+    reference_engine: sa.Engine,
+    settings: object | None = None,
+    *,
+    timeout: float = 30.0,
+):
+    """Check whether a newer CPIC release is available on GitHub.
+
+    Uses ``pipeline_pins["cpic"]`` from ``bundles/manifest.json`` to locate
+    the GitHub releases-API endpoint (``…/repos/cpicpgx/cpic-data/releases/latest``),
+    then performs an HTTP GET to read the latest release's ``tag_name``.
+    The tag is compared against the recorded value in ``database_versions``;
+    when they differ a :class:`VersionInfo` is returned with the release tag
+    as ``latest_version`` and the first GitHub asset (if any) as the download
+    URL/size. Returns ``None`` when the manifest pin is missing/unreachable,
+    the GitHub API call fails, the payload lacks ``tag_name``, or the
+    recorded version already matches the latest tag.
+
+    Args:
+        reference_engine: Reference DB engine for ``database_versions`` lookup.
+        settings: Accepted for dispatch-signature parity with other
+            ``check_*_update`` functions; unused.
+        timeout: HTTP timeout in seconds for both the manifest fetch and GET.
+
+    Returns:
+        ``VersionInfo`` when the GitHub release tag differs from the recorded
+        version, otherwise ``None``.
+    """
+    del settings  # unused; kept for dispatch-signature parity
+    from backend.db.manifest import get_pipeline_pin
+    from backend.db.update_manager import VersionInfo, get_current_version
+
+    pin = get_pipeline_pin("cpic", timeout=timeout)
+    if pin is None or not pin.url:
+        return None
+
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        ) as client:
+            resp = client.get(
+                pin.url,
+                headers={"Accept": "application/vnd.github.v3+json"},
             )
-        else:
-            conn.execute(
-                database_versions.insert().values(
-                    db_name="cpic",
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as exc:
+        logger.warning("cpic_update_check_failed", error=str(exc))
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    tag_name = payload.get("tag_name")
+    if not isinstance(tag_name, str) or not tag_name:
+        return None
+
+    current = get_current_version(reference_engine, "cpic")
+    if current is not None and current == tag_name:
+        return None
+
+    download_url = pin.url
+    download_size = 0
+    assets = payload.get("assets")
+    if isinstance(assets, list) and assets:
+        first = assets[0]
+        if isinstance(first, dict):
+            asset_url = first.get("browser_download_url")
+            if isinstance(asset_url, str) and asset_url:
+                download_url = asset_url
+            asset_size = first.get("size")
+            if isinstance(asset_size, int):
+                download_size = asset_size
+
+    release_date: str | None = None
+    published_at = payload.get("published_at")
+    if isinstance(published_at, str) and len(published_at) >= 10:
+        release_date = published_at[:10]
+
+    return VersionInfo(
+        db_name="cpic",
+        latest_version=tag_name,
+        download_url=download_url,
+        download_size_bytes=download_size,
+        release_date=release_date,
+    )
 
 
 def _compute_sha256(path: Path) -> str:
@@ -517,7 +585,18 @@ def download_and_load_cpic(
     This is the build-mode entry point called by the setup wizard's
     database download dispatcher. CPIC data ships as bundled CSVs
     rather than requiring an upstream download.
+
+    The recorded version is the CPIC release tag the bundled CSVs were
+    built from, taken from ``pipeline_pins["cpic"].last_known_version`` in
+    ``bundles/manifest.json`` — the same release tag :func:`check_cpic_update`
+    compares the GitHub-latest ``tag_name`` against. Sourcing it from the
+    manifest (rather than a hardcoded literal) lets the equality check
+    succeed once the pin carries a real tag, and keeps the version stamp in
+    sync with the manifest source of truth. Falls back to ``"bundled"`` only
+    when the manifest pin is missing or unreachable.
     """
+    from backend.db.manifest import get_pipeline_pin
+
     alleles_csv = CPIC_DATA_DIR / "cpic_alleles.csv"
     diplotypes_csv = CPIC_DATA_DIR / "cpic_diplotypes.csv"
     guidelines_csv = CPIC_DATA_DIR / "cpic_guidelines.csv"
@@ -525,8 +604,11 @@ def download_and_load_cpic(
     if download_progress is not None:
         download_progress(50, 100)  # signal "download" half-done (bundled)
 
+    pin = get_pipeline_pin("cpic", timeout=timeout)
+    bundled_version = pin.last_known_version if pin and pin.last_known_version else "bundled"
+
     stats = load_cpic_from_csvs(
-        alleles_csv, diplotypes_csv, guidelines_csv, engine, version="bundled"
+        alleles_csv, diplotypes_csv, guidelines_csv, engine, version=bundled_version
     )
 
     if download_progress is not None:

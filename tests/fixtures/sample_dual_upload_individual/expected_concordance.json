@@ -1,0 +1,248 @@
+{
+  "$schema": "internal — hand-curated dual-upload fixture concordance gold standard",
+  "description": "Plan §16.1 MRG-08 dual-upload fixture. Pairs 23andme.txt (S1) with ancestrydna.txt (S2) for one simulated individual. Genotypes are synthetic — no real user data. Bucket counts are the gold standard for merge concordance assertions in steps 76+.",
+  "source_order": ["23andme", "ancestrydna"],
+  "source_vendors": {"S1": "23andme", "S2": "ancestrydna"},
+  "concordance_summary": {
+    "match": 5,
+    "filled_nocall": 2,
+    "discordant": 4,
+    "unique_S1": 4,
+    "unique_S2": 4,
+    "collapsed_rsid": 2
+  },
+  "total_merged_loci": 19,
+  "row_count_invariant": "match + filled_nocall + discordant + unique_S1 + unique_S2 == total_merged_loci (Plan §10.4(c))",
+  "collapsed_rsid_note": "collapsed_rsid is an additive marker, not a primary partition (Plan §10.4(c)). Each collapsed locus is also counted in exactly one of {match, filled_nocall, discordant}.",
+  "loci": [
+    {
+      "chrom": "1",
+      "pos": 100000,
+      "s1_rsid": "rs1001",
+      "s2_rsid": "rs1001",
+      "s1_genotype": "AA",
+      "s2_genotype": "AA",
+      "concordance": "match",
+      "source": "both",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "1",
+      "pos": 200000,
+      "s1_rsid": "rs1002",
+      "s2_rsid": "rs1002",
+      "s1_genotype": "AG",
+      "s2_genotype": "AG",
+      "concordance": "match",
+      "source": "both",
+      "collapsed_rsid": false,
+      "note": "S2 ships allele1=G, allele2=A; parser canonicalizes sorted-pair → 'AG'."
+    },
+    {
+      "chrom": "1",
+      "pos": 300000,
+      "s1_rsid": "rs1003",
+      "s2_rsid": "rs1003",
+      "s1_genotype": "CC",
+      "s2_genotype": "CC",
+      "concordance": "match",
+      "source": "both",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "1",
+      "pos": 400000,
+      "s1_rsid": "rs1004",
+      "s2_rsid": "rs1004",
+      "s1_genotype": "AG",
+      "s2_genotype": "--",
+      "concordance": "filled_nocall",
+      "source": "S1",
+      "collapsed_rsid": false,
+      "note": "S2 ships '0 0' → parser canonicalizes to '--'. S1 supplies the call."
+    },
+    {
+      "chrom": "1",
+      "pos": 500000,
+      "s1_rsid": "rs1005",
+      "s2_rsid": "rs1005",
+      "s1_genotype": "--",
+      "s2_genotype": "CC",
+      "concordance": "filled_nocall",
+      "source": "S2",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "1",
+      "pos": 600000,
+      "s1_rsid": "rs1006",
+      "s2_rsid": "rs1006",
+      "s1_genotype": "AA",
+      "s2_genotype": "AG",
+      "concordance": "discordant",
+      "collapsed_rsid": false,
+      "strategy_outcomes": {
+        "flag_only": {"genotype": "??", "discordant_alt_genotype": "S1=AA;S2=AG", "source": "both"},
+        "prefer_23andme": {"genotype": "AA", "discordant_alt_genotype": "S2=AG", "source": "both"},
+        "prefer_ancestrydna": {"genotype": "AG", "discordant_alt_genotype": "S1=AA", "source": "both"}
+      }
+    },
+    {
+      "chrom": "1",
+      "pos": 700000,
+      "s1_rsid": "rs1007",
+      "s2_rsid": "rs1007",
+      "s1_genotype": "CT",
+      "s2_genotype": "TT",
+      "concordance": "discordant",
+      "collapsed_rsid": false,
+      "strategy_outcomes": {
+        "flag_only": {"genotype": "??", "discordant_alt_genotype": "S1=CT;S2=TT", "source": "both"},
+        "prefer_23andme": {"genotype": "CT", "discordant_alt_genotype": "S2=TT", "source": "both"},
+        "prefer_ancestrydna": {"genotype": "TT", "discordant_alt_genotype": "S1=CT", "source": "both"}
+      }
+    },
+    {
+      "chrom": "2",
+      "pos": 100000,
+      "s1_rsid": "rs1008",
+      "s2_rsid": "rs1008",
+      "s1_genotype": "GG",
+      "s2_genotype": "GG",
+      "concordance": "match",
+      "source": "both",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "2",
+      "pos": 200000,
+      "s1_rsid": "rs1009",
+      "s2_rsid": "rs1009",
+      "s1_genotype": "AC",
+      "s2_genotype": "CT",
+      "concordance": "discordant",
+      "collapsed_rsid": false,
+      "strategy_outcomes": {
+        "flag_only": {"genotype": "??", "discordant_alt_genotype": "S1=AC;S2=CT", "source": "both"},
+        "prefer_23andme": {"genotype": "AC", "discordant_alt_genotype": "S2=CT", "source": "both"},
+        "prefer_ancestrydna": {"genotype": "CT", "discordant_alt_genotype": "S1=AC", "source": "both"}
+      }
+    },
+    {
+      "chrom": "3",
+      "pos": 1000,
+      "s1_rsid": "rs1010",
+      "s2_rsid": "rs2010",
+      "s1_genotype": "AA",
+      "s2_genotype": "AA",
+      "concordance": "match",
+      "source": "both",
+      "collapsed_rsid": true,
+      "rsid_choice_note": "Different rsids at same coord → Plan §10.2 step 2 tiebreaker fires. Winner depends on VEP bundle membership; if neither present, S1's rs1010 wins by convention. alt_rsid carries the loser."
+    },
+    {
+      "chrom": "3",
+      "pos": 2000,
+      "s1_rsid": "rs1011",
+      "s2_rsid": "rs2011",
+      "s1_genotype": "AT",
+      "s2_genotype": "TT",
+      "concordance": "discordant",
+      "collapsed_rsid": true,
+      "rsid_choice_note": "Different rsids at same coord → Plan §10.2 step 2 tiebreaker fires. Winner depends on VEP bundle membership; if neither present, S1's rs1011 wins by convention. alt_rsid carries the loser.",
+      "strategy_outcomes": {
+        "flag_only": {"genotype": "??", "discordant_alt_genotype": "S1=AT;S2=TT", "source": "both"},
+        "prefer_23andme": {"genotype": "AT", "discordant_alt_genotype": "S2=TT", "source": "both"},
+        "prefer_ancestrydna": {"genotype": "TT", "discordant_alt_genotype": "S1=AT", "source": "both"}
+      }
+    },
+    {
+      "chrom": "1",
+      "pos": 800000,
+      "s1_rsid": "rs1012",
+      "s2_rsid": null,
+      "s1_genotype": "AA",
+      "s2_genotype": null,
+      "concordance": "unique",
+      "source": "S1",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "4",
+      "pos": 1000,
+      "s1_rsid": "rs1013",
+      "s2_rsid": null,
+      "s1_genotype": "CG",
+      "s2_genotype": null,
+      "concordance": "unique",
+      "source": "S1",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "4",
+      "pos": 2000,
+      "s1_rsid": "rs1014",
+      "s2_rsid": null,
+      "s1_genotype": "TT",
+      "s2_genotype": null,
+      "concordance": "unique",
+      "source": "S1",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "4",
+      "pos": 3000,
+      "s1_rsid": "rs1015",
+      "s2_rsid": null,
+      "s1_genotype": "AA",
+      "s2_genotype": null,
+      "concordance": "unique",
+      "source": "S1",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "5",
+      "pos": 1000,
+      "s1_rsid": null,
+      "s2_rsid": "rs2012",
+      "s1_genotype": null,
+      "s2_genotype": "CC",
+      "concordance": "unique",
+      "source": "S2",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "5",
+      "pos": 2000,
+      "s1_rsid": null,
+      "s2_rsid": "rs2013",
+      "s1_genotype": null,
+      "s2_genotype": "AT",
+      "concordance": "unique",
+      "source": "S2",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "5",
+      "pos": 3000,
+      "s1_rsid": null,
+      "s2_rsid": "rs2014",
+      "s1_genotype": null,
+      "s2_genotype": "GG",
+      "concordance": "unique",
+      "source": "S2",
+      "collapsed_rsid": false
+    },
+    {
+      "chrom": "5",
+      "pos": 4000,
+      "s1_rsid": null,
+      "s2_rsid": "rs2015",
+      "s1_genotype": null,
+      "s2_genotype": "CT",
+      "concordance": "unique",
+      "source": "S2",
+      "collapsed_rsid": false
+    }
+  ]
+}

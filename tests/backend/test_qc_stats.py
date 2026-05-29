@@ -81,16 +81,52 @@ class TestClassifyGenotype:
         assert _classify_genotype("T") == "hom"
 
     def test_deletion_d(self):
+        # Single-char haploid call: still hom (not a no-call sentinel).
         assert _classify_genotype("D") == "hom"
 
     def test_insertion_i(self):
+        # Single-char haploid call: still hom (not a no-call sentinel).
         assert _classify_genotype("I") == "hom"
 
-    def test_heterozygous_di(self):
-        assert _classify_genotype("DI") == "het"
+    # ── Step 62 / Plan §11.3 reclassification: indel codes + AncestryDNA "00"
+    # ── now bucket into nocall rather than het/hom. This is the single QC
+    # ── site held to a non-byte-identical contract.
 
-    def test_heterozygous_id(self):
-        assert _classify_genotype("ID") == "het"
+    def test_indel_di_is_nocall(self):
+        # Pre-Step-62: "het". Now bucketed as nocall via is_no_call().
+        assert _classify_genotype("DI") == "nocall"
+
+    def test_indel_id_is_nocall(self):
+        # Pre-Step-62: "het". Now bucketed as nocall via is_no_call().
+        assert _classify_genotype("ID") == "nocall"
+
+    def test_indel_dd_is_nocall(self):
+        # Pre-Step-62: "hom". Now bucketed as nocall via is_no_call().
+        assert _classify_genotype("DD") == "nocall"
+
+    def test_indel_ii_is_nocall(self):
+        # Pre-Step-62: "hom". Now bucketed as nocall via is_no_call().
+        assert _classify_genotype("II") == "nocall"
+
+    def test_ancestrydna_double_zero_is_nocall(self):
+        # AncestryDNA's no-call leakage sentinel — Pre-Step-62: "het".
+        assert _classify_genotype("00") == "nocall"
+
+    def test_single_zero_is_nocall(self):
+        # Legacy single-allele zero — Pre-Step-62: "hom" (single char).
+        assert _classify_genotype("0") == "nocall"
+
+    def test_single_dash_is_nocall(self):
+        # Haploid 23andMe no-call on X/Y for XY individuals — Pre-Step-62: "hom".
+        assert _classify_genotype("-") == "nocall"
+
+    def test_merge_ambiguity_sentinel_is_nocall(self):
+        # Step 65 flag_only merge sentinel — must be transparent to QC stats.
+        assert _classify_genotype("??") == "nocall"
+
+    def test_none_is_nocall(self):
+        # Defensive: helper tolerates None even though SELECT shouldn't return it.
+        assert _classify_genotype(None) == "nocall"
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -16,15 +16,20 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, samples
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/analysis/skin", tags=["skin"])
+router = APIRouter(
+    prefix="/analysis/skin",
+    tags=["skin"],
+    dependencies=[Depends(require_fresh_sample)],
+)
 
 
 # ── Response models ──────────────────────────────────────────────────

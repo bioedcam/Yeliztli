@@ -16,9 +16,10 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, samples
 from backend.disclaimers import (
@@ -181,7 +182,7 @@ def get_carrier_disclaimer() -> CarrierDisclaimerResponse:
     )
 
 
-@router.get("/variants")
+@router.get("/variants", dependencies=[Depends(require_fresh_sample)])
 def list_carrier_variants(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CarrierVariantsListResponse:
@@ -200,7 +201,7 @@ def list_carrier_variants(
     return CarrierVariantsListResponse(items=items, total=len(items), genes_with_findings=genes)
 
 
-@router.get("/gene/{gene_symbol}")
+@router.get("/gene/{gene_symbol}", dependencies=[Depends(require_fresh_sample)])
 def carrier_gene_detail(
     gene_symbol: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -216,7 +217,7 @@ def carrier_gene_detail(
     return CarrierVariantsListResponse(items=items, total=len(items), genes_with_findings=genes)
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run_carrier_analysis(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CarrierRunResponse:

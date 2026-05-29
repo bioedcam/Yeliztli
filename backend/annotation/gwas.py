@@ -37,7 +37,7 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
-from backend.db.tables import database_versions, gwas_associations
+from backend.db.tables import gwas_associations
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -719,38 +719,109 @@ def record_gwas_version(
     checksum: str | None = None,
 ) -> None:
     """Insert or update the GWAS Catalog version in database_versions."""
-    with engine.begin() as conn:
-        existing = conn.execute(
-            sa.select(database_versions.c.db_name).where(
-                database_versions.c.db_name == "gwas_catalog"
-            )
-        ).first()
+    from backend.db.database_registry import _record_db_version
 
-        now = datetime.now(UTC)
+    _record_db_version(
+        engine,
+        db_name="gwas_catalog",
+        version=version,
+        file_size_bytes=file_size_bytes,
+        sha256=checksum,
+        file_path=file_path,
+    )
 
-        if existing:
-            conn.execute(
-                database_versions.update()
-                .where(database_versions.c.db_name == "gwas_catalog")
-                .values(
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
-        else:
-            conn.execute(
-                database_versions.insert().values(
-                    db_name="gwas_catalog",
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
+
+def _parse_last_modified_version(last_modified: str | None) -> str | None:
+    """Parse an HTTP ``Last-Modified`` header into a ``YYYYMMDD`` version string.
+
+    Returns ``None`` when the header is absent or cannot be parsed. Shared by
+    :func:`check_gwas_update` (remote version on read) and
+    :func:`download_and_load_gwas` (recorded version on write) so both sides use
+    the same source and an identical date format.
+    """
+    if not last_modified:
+        return None
+    from email.utils import parsedate_to_datetime
+
+    try:
+        return parsedate_to_datetime(last_modified).strftime("%Y%m%d")
+    except (TypeError, ValueError) as exc:
+        logger.warning("gwas_last_modified_parse_failed", error=str(exc))
+        return None
+
+
+def check_gwas_update(
+    reference_engine: sa.Engine,
+    settings: object | None = None,
+    *,
+    timeout: float = 30.0,
+):
+    """Check whether the GWAS Catalog release pinned in the manifest is newer than installed.
+
+    Uses ``pipeline_pins["gwas_catalog"]`` from ``bundles/manifest.json`` as
+    the authoritative source for the latest URL, then performs an HTTP HEAD
+    on the pinned URL. The EBI GWAS Catalog publishes a rolling "latest"
+    archive without a static release tag, so the remote version is derived
+    from the response's ``Last-Modified`` header (formatted YYYYMMDD to
+    match :func:`download_and_load_gwas`'s recorded value). The
+    ``Content-Length`` response header populates the download-size estimate
+    used by the bandwidth-window check. Returns ``None`` when the manifest
+    pin is missing/unreachable, the HEAD call fails, ``Last-Modified`` is
+    absent, or the recorded version is the same as or newer than the remote.
+
+    Args:
+        reference_engine: Reference DB engine for ``database_versions`` lookup.
+        settings: Accepted for dispatch-signature parity with other
+            ``check_*_update`` functions; unused.
+        timeout: HTTP timeout in seconds for both the manifest fetch and HEAD.
+
+    Returns:
+        ``VersionInfo`` when the remote ``Last-Modified`` date is newer than
+        the recorded version, otherwise ``None``.
+    """
+    del settings  # unused; kept for dispatch-signature parity
+    from backend.db.manifest import get_pipeline_pin
+    from backend.db.update_manager import VersionInfo, get_current_version
+
+    pin = get_pipeline_pin("gwas_catalog", timeout=timeout)
+    if pin is None or not pin.url:
+        return None
+
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        ) as client:
+            resp = client.head(pin.url)
+            resp.raise_for_status()
+            last_modified = resp.headers.get("Last-Modified", "")
+            content_length = resp.headers.get("Content-Length")
+    except Exception as exc:
+        logger.warning("gwas_update_check_failed", error=str(exc))
+        return None
+
+    remote_version = _parse_last_modified_version(last_modified)
+    if remote_version is None:
+        return None
+
+    current = get_current_version(reference_engine, "gwas_catalog")
+    if current is not None and current >= remote_version:
+        return None
+
+    download_size = 0
+    if content_length:
+        try:
+            download_size = int(content_length)
+        except ValueError:
+            download_size = 0
+
+    return VersionInfo(
+        db_name="gwas_catalog",
+        latest_version=remote_version,
+        download_url=pin.url,
+        download_size_bytes=download_size,
+        release_date=remote_version,
+    )
 
 
 # ── Download ──────────────────────────────────────────────────────────────
@@ -762,6 +833,7 @@ def download_gwas_catalog(
     url: str = GWAS_CATALOG_URL,
     progress_callback: Callable[[int, int | None], None] | None = None,
     timeout: float = 600.0,
+    meta: dict | None = None,
 ) -> Path:
     """Download the GWAS Catalog associations from EBI FTP.
 
@@ -773,6 +845,11 @@ def download_gwas_catalog(
         url: Override URL (useful for testing).
         progress_callback: Called with (bytes_downloaded, total_bytes).
         timeout: HTTP request timeout in seconds.
+        meta: Optional mutable dict populated with response metadata. When the
+            server sends a ``Last-Modified`` header, ``meta["version"]`` is set
+            to the parsed ``YYYYMMDD`` string so callers can record the same
+            version :func:`check_gwas_update` compares against — captured from
+            the existing download response, with no extra request.
 
     Returns:
         Path to the extracted TSV file.
@@ -791,6 +868,13 @@ def download_gwas_catalog(
         ) as client:
             with client.stream("GET", url) as response:
                 response.raise_for_status()
+
+                if meta is not None:
+                    remote_version = _parse_last_modified_version(
+                        response.headers.get("Last-Modified")
+                    )
+                    if remote_version:
+                        meta["version"] = remote_version
 
                 total_bytes: int | None = None
                 content_length = response.headers.get("Content-Length")
@@ -840,11 +924,13 @@ def download_and_load_gwas(
 
     Uses streaming parse + batch insert to keep memory usage low.
     """
+    meta: dict = {}
     tsv_path = download_gwas_catalog(
         dest_dir,
         url=url,
         progress_callback=download_progress,
         timeout=timeout,
+        meta=meta,
     )
 
     sha256 = _compute_sha256(tsv_path)
@@ -853,7 +939,12 @@ def download_and_load_gwas(
     stats = load_gwas_from_iter(row_iter, engine)
     stats.sha256 = sha256
 
-    version = datetime.now(UTC).strftime("%Y%m%d")
+    # Record the upstream Last-Modified date (YYYYMMDD), captured from the
+    # download response above, so the recorded version matches the same
+    # source/format check_gwas_update compares against. The EBI "latest" archive
+    # has no static release tag. Fall back to the install date only when the
+    # server did not provide a usable Last-Modified header.
+    version = meta.get("version") or datetime.now(UTC).strftime("%Y%m%d")
     record_gwas_version(
         engine,
         version=version,

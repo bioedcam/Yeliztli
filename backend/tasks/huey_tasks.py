@@ -6,6 +6,7 @@ In test/dev mode, immediate=True runs tasks synchronously.
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import structlog
 from huey import SqliteHuey, crontab
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from backend.config import get_settings
 
@@ -154,6 +156,25 @@ class AnnotationCancelledError(Exception):
     """Raised when an annotation job is cancelled by the user."""
 
 
+def _upsert_annotation_state(conn, key: str, value: str) -> None:
+    """Upsert one row into the per-sample ``annotation_state`` kv table.
+
+    The caller owns the transaction so multiple keys can be written atomically
+    (Plan §7.3 — both reserved keys land in one ``engine.begin()`` block).
+    """
+    from backend.db.tables import annotation_state
+
+    stmt = sqlite_insert(annotation_state).values(key=key, value=value)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[annotation_state.c.key],
+        set_={
+            "value": stmt.excluded.value,
+            "updated_at": datetime.now(UTC),
+        },
+    )
+    conn.execute(stmt)
+
+
 def _get_sample_db_path(sample_id: int) -> str:
     """Look up the db_path for a sample from the samples table."""
     import sqlalchemy as sa
@@ -194,7 +215,7 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
         sample_db_full = registry.settings.data_dir / db_path
         sample_engine = registry.get_sample_engine(sample_db_full)
 
-        _update_job(job_id, status="running", message="Starting annotation")
+        _update_job(job_id, status="running", message="Annotating…")
 
         def progress_callback(variants_done: int, total: int) -> None:
             if _is_job_cancelled(job_id):
@@ -227,7 +248,7 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
             job_id,
             status="running",
             progress_pct=95.0,
-            message="Running analysis modules...",
+            message="Analyzing…",
         )
         try:
             from backend.analysis.run_all import run_all_analyses
@@ -252,12 +273,36 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
                     "some_analysis_modules_failed",
                     extra={"job_id": job_id, "failed_modules": errors},
                 )
+
+            # Plan §7.3: success path — upsert both reserved keys atomically so
+            # the staleness gate can lift only when annotated_variants AND
+            # findings are fresh. A raise from run_all_analyses bypasses this
+            # block via the except clause below, leaving annotation_state
+            # untouched so the gate stays up.
+            bundle_version = result.coverage_stats.get("bundle_version") or "v1.0.0"
+            with sample_engine.begin() as conn:
+                _upsert_annotation_state(conn, "vep_bundle_version", bundle_version)
+                _upsert_annotation_state(
+                    conn,
+                    "annotation_bundle_coverage_json",
+                    json.dumps(result.coverage_stats),
+                )
+            logger.info(
+                "annotation_state_upserted",
+                extra={
+                    "job_id": job_id,
+                    "sample_id": sample_id,
+                    "vep_bundle_version": bundle_version,
+                },
+            )
         except Exception:
             logger.exception(
                 "analysis_modules_failed",
                 extra={"job_id": job_id, "sample_id": sample_id},
             )
-            # Non-fatal: annotation succeeded, analysis is best-effort
+            # Non-fatal: annotation succeeded, analysis is best-effort.
+            # annotation_state is NOT upserted — the gate stays up so the user
+            # can retry via the re-annotation banner.
 
         # Generate SVGs for all findings (post-analysis step)
         _update_job(

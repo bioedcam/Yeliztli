@@ -37,3 +37,12 @@ export interface IngestProgress {
   message: string
   error: string | null
 }
+
+/** Merged sample that lists another sample in its merge_provenance sources
+ * (AncestryDNA Plan §10.8 / Step 66). Surfaced by
+ * ``GET /api/samples/{id}/merged-children`` to drive the delete-cascade
+ * confirmation. */
+export interface MergedChild {
+  id: number
+  name: string
+}

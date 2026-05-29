@@ -1,12 +1,14 @@
 /** Tests for Update Manager Settings sub-page (P4-18, T4-22v). */
 
 import type { ReactNode } from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import Settings from '@/pages/Settings'
-import UpdateManager from '@/components/settings/UpdateManager'
+import UpdateManager, {
+  isOutsideBandwidthWindow,
+} from '@/components/settings/UpdateManager'
 
 // ── Mocks ────────────────────────────────────────────────────────────
 
@@ -109,6 +111,7 @@ function setupFetchMocks(options: {
   prompts?: unknown[]
   triggerResponse?: unknown
   autoUpdateResponse?: unknown
+  appUpdate?: unknown
 } = {}) {
   mockFetch.mockImplementation((url: string, init?: RequestInit) => {
     if (typeof url === 'string') {
@@ -133,14 +136,15 @@ function setupFetchMocks(options: {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({
-            update_available: false,
-            current_version: '0.1.0',
-            latest_version: '0.1.0',
-            release_url: null,
-            release_notes: null,
-            error: null,
-          }),
+          json: async () =>
+            options.appUpdate ?? {
+              update_available: false,
+              current_version: '0.1.0',
+              latest_version: '0.1.0',
+              release_url: null,
+              release_notes: null,
+              error: null,
+            },
         })
       if (url.includes('/api/updates/status'))
         return Promise.resolve(mockStatusResponse(options.statuses))
@@ -517,5 +521,294 @@ describe('Trigger Update', () => {
         }),
       )
     })
+  })
+})
+
+// ── Bundle build_date display (Step 30) ──────────────────────────────
+
+describe('Bundle build_date rendering', () => {
+  it('renders combined version · build_date string from version_display', async () => {
+    setupFetchMocks({
+      statuses: [
+        {
+          db_name: 'lai_bundle',
+          display_name: 'LAI bundle',
+          current_version: 'v1.1',
+          version_display: 'v1.1 · 2026-04-07',
+          downloaded_at: '2026-04-07T00:00:00',
+          auto_update: false,
+          update_available: false,
+        },
+      ],
+    })
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText('v1.1 · 2026-04-07')).toBeInTheDocument()
+  })
+})
+
+// ── App version row (Step 30) ────────────────────────────────────────
+
+describe('App version row', () => {
+  it('renders the GenomeInsight row with current version', async () => {
+    setupFetchMocks({
+      appUpdate: {
+        update_available: false,
+        current_version: '0.1.0',
+        latest_version: '0.1.0',
+        release_url: null,
+        release_notes: null,
+        error: null,
+      },
+    })
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    const row = await screen.findByTestId('app-version-row')
+    expect(row).toHaveTextContent('GenomeInsight')
+    expect(row).toHaveTextContent('v0.1.0')
+    expect(row).toHaveTextContent('Up to date')
+  })
+
+  it('shows release notes link when an update is available', async () => {
+    setupFetchMocks({
+      appUpdate: {
+        update_available: true,
+        current_version: '0.1.0',
+        latest_version: '0.2.0',
+        release_url: 'https://github.com/bioedcam/GenomeInsight/releases/v0.2.0',
+        release_notes: 'New features',
+        error: null,
+      },
+    })
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    const row = await screen.findByTestId('app-version-row')
+    expect(row).toHaveTextContent('v0.2.0')
+    const link = row.querySelector('a')
+    expect(link).not.toBeNull()
+    expect(link).toHaveAttribute(
+      'href',
+      'https://github.com/bioedcam/GenomeInsight/releases/v0.2.0',
+    )
+    expect(link).toHaveTextContent('Release notes')
+  })
+})
+
+// ── Bandwidth window helper (Step 30) ────────────────────────────────
+
+describe('isOutsideBandwidthWindow', () => {
+  it('returns false when window is null/undefined/empty', () => {
+    expect(isOutsideBandwidthWindow(null)).toBe(false)
+    expect(isOutsideBandwidthWindow(undefined)).toBe(false)
+    expect(isOutsideBandwidthWindow('')).toBe(false)
+  })
+
+  it('treats malformed window as no window (returns false)', () => {
+    expect(isOutsideBandwidthWindow('bogus')).toBe(false)
+    expect(isOutsideBandwidthWindow('02:00')).toBe(false)
+  })
+
+  it('returns false when current time is inside a simple window', () => {
+    const now = new Date('2026-05-13T03:00:00')
+    expect(isOutsideBandwidthWindow('02:00-06:00', now)).toBe(false)
+  })
+
+  it('returns true when current time is outside a simple window', () => {
+    const now = new Date('2026-05-13T15:00:00')
+    expect(isOutsideBandwidthWindow('02:00-06:00', now)).toBe(true)
+  })
+
+  it('handles windows that wrap midnight', () => {
+    const lateNight = new Date('2026-05-13T23:30:00')
+    const morning = new Date('2026-05-13T05:30:00')
+    const midday = new Date('2026-05-13T13:00:00')
+    expect(isOutsideBandwidthWindow('22:00-06:00', lateNight)).toBe(false)
+    expect(isOutsideBandwidthWindow('22:00-06:00', morning)).toBe(false)
+    expect(isOutsideBandwidthWindow('22:00-06:00', midday)).toBe(true)
+  })
+})
+
+// ── Outside-window tooltip + Force update (Step 30) ──────────────────
+
+describe('Outside-window tooltip and Force update', () => {
+  beforeEach(() => {
+    // Only fake the Date constructor — leaving setTimeout/setInterval real
+    // so React Query's internal scheduling keeps working.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // 13:00 local — outside an 02:00-06:00 window
+    vi.setSystemTime(new Date('2026-05-13T13:00:00'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('annotates "Update now" with an outside-window tooltip', async () => {
+    setupFetchMocks({
+      statuses: [
+        {
+          db_name: 'clinvar',
+          display_name: 'ClinVar',
+          current_version: '20260315',
+          version_display: 'Mar 2026',
+          downloaded_at: '2026-03-15T00:00:00',
+          auto_update: true,
+          update_available: false,
+          update_download_window: '02:00-06:00',
+        },
+      ],
+      available: [
+        {
+          db_name: 'clinvar',
+          latest_version: '20260320',
+          download_size_bytes: 5242880,
+          release_date: '2026-03-20',
+        },
+      ],
+    })
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    const updateBtn = await screen.findByText('Update now')
+    expect(updateBtn.closest('button')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Outside bandwidth window'),
+    )
+    // The window string uses an en-dash for display
+    expect(updateBtn.closest('button')!.getAttribute('title')).toContain('02:00–06:00')
+  })
+
+  it('does not show the tooltip when inside the window', async () => {
+    vi.setSystemTime(new Date('2026-05-13T03:00:00'))
+    setupFetchMocks({
+      statuses: [
+        {
+          db_name: 'clinvar',
+          display_name: 'ClinVar',
+          current_version: '20260315',
+          version_display: 'Mar 2026',
+          downloaded_at: '2026-03-15T00:00:00',
+          auto_update: true,
+          update_available: false,
+          update_download_window: '02:00-06:00',
+        },
+      ],
+      available: [
+        {
+          db_name: 'clinvar',
+          latest_version: '20260320',
+          download_size_bytes: 5242880,
+          release_date: '2026-03-20',
+        },
+      ],
+    })
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    const updateBtn = await screen.findByText('Update now')
+    expect(updateBtn.closest('button')?.getAttribute('title') ?? '').toBe('')
+    // Force button is not present inside the window
+    expect(screen.queryByText('Force')).not.toBeInTheDocument()
+  })
+
+  it('Force update calls trigger with force=true (after confirm)', async () => {
+    setupFetchMocks({
+      statuses: [
+        {
+          db_name: 'clinvar',
+          display_name: 'ClinVar',
+          current_version: '20260315',
+          version_display: 'Mar 2026',
+          downloaded_at: '2026-03-15T00:00:00',
+          auto_update: true,
+          update_available: false,
+          update_download_window: '02:00-06:00',
+        },
+      ],
+      available: [
+        {
+          db_name: 'clinvar',
+          latest_version: '20260320',
+          download_size_bytes: 5242880,
+          release_date: '2026-03-20',
+        },
+      ],
+      triggerResponse: {
+        job_id: 'job-force-1',
+        db_name: 'clinvar',
+        message: 'Update queued',
+      },
+    })
+
+    const confirmSpy = vi.fn().mockReturnValue(true)
+    vi.stubGlobal('confirm', confirmSpy)
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    const forceBtn = await screen.findByText('Force')
+    fireEvent.click(forceBtn)
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmSpy.mock.calls[0][0]).toContain('Force update bypasses')
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/updates/trigger',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ db_name: 'clinvar', force: true }),
+        }),
+      )
+    })
+
+    // afterEach() calls vi.unstubAllGlobals() so no manual cleanup needed.
+  })
+
+  it('Force update does nothing when the confirm dialog is cancelled', async () => {
+    setupFetchMocks({
+      statuses: [
+        {
+          db_name: 'clinvar',
+          display_name: 'ClinVar',
+          current_version: '20260315',
+          version_display: 'Mar 2026',
+          downloaded_at: '2026-03-15T00:00:00',
+          auto_update: true,
+          update_available: false,
+          update_download_window: '02:00-06:00',
+        },
+      ],
+      available: [
+        {
+          db_name: 'clinvar',
+          latest_version: '20260320',
+          download_size_bytes: 5242880,
+          release_date: '2026-03-20',
+        },
+      ],
+    })
+
+    const confirmSpy = vi.fn().mockReturnValue(false)
+    vi.stubGlobal('confirm', confirmSpy)
+
+    render(<UpdateManager />, { wrapper: createWrapper() })
+
+    const forceBtn = await screen.findByText('Force')
+    fireEvent.click(forceBtn)
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    // No trigger call was made — only the initial fetches
+    const triggerCalls = mockFetch.mock.calls.filter(
+      ([url, init]) =>
+        typeof url === 'string' &&
+        url.includes('/api/updates/trigger') &&
+        (init as RequestInit | undefined)?.method === 'POST',
+    )
+    expect(triggerCalls).toHaveLength(0)
+
+    // afterEach() calls vi.unstubAllGlobals() so no manual cleanup needed.
   })
 })

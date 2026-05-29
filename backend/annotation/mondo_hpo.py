@@ -36,7 +36,7 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
-from backend.db.tables import database_versions, gene_phenotype
+from backend.db.tables import gene_phenotype
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -303,6 +303,25 @@ def _compute_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _parse_last_modified_version(last_modified: str | None) -> str | None:
+    """Parse an HTTP ``Last-Modified`` header into a ``YYYYMMDD`` version string.
+
+    Formats the header exactly the way :func:`check_mondo_hpo_update` does, so
+    the recorded version (captured from the download response) and the
+    update-check comparison stay consistent. Returns ``None`` when the header is
+    absent or unparseable.
+    """
+    if not last_modified:
+        return None
+    from email.utils import parsedate_to_datetime
+
+    try:
+        return parsedate_to_datetime(last_modified).strftime("%Y%m%d")
+    except (TypeError, ValueError) as exc:
+        logger.warning("mondo_hpo_source_version_bad_last_modified", error=str(exc))
+        return None
+
+
 def _wal_checkpoint(engine: sa.Engine) -> None:
     """Run WAL checkpoint if the engine is file-backed."""
     url = str(engine.url)
@@ -320,6 +339,7 @@ def download_file(
     *,
     progress_callback: Callable[[int, int | None], None] | None = None,
     timeout: float = 300.0,
+    meta: dict | None = None,
 ) -> Path:
     """Download a file with streaming and atomic rename.
 
@@ -329,6 +349,10 @@ def download_file(
         filename: Final filename.
         progress_callback: Optional (downloaded, total) callback.
         timeout: HTTP timeout seconds.
+        meta: Optional mutable dict populated with response metadata. When the
+            server sends a ``Last-Modified`` header, ``meta["version"]`` is set
+            to the parsed ``YYYYMMDD`` string (captured from this download
+            response, with no extra request).
 
     Returns:
         Path to the downloaded file.
@@ -346,6 +370,12 @@ def download_file(
         ) as client:
             with client.stream("GET", url) as response:
                 response.raise_for_status()
+                if meta is not None:
+                    source_version = _parse_last_modified_version(
+                        response.headers.get("Last-Modified")
+                    )
+                    if source_version:
+                        meta["version"] = source_version
                 total: int | None = None
                 cl = response.headers.get("Content-Length")
                 if cl:
@@ -430,30 +460,98 @@ def record_mondo_hpo_version(
     checksum: str | None = None,
 ) -> None:
     """Insert or update the MONDO/HPO version in database_versions."""
-    with engine.begin() as conn:
-        existing = conn.execute(
-            sa.select(database_versions.c.db_name).where(
-                database_versions.c.db_name == "mondo_hpo"
-            )
-        ).first()
+    from backend.db.database_registry import _record_db_version
 
-        now = datetime.now(UTC)
-        values = {
-            "version": version,
-            "file_path": file_path,
-            "file_size_bytes": file_size_bytes,
-            "downloaded_at": now,
-            "checksum_sha256": checksum,
-        }
+    _record_db_version(
+        engine,
+        db_name="mondo_hpo",
+        version=version,
+        file_size_bytes=file_size_bytes,
+        sha256=checksum,
+        file_path=file_path,
+    )
 
-        if existing:
-            conn.execute(
-                database_versions.update()
-                .where(database_versions.c.db_name == "mondo_hpo")
-                .values(**values)
-            )
-        else:
-            conn.execute(database_versions.insert().values(db_name="mondo_hpo", **values))
+
+def check_mondo_hpo_update(
+    reference_engine: sa.Engine,
+    settings: object | None = None,
+    *,
+    timeout: float = 30.0,
+):
+    """Check whether the Monarch MONDO/HPO release pinned in the manifest is newer than installed.
+
+    Uses ``pipeline_pins["mondo_hpo"]`` from ``bundles/manifest.json`` as the
+    authoritative source for the latest URL, then performs an HTTP HEAD on
+    the pinned URL. The Monarch Initiative publishes a rolling "latest"
+    gene-disease archive without a static release tag, so the remote version
+    is derived from the response's ``Last-Modified`` header (formatted
+    YYYYMMDD to match :func:`download_and_load_mondo_hpo`'s recorded value).
+    The ``Content-Length`` response header populates the download-size
+    estimate used by the bandwidth-window check. Returns ``None`` when the
+    manifest pin is missing/unreachable, the HEAD call fails,
+    ``Last-Modified`` is absent, or the recorded version is the same as or
+    newer than the remote.
+
+    Args:
+        reference_engine: Reference DB engine for ``database_versions`` lookup.
+        settings: Accepted for dispatch-signature parity with other
+            ``check_*_update`` functions; unused.
+        timeout: HTTP timeout in seconds for both the manifest fetch and HEAD.
+
+    Returns:
+        ``VersionInfo`` when the remote ``Last-Modified`` date is newer than
+        the recorded version, otherwise ``None``.
+    """
+    del settings  # unused; kept for dispatch-signature parity
+    from email.utils import parsedate_to_datetime
+
+    from backend.db.manifest import get_pipeline_pin
+    from backend.db.update_manager import VersionInfo, get_current_version
+
+    pin = get_pipeline_pin("mondo_hpo", timeout=timeout)
+    if pin is None or not pin.url:
+        return None
+
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        ) as client:
+            resp = client.head(pin.url)
+            resp.raise_for_status()
+            last_modified = resp.headers.get("Last-Modified", "")
+            content_length = resp.headers.get("Content-Length")
+    except Exception as exc:
+        logger.warning("mondo_hpo_update_check_failed", error=str(exc))
+        return None
+
+    if not last_modified:
+        return None
+
+    try:
+        remote_version = parsedate_to_datetime(last_modified).strftime("%Y%m%d")
+    except (TypeError, ValueError) as exc:
+        logger.warning("mondo_hpo_update_check_bad_last_modified", error=str(exc))
+        return None
+
+    current = get_current_version(reference_engine, "mondo_hpo")
+    if current is not None and current >= remote_version:
+        return None
+
+    download_size = 0
+    if content_length:
+        try:
+            download_size = int(content_length)
+        except ValueError:
+            download_size = 0
+
+    return VersionInfo(
+        db_name="mondo_hpo",
+        latest_version=remote_version,
+        download_url=pin.url,
+        download_size_bytes=download_size,
+        release_date=remote_version,
+    )
 
 
 def download_and_load_mondo_hpo(
@@ -479,12 +577,14 @@ def download_and_load_mondo_hpo(
         LoadStats with counts and metadata.
     """
     # Download MONDO gene-disease associations
+    mondo_meta: dict = {}
     mondo_path = download_file(
         mondo_url,
         dest_dir,
         "gene_disease.9606.tsv.gz",
         progress_callback=download_progress,
         timeout=timeout,
+        meta=mondo_meta,
     )
 
     # Download HPO genes-to-phenotype
@@ -508,7 +608,12 @@ def download_and_load_mondo_hpo(
     # Checksums and version
     sha256 = _compute_sha256(mondo_path)
     stats.sha256 = sha256
-    stats.version = datetime.now(UTC).strftime("%Y%m%d")
+    # Record the source publication date (Last-Modified, captured from the MONDO
+    # download response above) so the value read by get_current_version is the
+    # same kind of date check_mondo_hpo_update compares against, avoiding false
+    # "already up to date" skips. Fall back to the install date only when the
+    # server did not provide a usable Last-Modified header.
+    stats.version = mondo_meta.get("version") or datetime.now(UTC).strftime("%Y%m%d")
 
     record_mondo_hpo_version(
         engine,

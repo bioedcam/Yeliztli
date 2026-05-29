@@ -25,7 +25,9 @@ from backend.db.connection import reset_registry
 from backend.db.sample_schema import create_sample_tables
 from backend.db.tables import (
     annotated_variants,
+    annotation_state,
     clinvar_variants,
+    database_versions,
     jobs,
     raw_variants,
     reference_metadata,
@@ -372,6 +374,150 @@ class TestRunAnnotationTask:
 
         # Should remain "cancelled", not overwritten to "complete"
         assert row.status in ("cancelled", "running")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Step 10 (Plan §7.3) — deferred annotation_state upsert
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestAnnotationStateGate:
+    """Plan §7.3 — both reserved kv keys are written iff run_all_analyses succeeds.
+
+    Locks the staleness-gate contract:
+      * Success path → both ``vep_bundle_version`` and
+        ``annotation_bundle_coverage_json`` land in one transaction.
+      * Raise from ``run_all_analyses`` → ``annotation_state`` is left
+        untouched, so the gate stays up and the user can retry.
+    """
+
+    def _read_state(self, annotation_env: dict) -> dict[str, str]:
+        from backend.db.connection import get_registry
+
+        registry = get_registry()
+        sample_db = registry.settings.data_dir / "samples" / "sample_1.db"
+        sample_engine = registry.get_sample_engine(sample_db)
+        with sample_engine.connect() as conn:
+            rows = conn.execute(
+                sa.select(annotation_state.c.key, annotation_state.c.value)
+            ).fetchall()
+        return {r.key: r.value for r in rows}
+
+    def _seed_bundle_version(self, annotation_env: dict, version: str) -> None:
+        """Seed reference.db so the engine telemetry surfaces a known bundle version."""
+        from datetime import UTC, datetime
+
+        from backend.db.connection import get_registry
+
+        registry = get_registry()
+        with registry.reference_engine.begin() as conn:
+            conn.execute(
+                database_versions.insert().values(
+                    db_name="vep_bundle",
+                    version=version,
+                    downloaded_at=datetime.now(UTC),
+                )
+            )
+
+    def test_success_path_lifts_gate(self, annotation_env: dict) -> None:
+        """Happy path: both reserved keys are upserted on the success path."""
+        self._seed_bundle_version(annotation_env, "v2.0.0")
+
+        sample_id = annotation_env["sample_id"]
+        job_id = create_annotation_job(sample_id)
+        run_annotation_task.call_local(sample_id, job_id)
+
+        state = self._read_state(annotation_env)
+        assert state.get("vep_bundle_version") == "v2.0.0"
+        coverage_json = state.get("annotation_bundle_coverage_json")
+        assert coverage_json is not None
+        import json as _json
+
+        coverage = _json.loads(coverage_json)
+        assert coverage["bundle_version"] == "v2.0.0"
+        assert coverage["total_variants"] == len(SEED_RAW_VARIANTS)
+        # Plan §5.6 — unmerged sample → single-key by_source with counts that
+        # sum to the top-level rollup. Vendor derivation is exercised in
+        # tests/backend/test_annotation_engine.py; here we only lock the shape.
+        assert isinstance(coverage["by_source"], dict)
+        assert len(coverage["by_source"]) == 1
+        only_source = next(iter(coverage["by_source"].values()))
+        assert only_source["vep_bundle_rsid_hits"] == coverage["vep_bundle_rsid_hits"]
+        assert (
+            only_source["vep_bundle_coord_fallback_hits"]
+            == coverage["vep_bundle_coord_fallback_hits"]
+        )
+        assert only_source["vep_misses"] == coverage["vep_misses"]
+
+    def test_missing_bundle_row_falls_back_to_v1(self, annotation_env: dict) -> None:
+        """Defensive fallback when database_versions has no vep_bundle row."""
+        sample_id = annotation_env["sample_id"]
+        job_id = create_annotation_job(sample_id)
+        run_annotation_task.call_local(sample_id, job_id)
+
+        state = self._read_state(annotation_env)
+        # Plan §7.3 — value is the installed_version (None → "v1.0.0" fallback).
+        assert state.get("vep_bundle_version") == "v1.0.0"
+        assert "annotation_bundle_coverage_json" in state
+
+    def test_raise_from_run_all_analyses_leaves_gate_up(self, annotation_env: dict) -> None:
+        """A raise from run_all_analyses bypasses the upsert (gate stays up)."""
+        from backend.db.connection import get_registry
+
+        self._seed_bundle_version(annotation_env, "v2.0.0")
+
+        # Pre-seed annotation_state with a stale value; the failing run must
+        # leave it untouched so is_sample_stale() still returns True.
+        registry = get_registry()
+        sample_db = registry.settings.data_dir / "samples" / "sample_1.db"
+        sample_engine = registry.get_sample_engine(sample_db)
+        with sample_engine.begin() as conn:
+            conn.execute(
+                annotation_state.insert().values(
+                    key="vep_bundle_version",
+                    value="v1.0.0",
+                )
+            )
+
+        sample_id = annotation_env["sample_id"]
+        job_id = create_annotation_job(sample_id)
+
+        with patch(
+            "backend.analysis.run_all.run_all_analyses",
+            side_effect=RuntimeError("analysis exploded"),
+        ):
+            run_annotation_task.call_local(sample_id, job_id)
+
+        state = self._read_state(annotation_env)
+        # Pre-existing row preserved; no fresh upsert fired.
+        assert state.get("vep_bundle_version") == "v1.0.0"
+        assert "annotation_bundle_coverage_json" not in state
+
+        # Job itself still marks complete — analysis is best-effort (Plan §7.3).
+        with registry.reference_engine.connect() as conn:
+            row = conn.execute(sa.select(jobs).where(jobs.c.job_id == job_id)).fetchone()
+        assert row.status == "complete"
+
+    def test_two_phase_sse_progress_messages(self, annotation_env: dict) -> None:
+        """SSE emits a two-phase progress arc: 'Annotating…' → 'Analyzing…'."""
+        sample_id = annotation_env["sample_id"]
+        job_id = create_annotation_job(sample_id)
+
+        messages: list[str] = []
+        from backend.tasks.huey_tasks import _update_job as _real_update_job
+
+        def capture(jid, *, status, progress_pct=0.0, message="", **kwargs):
+            messages.append(message)
+            _real_update_job(
+                jid, status=status, progress_pct=progress_pct, message=message, **kwargs
+            )
+
+        with patch("backend.tasks.huey_tasks._update_job", side_effect=capture):
+            run_annotation_task.call_local(sample_id, job_id)
+
+        assert "Annotating…" in messages
+        assert "Analyzing…" in messages
+        assert messages.index("Annotating…") < messages.index("Analyzing…")
 
 
 # ═══════════════════════════════════════════════════════════════════════

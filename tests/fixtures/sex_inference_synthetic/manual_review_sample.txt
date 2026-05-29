@@ -1,0 +1,25 @@
+#AncestryDNA raw data download
+#Synthetic fixture for tests/backend/test_validate_sex_thresholds.py — manual_review case.
+#NEVER copied from a real export; every genotype is hand-fabricated to exercise
+#Plan §9.4 manual-review branch: candidate XY on chrX zygosity, chrY non-no-call
+#rate between the default PAR-noise (0.10) and XY-confirm (0.30) thresholds.
+# AncestryDNA array version: V2.0
+rsid	chromosome	position	allele1	allele2
+rs9002001	1	100000	A	G
+rs9002002	1	200000	C	C
+rs9002003	1	300000	T	T
+rs9002101	23	50000000	A	A
+rs9002102	23	60000000	C	C
+rs9002103	23	70000000	G	G
+rs9002104	23	80000000	T	T
+rs9002105	23	90000000	0	0
+rs9002301	24	5000000	A	A
+rs9002302	24	6000000	C	C
+rs9002303	24	7000000	0	0
+rs9002304	24	8000000	0	0
+rs9002305	24	9000000	0	0
+rs9002306	24	10000000	0	0
+rs9002307	24	11000000	0	0
+rs9002308	24	12000000	0	0
+rs9002309	24	13000000	0	0
+rs9002310	24	14000000	0	0

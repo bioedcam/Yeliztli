@@ -15,6 +15,7 @@ import shutil
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -36,6 +37,7 @@ from backend.db.database_registry import (
     get_database_status,
 )
 from backend.db.download_manager import DownloadManager
+from backend.db.manifest import get_bundle_info
 from backend.db.tables import download_session_jobs, download_sessions, jobs
 
 logger = structlog.get_logger(__name__)
@@ -672,6 +674,32 @@ def _run_build(
         )
 
 
+def _apply_manifest_overrides(db_info: DatabaseInfo) -> DatabaseInfo:
+    """Return ``db_info`` with URL/sha256/size from the bundle manifest.
+
+    Only applies when ``db_info.build_mode == "download"`` and
+    ``db_info.sha256 is None`` — i.e. the registry has no integrity hash to
+    enforce. The manifest is the single source of truth for that case.
+
+    Manifest unreachable (``get_bundle_info`` returns ``None``) or no entry
+    for this DB → return ``db_info`` unchanged so registry defaults survive.
+    Empty ``url`` in the manifest also keeps the registry URL.
+    """
+    if db_info.build_mode != "download" or db_info.sha256 is not None:
+        return db_info
+
+    entry = get_bundle_info(db_info.name)
+    if entry is None:
+        return db_info
+
+    return replace(
+        db_info,
+        url=entry.url or db_info.url,
+        sha256=entry.sha256,
+        expected_size_bytes=entry.size_bytes,
+    )
+
+
 def _run_download(
     *,
     dm: DownloadManager,
@@ -686,6 +714,8 @@ def _run_download(
     moves the file from downloads_dir to its final location in data_dir.
     """
     try:
+        db_info = _apply_manifest_overrides(db_info)
+
         # Update job to running
         msg = f"Downloading {db_info.display_name}..."
         _update_job(engine, job_id, status="running", message=msg)

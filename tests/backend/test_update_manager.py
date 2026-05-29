@@ -28,12 +28,14 @@ from backend.db.connection import reset_registry
 from backend.db.sample_schema import create_sample_tables
 from backend.db.tables import (
     annotated_variants,
+    auto_update_settings,
     clinvar_variants,
     database_versions,
     reference_metadata,
     watched_variants,
 )
 from backend.db.update_manager import (
+    AUTO_UPDATE_DEFAULTS,
     BANDWIDTH_WINDOW_THRESHOLD,
     UpdateCheckResult,
     UpdateResult,
@@ -48,10 +50,12 @@ from backend.db.update_manager import (
     format_version_display,
     get_active_prompts,
     get_all_version_stamps,
+    get_auto_update,
     get_current_version,
     get_update_history,
     parse_time_window,
     run_scheduled_update_check,
+    set_auto_update,
     should_download_now,
 )
 
@@ -209,12 +213,149 @@ class TestCheckClinvarUpdate:
 
 
 class TestCheckAllUpdates:
-    def test_returns_result(self, reference_engine):
-        with patch("backend.db.update_manager.check_clinvar_update", return_value=None):
+    """``check_all_updates`` dispatches via ``CHECK_FNS`` (Step 25).
+
+    Each registered callable is invoked uniformly as
+    ``fn(reference_engine, settings, timeout=timeout)``. The aggregated
+    :class:`UpdateCheckResult` must contain every db_name across exactly one
+    of ``available`` / ``up_to_date`` / ``errors``.
+    """
+
+    def _stub_check_fns(self, **overrides):
+        """Build a stub dispatch dict covering every real CHECK_FNS key.
+
+        Each override key replaces the default ``None``-returning stub. Returns
+        a dict suitable for ``patch.dict(CHECK_FNS, …, clear=True)``.
+        """
+        from backend.db.update_manager import CHECK_FNS
+
+        stubs = {name: MagicMock(return_value=None) for name in CHECK_FNS}
+        stubs.update(overrides)
+        return stubs
+
+    def test_returns_update_check_result(self, reference_engine):
+        stubs = self._stub_check_fns()
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
             result = check_all_updates(reference_engine)
 
         assert isinstance(result, UpdateCheckResult)
-        assert "clinvar" in result.up_to_date
+
+    def test_visits_every_db_in_check_fns(self, reference_engine):
+        """Every registered DB must end up in exactly one bucket (no gaps)."""
+        from backend.db.update_manager import CHECK_FNS
+
+        expected = set(CHECK_FNS)
+        stubs = self._stub_check_fns()
+
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
+            result = check_all_updates(reference_engine)
+
+        # All-None stubs → every key in up_to_date, none in available/errors.
+        assert set(result.up_to_date) == expected
+        assert result.available == []
+        assert result.errors == []
+
+        # And each stub was actually called (no key silently skipped).
+        for fn in stubs.values():
+            fn.assert_called_once()
+
+    def test_version_info_lands_in_available(self, reference_engine):
+        info = VersionInfo(
+            db_name="clinvar",
+            latest_version="20260320",
+            download_url="https://example.com/clinvar.vcf.gz",
+            download_size_bytes=30_000_000,
+        )
+        stubs = self._stub_check_fns(clinvar=MagicMock(return_value=info))
+
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
+            result = check_all_updates(reference_engine)
+
+        assert info in result.available
+        assert "clinvar" not in result.up_to_date
+
+    def test_none_lands_in_up_to_date(self, reference_engine):
+        stubs = self._stub_check_fns(gnomad=MagicMock(return_value=None))
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
+            result = check_all_updates(reference_engine)
+
+        assert "gnomad" in result.up_to_date
+
+    def test_exception_lands_in_errors(self, reference_engine):
+        stubs = self._stub_check_fns(dbnsfp=MagicMock(side_effect=RuntimeError("boom")))
+
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
+            result = check_all_updates(reference_engine)
+
+        assert any("dbnsfp: boom" == err for err in result.errors)
+        assert "dbnsfp" not in result.up_to_date
+        # A failing check must not abort the sweep: every other DB still visited.
+        from backend.db.update_manager import CHECK_FNS
+
+        assert set(result.up_to_date) == set(CHECK_FNS) - {"dbnsfp"}
+
+    def test_dispatch_passes_settings_and_timeout(self, reference_engine, tmp_path: Path):
+        settings = _settings_for_test(tmp_path)
+        stub = MagicMock(return_value=None)
+        stubs = self._stub_check_fns(clinvar=stub)
+
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
+            check_all_updates(reference_engine, timeout=12.5, settings=settings)
+
+        stub.assert_called_once_with(reference_engine, settings, timeout=12.5)
+
+    def test_aggregates_mixed_results(self, reference_engine):
+        available_info = VersionInfo(
+            db_name="vep_bundle",
+            latest_version="2026-04-07",
+            download_url="https://example.com/vep_bundle.db",
+            download_size_bytes=400_000_000,
+        )
+        stubs = self._stub_check_fns(
+            vep_bundle=MagicMock(return_value=available_info),
+            gwas_catalog=MagicMock(side_effect=ValueError("api down")),
+        )
+
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
+            result = check_all_updates(reference_engine)
+
+        assert available_info in result.available
+        assert any("gwas_catalog: api down" == err for err in result.errors)
+        # Bucket disjointness: no db_name appears in more than one bucket.
+        seen = set(result.up_to_date) | {v.db_name for v in result.available}
+        for err in result.errors:
+            seen.add(err.split(":", 1)[0])
+        from backend.db.update_manager import CHECK_FNS
+
+        assert seen == set(CHECK_FNS)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -734,6 +875,134 @@ class TestPrecheck:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Auto-update toggle tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestAutoUpdateToggle:
+    """Step 12: get_auto_update / set_auto_update round-trip + fallback."""
+
+    def test_get_falls_back_to_defaults_when_row_missing(self, reference_engine):
+        # No rows in auto_update_settings — fall back to AUTO_UPDATE_DEFAULTS.
+        for db_name, expected in AUTO_UPDATE_DEFAULTS.items():
+            assert get_auto_update(reference_engine, db_name) is expected
+
+    def test_get_unknown_db_defaults_false(self, reference_engine):
+        assert get_auto_update(reference_engine, "no_such_db") is False
+
+    def test_set_inserts_then_get_returns_stored_value(self, reference_engine):
+        # Override default (clinvar default is True → store False).
+        set_auto_update(reference_engine, "clinvar", False)
+        assert get_auto_update(reference_engine, "clinvar") is False
+
+        # Override default (vep_bundle default is False → store True).
+        set_auto_update(reference_engine, "vep_bundle", True)
+        assert get_auto_update(reference_engine, "vep_bundle") is True
+
+    def test_set_updates_existing_row(self, reference_engine):
+        set_auto_update(reference_engine, "gnomad", False)
+        set_auto_update(reference_engine, "gnomad", True)
+        assert get_auto_update(reference_engine, "gnomad") is True
+
+        # Only one row should exist for the key (primary key constraint).
+        with reference_engine.connect() as conn:
+            count = conn.execute(
+                sa.select(sa.func.count())
+                .select_from(auto_update_settings)
+                .where(auto_update_settings.c.db_name == "gnomad")
+            ).scalar_one()
+        assert count == 1
+
+    def test_set_updates_timestamp(self, reference_engine):
+        set_auto_update(reference_engine, "dbnsfp", False)
+        with reference_engine.connect() as conn:
+            first = conn.execute(
+                sa.select(auto_update_settings.c.updated_at).where(
+                    auto_update_settings.c.db_name == "dbnsfp"
+                )
+            ).scalar_one()
+
+        set_auto_update(reference_engine, "dbnsfp", True)
+        with reference_engine.connect() as conn:
+            second = conn.execute(
+                sa.select(auto_update_settings.c.updated_at).where(
+                    auto_update_settings.c.db_name == "dbnsfp"
+                )
+            ).scalar_one()
+
+        assert second >= first
+
+    def test_scheduled_check_honors_stored_toggle(self, reference_engine, tmp_path: Path):
+        """run_scheduled_update_check reads via get_auto_update, not the dict."""
+        settings = _settings_for_test(tmp_path)
+
+        registry = MagicMock()
+        registry.reference_engine = reference_engine
+        registry.settings = settings
+
+        # ClinVar default = True; explicitly disable it via the table.
+        set_auto_update(reference_engine, "clinvar", False)
+
+        update_info = VersionInfo(
+            db_name="clinvar",
+            latest_version="20260320",
+            download_url="https://example.com/clinvar.vcf.gz",
+            download_size_bytes=30_000_000,
+        )
+
+        with (
+            patch(
+                "backend.db.update_manager.check_all_updates",
+                return_value=UpdateCheckResult(available=[update_info]),
+            ),
+            patch(
+                "backend.db.update_manager.run_clinvar_update",
+            ) as mock_update,
+        ):
+            run_scheduled_update_check(registry)
+
+        # With the toggle off, run_clinvar_update must NOT be invoked.
+        mock_update.assert_not_called()
+
+    def test_scheduled_check_runs_when_table_enables_default_off(
+        self, reference_engine, tmp_path: Path
+    ):
+        """vep_bundle default is False; flip it on via the table → update runs."""
+        settings = _settings_for_test(tmp_path)
+
+        registry = MagicMock()
+        registry.reference_engine = reference_engine
+        registry.settings = settings
+
+        set_auto_update(reference_engine, "vep_bundle", True)
+
+        update_info = VersionInfo(
+            db_name="vep_bundle",
+            latest_version="2026-03-20",
+            download_url="https://example.com/vep_bundle.db",
+            download_size_bytes=400_000_000,
+        )
+
+        with (
+            patch(
+                "backend.db.update_manager.check_all_updates",
+                return_value=UpdateCheckResult(available=[update_info]),
+            ),
+            patch(
+                "backend.db.update_manager.run_vep_bundle_update",
+                return_value=UpdateResult(
+                    db_name="vep_bundle",
+                    previous_version="2026-03-01",
+                    new_version="2026-03-20",
+                ),
+            ) as mock_update,
+        ):
+            run_scheduled_update_check(registry)
+
+        mock_update.assert_called_once_with(settings)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Scheduled update orchestrator tests
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -746,6 +1015,10 @@ class TestScheduledUpdateCheck:
         registry.reference_engine = reference_engine
         registry.settings = settings
 
+        # gnomAD's default toggle is on — explicitly disable so the scheduler
+        # has a reason to skip this candidate.
+        set_auto_update(reference_engine, "gnomad", False)
+
         update_info = VersionInfo(
             db_name="gnomad",
             latest_version="4.0",
@@ -753,13 +1026,19 @@ class TestScheduledUpdateCheck:
             download_size_bytes=2_000_000_000,
         )
 
-        with patch(
-            "backend.db.update_manager.check_all_updates",
-            return_value=UpdateCheckResult(available=[update_info]),
+        with (
+            patch(
+                "backend.db.update_manager.check_all_updates",
+                return_value=UpdateCheckResult(available=[update_info]),
+            ),
+            patch("backend.tasks.huey_tasks.run_database_update_task") as mock_run_task,
+            patch("backend.tasks.huey_tasks.create_database_update_job") as mock_create_job,
         ):
             result = run_scheduled_update_check(registry)
 
-        # gnomAD is auto-update disabled, so no update should run
+        # Toggle off → no pipeline-update dispatch.
+        mock_run_task.assert_not_called()
+        mock_create_job.assert_not_called()
         assert len(result.available) == 1
 
     def test_orchestrator_runs_clinvar_auto_update(self, reference_engine, tmp_path: Path):
@@ -959,3 +1238,250 @@ class TestVersionStamping:
         from datetime import datetime
 
         datetime.fromisoformat(dt_str)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# VEP bundle semver write tests (Step 6 — ADNA-00b part 2, Plan §5.5)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# ``run_vep_bundle_update`` now writes the manifest's ``version`` (semver)
+# into ``database_versions`` rather than the bundle's ``build_date``. When
+# the downloaded SQLite carries its own ``bundle_metadata.bundle_version``
+# that disagrees with the manifest, a structured warning
+# (``vep_bundle_metadata_version_mismatch``) is logged but the update
+# never fails — the manifest is the contract. Pre-v2.0.0 bundles omit
+# ``bundle_version`` entirely and the parity check is silently skipped.
+
+
+class TestRunVepBundleUpdateSemver:
+    """Step 6: manifest semver write + bundle-metadata parity advisory."""
+
+    @staticmethod
+    def _bundle_bytes(
+        *, build_date: str = "2026-05-01", bundle_version: str | None = "v2.0.0"
+    ) -> bytes:
+        """Build an in-memory SQLite bundle with the requested metadata rows."""
+        import sqlite3
+        import tempfile
+
+        path = Path(tempfile.mkstemp(suffix=".db")[1])
+        try:
+            with sqlite3.connect(str(path)) as conn:
+                conn.execute("CREATE TABLE bundle_metadata (key TEXT PRIMARY KEY, value TEXT)")
+                conn.execute(
+                    "INSERT INTO bundle_metadata (key, value) VALUES (?, ?)",
+                    ("build_date", build_date),
+                )
+                if bundle_version is not None:
+                    conn.execute(
+                        "INSERT INTO bundle_metadata (key, value) VALUES (?, ?)",
+                        ("bundle_version", bundle_version),
+                    )
+                conn.commit()
+            return path.read_bytes()
+        finally:
+            path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _serve(payload: bytes) -> tuple[str, object]:
+        """Spin up an in-memory HTTP server that returns ``payload`` on GET."""
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from typing import Any
+
+        class _Handler(BaseHTTPRequestHandler):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self._payload = payload
+                super().__init__(*args, **kwargs)
+
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(self._payload)))
+                self.send_header("Content-Type", "application/octet-stream")
+                self.end_headers()
+                self.wfile.write(self._payload)
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+                return None
+
+        server = HTTPServer(("127.0.0.1", 0), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        return f"http://{host}:{port}/payload", server
+
+    @staticmethod
+    def _write_manifest(tmp_path: Path, *, url: str, sha256: str, size: int, version: str) -> Path:
+        """Write a minimal manifest with a single ``vep_bundle`` entry."""
+        import json as _json
+
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            _json.dumps(
+                {
+                    "schema_version": 1,
+                    "generated_at": "2026-05-18T00:00:00Z",
+                    "bundles": {
+                        "vep_bundle": {
+                            "version": version,
+                            "build_date": "2026-05-01",
+                            "url": url,
+                            "sha256": sha256,
+                            "size_bytes": size,
+                        },
+                    },
+                    "pipeline_pins": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    @pytest.fixture(autouse=True)
+    def _clear_manifest_cache(self, monkeypatch: pytest.MonkeyPatch):
+        from backend.db import manifest as manifest_mod
+
+        monkeypatch.delenv(manifest_mod.MANIFEST_PATH_ENV, raising=False)
+        manifest_mod.reset_cache()
+        yield
+        manifest_mod.reset_cache()
+
+    def _settings_with_ref(self, tmp_path: Path) -> Settings:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "downloads").mkdir()
+        engine = sa.create_engine(f"sqlite:///{data_dir / 'reference.db'}")
+        reference_metadata.create_all(engine)
+        engine.dispose()
+        return Settings(data_dir=data_dir, wal_mode=False)
+
+    def _patch_bundled_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        from backend.db import database_registry as registry_mod
+
+        fake_bundled = tmp_path / "bundled"
+        fake_bundled.mkdir()
+        monkeypatch.setattr(registry_mod, "BUNDLED_DIR", fake_bundled)
+        return fake_bundled
+
+    def test_manifest_semver_is_written_not_build_date(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Happy path: manifest ``version`` (semver) lands in database_versions."""
+        import hashlib
+
+        from backend.db import manifest as manifest_mod
+        from backend.db.update_manager import run_vep_bundle_update
+
+        settings = self._settings_with_ref(tmp_path)
+        self._patch_bundled_dir(tmp_path, monkeypatch)
+
+        payload = self._bundle_bytes(build_date="2026-05-01", bundle_version="v2.0.0")
+        url, server = self._serve(payload)
+        try:
+            sha = hashlib.sha256(payload).hexdigest()
+            manifest_path = self._write_manifest(
+                tmp_path, url=url, sha256=sha, size=len(payload), version="v2.0.0"
+            )
+            monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+            result = run_vep_bundle_update(settings)
+        finally:
+            server.shutdown()
+
+        assert result is not None
+        # Manifest semver — not the bundle's ``build_date`` — is the new
+        # version recorded against the row.
+        assert result.new_version == "v2.0.0"
+
+        ref_engine = sa.create_engine(f"sqlite:///{settings.reference_db_path}")
+        try:
+            row = (
+                ref_engine.connect()
+                .execute(
+                    sa.select(database_versions).where(database_versions.c.db_name == "vep_bundle")
+                )
+                .fetchone()
+            )
+        finally:
+            ref_engine.dispose()
+        assert row is not None
+        assert row.version == "v2.0.0"
+
+    def test_metadata_version_mismatch_emits_structured_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """File ``bundle_version`` ≠ manifest ``version`` → structured warning, no failure."""
+        import hashlib
+
+        from structlog.testing import capture_logs
+
+        from backend.db import manifest as manifest_mod
+        from backend.db.update_manager import run_vep_bundle_update
+
+        settings = self._settings_with_ref(tmp_path)
+        self._patch_bundled_dir(tmp_path, monkeypatch)
+
+        # Build a bundle whose embedded bundle_version disagrees with the
+        # manifest — common during a botched release where the asset and the
+        # manifest entry get out of sync.
+        payload = self._bundle_bytes(build_date="2026-05-01", bundle_version="v1.9.9")
+        url, server = self._serve(payload)
+        try:
+            sha = hashlib.sha256(payload).hexdigest()
+            manifest_path = self._write_manifest(
+                tmp_path, url=url, sha256=sha, size=len(payload), version="v2.0.0"
+            )
+            monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+            with capture_logs() as cap_logs:
+                result = run_vep_bundle_update(settings)
+        finally:
+            server.shutdown()
+
+        # Manifest semver still wins; the warning is advisory only.
+        assert result is not None
+        assert result.new_version == "v2.0.0"
+
+        warnings = [
+            ev for ev in cap_logs if ev.get("event") == "vep_bundle_metadata_version_mismatch"
+        ]
+        assert len(warnings) == 1
+        warn = warnings[0]
+        assert warn["log_level"] == "warning"
+        assert warn["manifest_version"] == "v2.0.0"
+        assert warn["metadata_bundle_version"] == "v1.9.9"
+        assert warn["build_date"] == "2026-05-01"
+
+    def test_missing_metadata_bundle_version_is_tolerated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Pre-v2.0.0 bundles omit ``bundle_version`` — no warning, no failure."""
+        import hashlib
+
+        from structlog.testing import capture_logs
+
+        from backend.db import manifest as manifest_mod
+        from backend.db.update_manager import run_vep_bundle_update
+
+        settings = self._settings_with_ref(tmp_path)
+        self._patch_bundled_dir(tmp_path, monkeypatch)
+
+        payload = self._bundle_bytes(build_date="2026-05-01", bundle_version=None)
+        url, server = self._serve(payload)
+        try:
+            sha = hashlib.sha256(payload).hexdigest()
+            manifest_path = self._write_manifest(
+                tmp_path, url=url, sha256=sha, size=len(payload), version="v2.0.0"
+            )
+            monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+            with capture_logs() as cap_logs:
+                result = run_vep_bundle_update(settings)
+        finally:
+            server.shutdown()
+
+        assert result is not None
+        assert result.new_version == "v2.0.0"
+        assert [
+            ev for ev in cap_logs if ev.get("event") == "vep_bundle_metadata_version_mismatch"
+        ] == []

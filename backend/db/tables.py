@@ -22,6 +22,23 @@ import sqlalchemy as sa
 
 reference_metadata = sa.MetaData()
 
+# ── Individuals (sample aggregation; AncestryDNA Plan §9.2) ────────────
+
+individuals = sa.Table(
+    "individuals",
+    reference_metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("display_name", sa.Text, nullable=False),
+    sa.Column("notes", sa.Text, server_default=""),
+    sa.Column(
+        "biological_sex",
+        sa.Text,
+        comment="'XX' | 'XY' | NULL — inferred or user-set",
+    ),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime),
+)
+
 # ── Sample Registry ────────────────────────────────────────────────────
 
 samples = sa.Table(
@@ -32,9 +49,17 @@ samples = sa.Table(
     sa.Column("db_path", sa.Text, nullable=False, unique=True),
     sa.Column("file_format", sa.Text),
     sa.Column("file_hash", sa.Text),
+    sa.Column(
+        "individual_id",
+        sa.Integer,
+        sa.ForeignKey("individuals.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime),
 )
+
+sa.Index("ix_samples_individual_id", samples.c.individual_id)
 
 # ── Jobs (Huey ↔ FastAPI IPC) ─────────────────────────────────────────
 
@@ -74,6 +99,16 @@ database_versions = sa.Table(
     sa.Column("file_size_bytes", sa.Integer),
     sa.Column("downloaded_at", sa.DateTime),
     sa.Column("checksum_sha256", sa.Text),
+)
+
+# ── Auto-Update Settings ───────────────────────────────────────────────
+
+auto_update_settings = sa.Table(
+    "auto_update_settings",
+    reference_metadata,
+    sa.Column("db_name", sa.Text, primary_key=True),
+    sa.Column("enabled", sa.Boolean, nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
 )
 
 # ── Update History ─────────────────────────────────────────────────────
@@ -440,6 +475,35 @@ raw_variants = sa.Table(
     sa.Column("chrom", sa.Text, nullable=False),
     sa.Column("pos", sa.Integer, nullable=False),
     sa.Column("genotype", sa.Text, nullable=False),
+    # Provenance columns (AncestryDNA Plan §10.4b). Populated only for merged
+    # samples; unmerged samples carry empty-string defaults.
+    sa.Column(
+        "source",
+        sa.Text,
+        nullable=False,
+        server_default="",
+        comment="'S1' | 'S2' | 'both' | '' (unmerged)",
+    ),
+    sa.Column(
+        "concordance",
+        sa.Text,
+        nullable=False,
+        server_default="",
+        comment="'match' | 'filled_nocall' | 'discordant' | 'unique' | ''",
+    ),
+    sa.Column(
+        "discordant_alt_genotype",
+        sa.Text,
+        nullable=False,
+        server_default="",
+    ),
+    sa.Column(
+        "alt_rsid",
+        sa.Text,
+        nullable=False,
+        server_default="",
+        comment="Rejected rsid at a collapsed locus",
+    ),
 )
 
 sa.Index("idx_raw_chrom_pos", raw_variants.c.chrom, raw_variants.c.pos)
@@ -710,6 +774,52 @@ watched_variants = sa.Table(
     sa.Column("watched_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("clinvar_significance_at_watch", sa.Text),
     sa.Column("notes", sa.Text, server_default=""),
+)
+
+# ── Merge Provenance (single-row, present only on merged samples) ─────
+# AncestryDNA Plan §10.4c. Created on every sample DB but only populated by
+# the merge service on merged samples. CheckConstraint enforces single row.
+
+merge_provenance = sa.Table(
+    "merge_provenance",
+    sample_metadata_obj,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("merged_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column(
+        "strategy",
+        sa.Text,
+        nullable=False,
+        comment="prefer_23andme | prefer_ancestrydna | flag_only",
+    ),
+    sa.Column(
+        "source_sample_ids",
+        sa.Text,
+        nullable=False,
+        comment="JSON array, ordered [S1, S2]",
+    ),
+    sa.Column(
+        "source_file_hashes",
+        sa.Text,
+        nullable=False,
+        comment="JSON array, ordered [S1, S2] — same order as source_sample_ids",
+    ),
+    sa.Column(
+        "concordance_summary",
+        sa.Text,
+        nullable=False,
+        comment=("JSON {match, filled_nocall, discordant, unique_S1, unique_S2, collapsed_rsid}"),
+    ),
+    sa.CheckConstraint("id = 1", name="single_row_merge_provenance"),
+)
+
+# ── Annotation State (kv table for per-sample annotation provenance) ──
+
+annotation_state = sa.Table(
+    "annotation_state",
+    sample_metadata_obj,
+    sa.Column("key", sa.Text, primary_key=True),
+    sa.Column("value", sa.Text, nullable=False),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
 )
 
 # ── Variant Overlays (P4-12, vcfanno integration) ────────────────────

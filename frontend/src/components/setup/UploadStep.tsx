@@ -1,18 +1,23 @@
 /** Setup wizard Step 6 — Upload sample file + redirect to dashboard (P1-19g).
  *
- * Accepts a 23andMe raw data file via drag-and-drop or file picker.
- * On successful parse, shows variant count and offers to go to the dashboard.
- * Upload is optional — users can skip and upload later from the main UI.
+ * Accepts a 23andMe or AncestryDNA raw data file via drag-and-drop or file
+ * picker. On successful parse, shows variant count and offers to go to the
+ * dashboard. Upload is optional — users can skip and upload later from the
+ * main UI.
  */
 
 import { useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useIngestFile } from '@/api/setup'
+import { BundleGateError, useIngestFile } from '@/api/setup'
+import { useTriggerUpdate } from '@/api/updates'
 import { cn } from '@/lib/utils'
+import type { BundleGatePayload } from '@/types/setup'
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  Download,
   FileText,
   Loader2,
   Upload,
@@ -22,7 +27,7 @@ interface UploadStepProps {
   onBack: () => void
 }
 
-/** Accepted file extensions for 23andMe raw data. */
+/** Accepted file extensions for 23andMe or AncestryDNA raw data. */
 const ACCEPTED_EXTENSIONS = ['.txt', '.csv', '.tsv']
 
 function isValidFile(filename: string): boolean {
@@ -45,18 +50,27 @@ function formatNumber(n: number): string {
 export default function UploadStep({ onBack }: UploadStepProps) {
   const navigate = useNavigate()
   const ingestMutation = useIngestFile()
+  const triggerUpdate = useTriggerUpdate()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [bundleGate, setBundleGate] = useState<BundleGatePayload | null>(null)
 
   const handleFileSelect = useCallback((file: File) => {
     if (isValidFile(file.name)) {
       setSelectedFile(file)
       setFileError(null)
+      setBundleGate(null)
     } else {
+      // Clear any previously valid selection so an invalid pick can't be
+      // uploaded by mistake, and reset the file input so re-selecting the
+      // same file later still fires onChange.
+      setSelectedFile(null)
+      setBundleGate(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       setFileError(
-        'Please select a 23andMe raw data file (.txt, .csv, or .tsv)',
+        'Please select a 23andMe or AncestryDNA raw data file (.txt, .csv, or .tsv)',
       )
     }
   }, [])
@@ -90,10 +104,24 @@ export default function UploadStep({ onBack }: UploadStepProps) {
 
   async function handleUpload() {
     if (!selectedFile) return
+    setBundleGate(null)
     try {
       await ingestMutation.mutateAsync(selectedFile)
+    } catch (err) {
+      if (err instanceof BundleGateError) {
+        setBundleGate(err.payload)
+      }
+      // Other errors surfaced via ingestMutation.isError
+    }
+  }
+
+  async function handleBundleUpdate() {
+    try {
+      await triggerUpdate.mutateAsync({ dbName: 'vep_bundle' })
+      setBundleGate(null)
+      ingestMutation.reset()
     } catch {
-      // Error state handled by ingestMutation.isError
+      // Error surfaced via triggerUpdate.isError
     }
   }
 
@@ -176,8 +204,8 @@ export default function UploadStep({ onBack }: UploadStepProps) {
           Upload Sample
         </h2>
         <p className="text-sm text-muted-foreground">
-          Upload a 23andMe raw data file to get started, or skip to explore
-          the dashboard first.
+          Upload a 23andMe or AncestryDNA raw data file to get started, or
+          skip to explore the dashboard first.
         </p>
       </div>
 
@@ -195,7 +223,7 @@ export default function UploadStep({ onBack }: UploadStepProps) {
         }}
         role="button"
         tabIndex={0}
-        aria-label="Select 23andMe raw data file to upload"
+        aria-label="Select 23andMe or AncestryDNA raw data file to upload"
         className={cn(
           'rounded-lg border-2 border-dashed p-8 text-center cursor-pointer transition-colors',
           dragActive
@@ -207,7 +235,7 @@ export default function UploadStep({ onBack }: UploadStepProps) {
         <p className="mt-3 text-sm font-medium text-foreground">
           {selectedFile
             ? selectedFile.name
-            : 'Drop a 23andMe raw data file here'}
+            : 'Drop a 23andMe or AncestryDNA raw data file here'}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           {selectedFile
@@ -265,8 +293,76 @@ export default function UploadStep({ onBack }: UploadStepProps) {
         </div>
       )}
 
-      {/* Error state */}
-      {ingestMutation.isError && (
+      {/* Bundle-version gate (HTTP 409 on AncestryDNA + pre-v2.0.0 bundle).
+          Plan §5.4 / ADNA-00d — banner with one-click update CTA. */}
+      {bundleGate && (
+        <div
+          data-testid="bundle-gate-banner"
+          role="alert"
+          aria-live="polite"
+          className="rounded-lg border border-amber-500/50 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-3"
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle
+              className="h-5 w-5 text-amber-600 dark:text-amber-500 flex-shrink-0 mt-0.5"
+              aria-hidden="true"
+            />
+            <div className="flex-1 min-w-0 space-y-1">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                Update VEP bundle (~
+                {Math.round(bundleGate.size_bytes / 1_000_000)} MB) to enable
+                AncestryDNA
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                AncestryDNA uploads need VEP bundle{' '}
+                <code className="rounded bg-amber-100 dark:bg-amber-900/40 px-1 py-0.5 font-mono">
+                  {bundleGate.required_version}
+                </code>{' '}
+                or newer. Installed:{' '}
+                <code className="rounded bg-amber-100 dark:bg-amber-900/40 px-1 py-0.5 font-mono">
+                  {bundleGate.installed_version}
+                </code>
+                .
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleBundleUpdate}
+            disabled={triggerUpdate.isPending}
+            data-testid="bundle-gate-update-cta"
+            className={cn(
+              'w-full rounded-lg px-4 py-2.5 text-sm font-medium transition-all',
+              'bg-amber-600 text-white hover:bg-amber-700 shadow-sm',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600',
+              'disabled:opacity-70 disabled:cursor-not-allowed',
+            )}
+          >
+            {triggerUpdate.isPending ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Updating bundle…
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-2">
+                <Download className="h-4 w-4" />
+                Update VEP bundle to {bundleGate.required_version}
+              </span>
+            )}
+          </button>
+          {triggerUpdate.isError && (
+            <p className="text-xs text-destructive">
+              {triggerUpdate.error instanceof Error
+                ? triggerUpdate.error.message
+                : 'Bundle update failed. Please try again.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Error state — suppressed when the bundle-gate banner is showing
+          since the 409 surfaces there. */}
+      {ingestMutation.isError && !bundleGate && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-center">
           <AlertCircle className="mx-auto h-5 w-5 text-destructive" />
           <p className="mt-2 text-sm text-destructive">

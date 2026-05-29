@@ -57,6 +57,7 @@ import sqlalchemy as sa
 import structlog
 
 from backend.analysis.evidence import PRS_EVIDENCE_LEVEL
+from backend.analysis.zygosity import is_no_call
 from backend.db.tables import annotated_variants, findings
 
 logger = structlog.get_logger(__name__)
@@ -206,11 +207,9 @@ def _count_effect_allele(genotype: str | None, effect_allele: str) -> int:
     Returns:
         0, 1, or 2 — the dosage of the effect allele.
     """
-    if not genotype or len(genotype) < 2:
+    if is_no_call(genotype):
         return 0
-
-    # Handle no-call genotypes
-    if genotype == "--" or genotype == "00":
+    if len(genotype) < 2:
         return 0
 
     count = 0

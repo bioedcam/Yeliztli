@@ -18,12 +18,15 @@ import json
 import os
 import shutil
 import tarfile
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, HTTPException, UploadFile
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
 
 from backend.config import get_settings
@@ -318,6 +321,183 @@ def _validate_archive_structure(tf: tarfile.TarFile) -> list[str]:
     return issues
 
 
+# ── Bundle-version gate (Plan §7.6, ADNA-00f) ────────────────────
+
+# Per Plan §7.6 — backups predating Phase 0 lack the `annotation_state`
+# table; treat their recorded bundle version as v1.0.0.
+_FALLBACK_BACKUP_VERSION = "v1.0.0"
+
+
+def _coerce_semver(raw: str | None) -> Version | None:
+    """Parse a version string (with optional leading 'v') as semver."""
+    if not raw:
+        return None
+    try:
+        return Version(raw.lstrip("v"))
+    except InvalidVersion:
+        return None
+
+
+def _read_installed_vep_bundle_version() -> str | None:
+    """Return the raw ``database_versions['vep_bundle'].version`` string.
+
+    Returns ``None`` when the reference DB or row is missing — a fresh
+    install with no recorded bundle is allowed to restore.
+    """
+    settings = get_settings()
+    ref_path = settings.reference_db_path
+    if not ref_path.exists():
+        return None
+    try:
+        from backend.db.tables import database_versions
+
+        engine = sa.create_engine(f"sqlite:///{ref_path}")
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    sa.select(database_versions.c.version).where(
+                        database_versions.c.db_name == "vep_bundle"
+                    )
+                ).fetchone()
+        finally:
+            engine.dispose()
+        return row.version if row else None
+    except sa.exc.SQLAlchemyError:
+        return None
+
+
+def _read_sample_db_bundle_version(sample_db_path: Path) -> str:
+    """Return a sample DB's recorded ``annotation_state.vep_bundle_version``.
+
+    Falls back to ``v1.0.0`` (per Plan §7.6) when the DB is unreachable,
+    the ``annotation_state`` table is absent (pre-Phase-0 backup), or the
+    row is missing. Also tolerates non-SQLite blobs (legacy/test fixtures)
+    — anything that fails to open returns the fallback.
+    """
+    if not sample_db_path.exists():
+        return _FALLBACK_BACKUP_VERSION
+    try:
+        engine = sa.create_engine(f"sqlite:///{sample_db_path}")
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    sa.text("SELECT value FROM annotation_state WHERE key = 'vep_bundle_version'")
+                ).fetchone()
+        finally:
+            engine.dispose()
+    except sa.exc.SQLAlchemyError:
+        return _FALLBACK_BACKUP_VERSION
+    return row[0] if row and row[0] else _FALLBACK_BACKUP_VERSION
+
+
+def _inspect_archive_bundle_versions(
+    tf: tarfile.TarFile, staging_dir: Path
+) -> list[tuple[str, str]]:
+    """Extract sample DBs to ``staging_dir`` and read each recorded version.
+
+    Returns a list of ``(member_name, version_string)`` pairs. Used purely
+    for the §7.6 pre-flight gate — extraction here is to an isolated
+    temporary directory, not the data directory.
+    """
+    versions: list[tuple[str, str]] = []
+    for member in tf.getmembers():
+        if not _validate_tar_member(member) or not member.isfile():
+            continue
+        top_level = member.name.split("/")[0]
+        if top_level != "samples" or not member.name.endswith(".db"):
+            continue
+        leaf = Path(member.name).name
+        tmp_db = staging_dir / leaf
+        src = tf.extractfile(member)
+        if src is None:
+            continue
+        with tmp_db.open("wb") as out:
+            shutil.copyfileobj(src, out)
+        try:
+            version = _read_sample_db_bundle_version(tmp_db)
+        finally:
+            tmp_db.unlink(missing_ok=True)
+        versions.append((member.name, version))
+    return versions
+
+
+def _bundle_compatibility_payload(
+    installed_raw: str | None, sample_versions: list[tuple[str, str]]
+) -> dict[str, str] | None:
+    """Return a 409 payload describing the mismatch, or ``None`` when OK.
+
+    Major-version mismatch in either direction blocks the restore
+    (Plan §7.6). When the installed bundle is missing/unparseable, the
+    comparison is skipped — a fresh install can restore any backup.
+    """
+    installed = _coerce_semver(installed_raw)
+    if installed is None:
+        return None
+
+    for member_name, version_raw in sample_versions:
+        backup = _coerce_semver(version_raw)
+        if backup is None:
+            # Defensive fallback (Plan §7.6) — treat unparseable as v1.0.0.
+            backup = _coerce_semver(_FALLBACK_BACKUP_VERSION)
+            assert backup is not None
+        if backup.major == installed.major:
+            continue
+        direction = (
+            "backup_below_installed"
+            if backup.major < installed.major
+            else "backup_above_installed"
+        )
+        return {
+            "error": "bundle_version_mismatch",
+            "installed_version": installed_raw or "",
+            "backup_version": version_raw,
+            "direction": direction,
+            "sample_member": member_name,
+        }
+    return None
+
+
+def _upgrade_restored_sample_db(sample_db_path: Path) -> None:
+    """Run the three-step idempotent post-restore upgrade on one sample DB.
+
+    Per Plan §7.6:
+      1. ``_add_missing_columns(engine, from_version)`` forward-migrates.
+      2. ``sample_metadata_obj.create_all(engine, checkfirst=True)`` adds
+         tables that pre-Phase-0 backups never had (e.g. ``annotation_state``).
+      3. Reapplies migration 008 backfill semantics:
+         ``INSERT OR IGNORE`` ``vep_bundle_version='v1.0.0'``.
+
+    All three steps are idempotent; corrupt or non-SQLite blobs are
+    logged and skipped without raising — defensive against legacy /
+    test-fixture dummy files.
+    """
+    from backend.db.sample_schema import _add_missing_columns, _get_schema_version
+    from backend.db.tables import sample_metadata_obj
+
+    try:
+        engine = sa.create_engine(f"sqlite:///{sample_db_path}")
+        try:
+            from_version = _get_schema_version(engine)
+            _add_missing_columns(engine, from_version)
+            sample_metadata_obj.create_all(engine, checkfirst=True)
+            with engine.begin() as conn:
+                conn.execute(
+                    sa.text(
+                        "INSERT OR IGNORE INTO annotation_state "
+                        "(key, value) VALUES ('vep_bundle_version', :v)"
+                    ),
+                    {"v": _FALLBACK_BACKUP_VERSION},
+                )
+        finally:
+            engine.dispose()
+    except sa.exc.SQLAlchemyError as exc:
+        logger.warning(
+            "restore_sample_upgrade_skipped",
+            sample_db=str(sample_db_path),
+            error=str(exc),
+        )
+
+
 @router.post("/import-backup", response_model=ImportBackupResponse)
 async def import_backup(file: UploadFile) -> ImportBackupResponse:
     """Import data from a .tar.gz backup archive.
@@ -329,6 +509,12 @@ async def import_backup(file: UploadFile) -> ImportBackupResponse:
 
     Extracts contents to the data directory. Reference DBs are NOT expected
     in the archive — they will be re-downloaded in a later wizard step.
+
+    Plan §7.6: before any extraction to ``data_dir``, sample DBs are
+    inspected in an isolated staging directory and their recorded
+    ``annotation_state.vep_bundle_version`` is compared against the
+    installed ``database_versions['vep_bundle'].version``. A major-version
+    mismatch in either direction halts the restore with HTTP 409.
     """
     settings = get_settings()
     data_dir = settings.data_dir
@@ -370,9 +556,24 @@ async def import_backup(file: UploadFile) -> ImportBackupResponse:
                         detail=f"Invalid backup archive: {'; '.join(issues)}",
                     )
 
+                # Pre-flight bundle-version gate (Plan §7.6). Sample DBs are
+                # extracted to an isolated tempdir — nothing has been
+                # written to data_dir yet.
+                with tempfile.TemporaryDirectory(prefix="gi_restore_inspect_") as inspect_dir:
+                    sample_versions = _inspect_archive_bundle_versions(tf, Path(inspect_dir))
+                installed_raw = _read_installed_vep_bundle_version()
+                mismatch = _bundle_compatibility_payload(installed_raw, sample_versions)
+                if mismatch is not None:
+                    logger.warning(
+                        "restore_bundle_version_mismatch",
+                        **mismatch,
+                    )
+                    raise HTTPException(status_code=409, detail=mismatch)
+
                 # Extract safe members
                 samples_restored = 0
                 config_restored = False
+                restored_sample_paths: list[Path] = []
 
                 for member in tf.getmembers():
                     if not _validate_tar_member(member):
@@ -394,6 +595,7 @@ async def import_backup(file: UploadFile) -> ImportBackupResponse:
 
                             if top_level == "samples" and member.name.endswith(".db"):
                                 samples_restored += 1
+                                restored_sample_paths.append(dest)
                             elif member.name == "config.toml":
                                 config_restored = True
 
@@ -402,6 +604,13 @@ async def import_backup(file: UploadFile) -> ImportBackupResponse:
                 status_code=400,
                 detail=f"Failed to read archive: {exc}",
             ) from exc
+
+        # Post-restore three-step idempotent upgrade for every restored
+        # per-sample DB (Plan §7.6). Forward-migrates v7→v8, adds
+        # `annotation_state` for pre-Phase-0 backups, and backfills the
+        # bundle-version row.
+        for sample_db_path in restored_sample_paths:
+            _upgrade_restored_sample_db(sample_db_path)
 
         logger.info(
             "backup_imported",

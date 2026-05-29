@@ -18,9 +18,10 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, samples
 
@@ -211,7 +212,7 @@ def _fetch_traits_findings(
 # ── Endpoints ────────────────────────────────────────────────────────
 
 
-@router.get("/pathways")
+@router.get("/pathways", dependencies=[Depends(require_fresh_sample)])
 def list_pathways(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> PathwaysResponse:
@@ -276,7 +277,7 @@ def list_pathways(
     )
 
 
-@router.get("/pathway/{pathway_id}")
+@router.get("/pathway/{pathway_id}", dependencies=[Depends(require_fresh_sample)])
 def pathway_detail(
     pathway_id: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -365,7 +366,7 @@ def pathway_detail(
     )
 
 
-@router.get("/prs")
+@router.get("/prs", dependencies=[Depends(require_fresh_sample)])
 def list_prs(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> PRSResponse:
@@ -436,7 +437,7 @@ def get_disclaimer() -> DisclaimerResponse:
     )
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run_traits(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> RunResponse:

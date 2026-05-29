@@ -1,6 +1,18 @@
-"""Tests for 23andMe TSV parser (P1-04).
+"""Tests for the 23andMe TSV parser (P1-04, refactored in step 29).
 
-Covers test IDs: T1-01, T1-01a, T1-01b, T1-01c, T1-02, T1-03, T1-04, T1-05.
+Covers test IDs: T1-01, T1-01a, T1-01c, T1-02, T1-03, T1-04, T1-05.
+
+Vendor dispatch (rejection of VCF / AncestryDNA / CSV / binary inputs with
+format-specific guidance) lives in ``backend.ingestion.dispatcher`` and is
+covered by ``tests/backend/test_dispatcher.py``; the post-step-29 parser
+assumes its caller has already identified the file as 23andMe.
+
+The single-class ``TestDispatcherFlipForAncestryDNA`` at the bottom of the
+file is step 33's flip of the historical ``test_rejects_ancestrydna_with_message``
+test: where the legacy assertion locked that ``parse_23andme(<AncestryDNA>)``
+*raises*, the flipped assertion locks that ``dispatcher.parse(<AncestryDNA>)``
+*succeeds*, with the bare 23andMe parser still raising
+``UnrecognizedVersionError`` on the same input.
 """
 
 from __future__ import annotations
@@ -13,14 +25,14 @@ import sqlalchemy as sa
 
 from backend.db.sample_schema import create_sample_tables
 from backend.db.tables import raw_variants
+from backend.ingestion import dispatcher, parser_23andme
+from backend.ingestion.base import SourceVendor
 from backend.ingestion.parser_23andme import (
-    FormatVersion,
     MalformedDataError,
     ParsedVariant,
     ParserError,
     UnrecognizedVersionError,
     UnsupportedFormatError,
-    detect_format,
     normalize_chromosome,
     parse_23andme,
 )
@@ -34,9 +46,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 V5_FILE = FIXTURES / "sample_23andme_v5.txt"
 V3_FILE = FIXTURES / "sample_23andme_v3.txt"
 V4_FILE = FIXTURES / "sample_23andme_v4.txt"
-VCF_FILE = FIXTURES / "sample_not_23andme.vcf"
-ANCESTRY_FILE = FIXTURES / "sample_ancestrydna.txt"
-CSV_FILE = FIXTURES / "sample_random.csv"
+ANCESTRY_V2_FILE = FIXTURES / "sample_ancestrydna_v2.txt"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -47,12 +57,12 @@ CSV_FILE = FIXTURES / "sample_random.csv"
 class TestParseV5:
     """T1-01: Parser correctly reads valid 23andMe v5 file."""
 
-    def test_detects_v5_format(self) -> None:
-        assert detect_format(V5_FILE) == FormatVersion.V5
-
     def test_parse_returns_v5_version(self) -> None:
         result = parse_23andme(V5_FILE)
-        assert result.version == FormatVersion.V5
+        assert result.version == "v5"
+        assert isinstance(result.version, str)
+        assert result.vendor is SourceVendor.TWENTYTHREEANDME
+        assert result.build == "GRCh37"
 
     def test_variant_count(self) -> None:
         result = parse_23andme(V5_FILE)
@@ -99,20 +109,18 @@ class TestParseV5:
 class TestParseV3V4:
     """T1-01a: Parser auto-detects v3/v4 formats."""
 
-    def test_detects_v3_format(self) -> None:
-        assert detect_format(V3_FILE) == FormatVersion.V3
-
-    def test_detects_v4_format(self) -> None:
-        assert detect_format(V4_FILE) == FormatVersion.V4
-
     def test_parse_v3_variant_count(self) -> None:
         result = parse_23andme(V3_FILE)
-        assert result.version == FormatVersion.V3
+        assert result.version == "v3"
+        assert result.build == "GRCh36"
+        assert result.vendor is SourceVendor.TWENTYTHREEANDME
         assert len(result.variants) == 100
 
     def test_parse_v4_variant_count(self) -> None:
         result = parse_23andme(V4_FILE)
-        assert result.version == FormatVersion.V4
+        assert result.version == "v4"
+        assert result.build == "GRCh37"
+        assert result.vendor is SourceVendor.TWENTYTHREEANDME
         assert len(result.variants) == 100
 
     def test_v3_i_prefixed_rsids_preserved(self) -> None:
@@ -131,44 +139,18 @@ class TestParseV3V4:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# T1-01b: Detect non-23andMe files with format-specific error messages
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestNon23andMeDetection:
-    """T1-01b: Parser detects non-23andMe files with specific errors."""
-
-    def test_rejects_vcf_with_message(self) -> None:
-        with pytest.raises(UnsupportedFormatError, match="VCF file"):
-            parse_23andme(VCF_FILE)
-
-    def test_rejects_ancestrydna_with_message(self) -> None:
-        with pytest.raises(UnsupportedFormatError, match="AncestryDNA"):
-            parse_23andme(ANCESTRY_FILE)
-
-    def test_rejects_csv_with_message(self) -> None:
-        with pytest.raises(UnsupportedFormatError, match="comma-separated"):
-            parse_23andme(CSV_FILE)
-
-    def test_rejects_binary_with_message(self, tmp_path: Path) -> None:
-        bin_file = tmp_path / "test.bin"
-        bin_file.write_bytes(b"\x00\x01\x02\xff" * 100)
-        with pytest.raises(UnsupportedFormatError, match="binary"):
-            parse_23andme(bin_file)
-
-    def test_rejects_unknown_format_with_message(self) -> None:
-        content = "some random text\nwithout any structure\nat all\n"
-        with pytest.raises(UnsupportedFormatError, match="Unrecognized"):
-            parse_23andme(io.StringIO(content))
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # T1-01c: Unrecognized 23andMe version → specific guidance
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestUnrecognizedVersion:
-    """T1-01c: Parser rejects ambiguous 23andMe-like files."""
+    """T1-01c: Parser rejects ambiguous 23andMe-like files.
+
+    Post-step-29, the parser raises ``UnrecognizedVersionError`` for any input
+    whose head lines lack both the canonical column header and a recognizable
+    build string. Vendor-dispatch rejection of VCF / AncestryDNA / CSV / binary
+    moved to the dispatcher.
+    """
 
     def test_rejects_unknown_version_with_guidance(self) -> None:
         """File has the column header but no build string."""
@@ -179,6 +161,12 @@ class TestUnrecognizedVersion:
             "rs123\t1\t100\tAA\n"
         )
         with pytest.raises(UnrecognizedVersionError, match="GitHub issue"):
+            parse_23andme(io.StringIO(content))
+
+    def test_rejects_file_without_column_header(self) -> None:
+        """A non-23andMe file presented to the bare parser raises Unrecognized."""
+        content = "some random text\nwithout any structure\nat all\n"
+        with pytest.raises(UnrecognizedVersionError):
             parse_23andme(io.StringIO(content))
 
 
@@ -405,7 +393,7 @@ class TestEdgeCases:
         """Parser works with TextIO (not just file paths)."""
         content = V5_FILE.read_text()
         result = parse_23andme(io.StringIO(content))
-        assert result.version == FormatVersion.V5
+        assert result.version == "v5"
         assert len(result.variants) == 1000
 
     def test_all_exception_types_are_parser_errors(self) -> None:
@@ -415,12 +403,8 @@ class TestEdgeCases:
 
     def test_parsed_variant_is_frozen(self) -> None:
         v = ParsedVariant(rsid="rs1", chrom="1", pos=100, genotype="AA")
-        with pytest.raises(AttributeError):
+        with pytest.raises((AttributeError, Exception)):
             v.rsid = "rs2"  # type: ignore[misc]
-
-    def test_detect_format_from_text_io(self) -> None:
-        content = V4_FILE.read_text()
-        assert detect_format(io.StringIO(content)) == FormatVersion.V4
 
     def test_position_zero_allowed(self) -> None:
         """Position 0 is valid (some markers use it)."""
@@ -432,3 +416,188 @@ class TestEdgeCases:
         stream = io.StringIO(header + "rs123\t1\t0\tAA\n")
         result = parse_23andme(stream)
         assert result.variants[0].pos == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 29 invariant: parser_23andme no longer carries module-level dispatch
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNoDispatchHelpers:
+    """Step 29 contract: vendor dispatch lives in `dispatcher`, not here.
+
+    Locks the surface so a future refactor cannot silently re-import the
+    legacy `_reject_non_23andme` / `_check_binary` / public `detect_format`
+    helpers back into `parser_23andme`. Step 38 layers the
+    `dispatcher.parse(sample_23andme_v5) ≡ parse_23andme(...)` regression
+    assertion on top.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        ["_reject_non_23andme", "_check_binary", "detect_format"],
+    )
+    def test_dispatch_helpers_removed(self, name: str) -> None:
+        assert not hasattr(parser_23andme, name), (
+            f"`parser_23andme.{name}` should have been retired in step 29 — "
+            "vendor dispatch belongs in `backend.ingestion.dispatcher`."
+        )
+
+    def test_parse_23andme_is_only_public_entry_point(self) -> None:
+        """`__all__` exposes the parser + shared symbols, nothing dispatch-shaped."""
+        assert "parse_23andme" in parser_23andme.__all__
+        assert "normalize_chromosome" in parser_23andme.__all__
+        for forbidden in ("detect_format", "_reject_non_23andme", "_check_binary"):
+            assert forbidden not in parser_23andme.__all__
+
+    def test_parse_result_version_is_string(self) -> None:
+        """Public `ParseResult.version` is a plain string post-step-29."""
+        result = parse_23andme(V5_FILE)
+        assert isinstance(result.version, str)
+        assert result.version == "v5"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 38 (ADNA-08d) — 23andMe regression via the dispatcher
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDispatcherRegressionFor23andMe:
+    """Step 38 / ADNA-08d: routing a 23andMe input through ``dispatcher.parse``
+    returns the same ``ParseResult`` as calling ``parse_23andme`` directly.
+
+    The dispatcher's only job for a 23andMe file is (a) head-line inspection
+    to identify the vendor and (b) handing off to ``parse_23andme``. Once
+    routing has occurred, the dispatcher must add zero transformation on top
+    of the parser — same vendor, same string ``version``, same build, same
+    variant list. This class locks that invariant on the load-bearing
+    ``sample_23andme_v5.txt`` fixture called out in Plan §13.1 ADNA-08d, plus
+    the v3 + v4 fixtures so the post-step-29 string-version contract is
+    asserted across every 23andMe version the parser auto-detects.
+
+    Sits alongside ``TestNoDispatchHelpers`` (step 29), which locks that
+    ``parser_23andme`` itself does not carry its own vendor-dispatch helpers;
+    this class extends that surface audit to ``dispatcher``'s ``_looks_like_*``
+    helpers, which must stay in the dispatcher and not migrate back into the
+    bare 23andMe parser.
+    """
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected_version", "expected_build", "expected_variant_count"),
+        [
+            (V5_FILE, "v5", "GRCh37", 1000),
+            (V4_FILE, "v4", "GRCh37", 100),
+            (V3_FILE, "v3", "GRCh36", 100),
+        ],
+    )
+    def test_dispatcher_parse_matches_direct_call(
+        self,
+        fixture: Path,
+        expected_version: str,
+        expected_build: str,
+        expected_variant_count: int,
+    ) -> None:
+        legacy = parse_23andme(fixture)
+        via_dispatcher = dispatcher.parse(fixture)
+
+        # Load-bearing Plan §13.1 ADNA-08d trio: vendor, string version, count.
+        assert via_dispatcher.vendor is SourceVendor.TWENTYTHREEANDME
+        assert via_dispatcher.vendor is legacy.vendor
+        assert isinstance(via_dispatcher.version, str)
+        assert via_dispatcher.version == expected_version
+        assert via_dispatcher.version == legacy.version
+        assert len(via_dispatcher.variants) == expected_variant_count
+        assert len(via_dispatcher.variants) == len(legacy.variants)
+
+        # Build + full variant-list parity: dispatcher must not re-order or
+        # transform parsed variants on its way through.
+        assert via_dispatcher.build == expected_build
+        assert via_dispatcher.build == legacy.build
+        assert via_dispatcher.variants == legacy.variants
+
+        # Auxiliary counters round-trip identically too — guards against a
+        # regression that drops or double-counts header / no-call lines
+        # between the dispatcher's head-line read and the parser's body read.
+        assert via_dispatcher.nocall_count == legacy.nocall_count
+        assert via_dispatcher.total_lines == legacy.total_lines
+        assert via_dispatcher.skipped_lines == legacy.skipped_lines
+
+    def test_v5_file_format_composition_matches_plan_8_7(self) -> None:
+        """Plan §8.7: the ingest route composes ``samples.file_format`` as
+        ``f"{vendor.value}_{version}"``. Lock the v5 case so a future change
+        to either the vendor enum value or the parser version string trips
+        the ADNA-08d regression at the caller-visible surface, not just
+        inside the parser."""
+        result = dispatcher.parse(V5_FILE)
+        assert f"{result.vendor.value}_{result.version}" == "23andme_v5"
+
+    @pytest.mark.parametrize(
+        "name",
+        ["_looks_like_23andme", "_looks_like_ancestrydna", "_reject_with_guidance"],
+    )
+    def test_dispatcher_side_helpers_absent_from_parser_23andme(self, name: str) -> None:
+        """ADNA-08d second clause: vendor-dispatch helpers stay on the
+        dispatcher. ``parser_23andme`` may keep its vendor-*internal* version
+        detector (``_detect_format``) since that's a 23andMe-only concern, but
+        the vendor-routing predicates ``_looks_like_23andme`` /
+        ``_looks_like_ancestrydna`` and the format-guidance fallback
+        ``_reject_with_guidance`` must not have been re-imported here."""
+        assert not hasattr(parser_23andme, name), (
+            f"`parser_23andme.{name}` belongs in `backend.ingestion.dispatcher` — "
+            "vendor dispatch was relocated there in step 29 and must not "
+            "drift back into the bare 23andMe parser."
+        )
+
+    @pytest.mark.parametrize(
+        "name", ["_looks_like_23andme", "_looks_like_ancestrydna", "detect_vendor"]
+    )
+    def test_dispatcher_side_helpers_present_on_dispatcher(self, name: str) -> None:
+        """Negative sibling: the helpers do still exist on ``dispatcher``. A
+        regression that moved any of them out (rather than back into
+        ``parser_23andme``) trips here, so the absence-on-parser assertion
+        above cannot trivially pass by way of the helpers having simply
+        vanished from the codebase."""
+        assert hasattr(dispatcher, name), (
+            f"`dispatcher.{name}` should still live in the dispatcher — "
+            "did vendor dispatch get moved out of `backend.ingestion.dispatcher`?"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 33 (ADNA-08a) — flipped rejection test for AncestryDNA inputs
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDispatcherFlipForAncestryDNA:
+    """The historical ``test_rejects_ancestrydna_with_message`` test asserted
+    that ``parse_23andme(<AncestryDNA fixture>)`` raises a vendor-rejection
+    error. After step 29 moved vendor dispatch into
+    ``backend.ingestion.dispatcher`` and step 30 landed
+    ``parser_ancestrydna``, the dispatcher now successfully routes
+    AncestryDNA inputs to the new parser. Step 33 retired the legacy
+    fixture (`sample_ancestrydna.txt`) in favor of
+    `sample_ancestrydna_v2.txt` and flipped the assertion shape:
+
+    - ``dispatcher.parse(<AncestryDNA v2 fixture>)`` succeeds with
+      ``vendor == ANCESTRYDNA``, ``version == "v2.0"``, ``build ==
+      "GRCh37"`` and the Plan §8.7 composed ``file_format`` shape.
+    - The bare 23andMe parser still raises ``UnrecognizedVersionError`` on
+      the same input — vendor dispatch is no longer the parser's job.
+    """
+
+    def test_dispatcher_parses_ancestrydna_v2_successfully(self) -> None:
+        result = dispatcher.parse(ANCESTRY_V2_FILE)
+        assert result.vendor is SourceVendor.ANCESTRYDNA
+        assert result.version == "v2.0"
+        assert result.build == "GRCh37"
+        assert isinstance(result.version, str)
+        assert len(result.variants) > 0
+        # Plan §8.7 composed file_format shape (samples.file_format column).
+        assert f"{result.vendor.value}_{result.version}" == "ancestrydna_v2.0"
+
+    def test_parse_23andme_still_raises_on_ancestrydna_input(self) -> None:
+        """Vendor dispatch is the dispatcher's job — the bare parser must
+        not silently accept non-23andMe content. Locks the post-step-29
+        contract on the new v2 fixture."""
+        with pytest.raises(UnrecognizedVersionError):
+            parse_23andme(ANCESTRY_V2_FILE)

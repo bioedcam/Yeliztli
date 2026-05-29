@@ -37,9 +37,27 @@ def _has_dispatcher() -> bool:
     return True
 
 
+def _has_ancestrydna_parser() -> bool:
+    """The dispatcher routes AncestryDNA to ``parser_ancestrydna`` (step 30).
+
+    Until that module exists, the dispatcher raises ``UnsupportedFormatError``
+    on AncestryDNA inputs — so the vendor-ancestrydna case must remain
+    skipped even though step 27's dispatcher is in place.
+    """
+    try:
+        import backend.ingestion.parser_ancestrydna  # noqa: F401
+    except ModuleNotFoundError as exc:
+        if exc.name != "backend.ingestion.parser_ancestrydna":
+            raise
+        return False
+    return True
+
+
 def _ancestrydna_fixture() -> Path | None:
-    # `sample_ancestrydna_v2.txt` lands in step 34; until then fall back to
-    # the legacy `sample_ancestrydna.txt`, which step 33 will delete.
+    # Step 33 retired the legacy `sample_ancestrydna.txt` in favor of the
+    # §8.6 edge-case-covering `sample_ancestrydna_v2.txt`. Prefer the v2
+    # fixture; fall back to the legacy name only if it still lingers on an
+    # un-migrated checkout.
     for name in ("sample_ancestrydna_v2.txt", "sample_ancestrydna.txt"):
         path = FIXTURES / name
         if path.exists():
@@ -49,6 +67,7 @@ def _ancestrydna_fixture() -> Path | None:
 
 _ANCESTRYDNA_FIXTURE = _ancestrydna_fixture()
 _DISPATCHER_AVAILABLE = _has_dispatcher()
+_ANCESTRYDNA_PARSER_AVAILABLE = _has_ancestrydna_parser()
 
 
 def _read_vcf_lines(path: Path) -> tuple[list[str], list[str]]:
@@ -75,8 +94,13 @@ def _read_vcf_lines(path: Path) -> tuple[list[str], list[str]]:
             "ancestrydna",
             _ANCESTRYDNA_FIXTURE,
             marks=pytest.mark.skipif(
-                not _DISPATCHER_AVAILABLE or _ANCESTRYDNA_FIXTURE is None,
-                reason=("dispatcher (step 27) or AncestryDNA fixture (step 34) not yet landed"),
+                not _DISPATCHER_AVAILABLE
+                or _ANCESTRYDNA_FIXTURE is None
+                or not _ANCESTRYDNA_PARSER_AVAILABLE,
+                reason=(
+                    "dispatcher (step 27), AncestryDNA parser (step 30), or "
+                    "AncestryDNA v2 fixture (step 33/34) not yet landed"
+                ),
             ),
             id="vendor-ancestrydna",
         ),
@@ -222,7 +246,7 @@ def test_cli_rsid_catalog_round_trip(tmp_path: Path) -> None:
     catalog_path.write_text("rs1\t1\t100\nrs2\t2\t200\n", encoding="utf-8")
     output_path = tmp_path / "out.vcf"
 
-    subprocess.run(
+    result = subprocess.run(
         [
             sys.executable,
             str(SCRIPT_PATH),
@@ -236,6 +260,7 @@ def test_cli_rsid_catalog_round_trip(tmp_path: Path) -> None:
         check=True,
     )
 
+    assert result.returncode == 0
     headers, data_lines = _read_vcf_lines(output_path)
     assert any("##source=GenomeInsight-rsid-catalog" in h for h in headers)
     assert data_lines == [

@@ -14,10 +14,11 @@ import logging
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, samples, watched_variants
 
@@ -93,7 +94,7 @@ def _get_clinvar_significance(engine: sa.Engine, rsid: str) -> str | None:
 # ── Endpoints ─────────────────────────────────────────────────────
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_fresh_sample)])
 def list_watched(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> list[WatchResponse]:
@@ -135,6 +136,7 @@ def list_watched(
 @router.post("", status_code=201)
 def watch_variant(body: WatchCreate) -> WatchResponse:
     """Watch a variant, snapshotting its current ClinVar significance."""
+    require_fresh_sample(body.sample_id)
     engine = _get_sample_engine(body.sample_id)
 
     # Snapshot the current ClinVar significance from annotated_variants
@@ -167,7 +169,11 @@ def watch_variant(body: WatchCreate) -> WatchResponse:
     )
 
 
-@router.delete("/{rsid}", status_code=204)
+@router.delete(
+    "/{rsid}",
+    status_code=204,
+    dependencies=[Depends(require_fresh_sample)],
+)
 def unwatch_variant(
     rsid: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -191,6 +197,7 @@ def unwatch_variant(
 @router.patch("/{rsid}")
 def update_watch_notes(rsid: str, body: WatchNotesUpdate) -> WatchResponse:
     """Update notes on a watched variant."""
+    require_fresh_sample(body.sample_id)
     engine = _get_sample_engine(body.sample_id)
 
     with engine.begin() as conn:

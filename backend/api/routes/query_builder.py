@@ -23,6 +23,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, samples
 from backend.query.translator import (
@@ -261,6 +262,7 @@ def execute_query(body: QueryRequest) -> QueryResultPage:
 
     Supports cursor-based keyset pagination on (chrom, pos).
     """
+    require_fresh_sample(body.sample_id)
     sample_engine = _get_sample_engine(body.sample_id)
 
     if not _has_annotated_variants(sample_engine):
@@ -402,6 +404,7 @@ def execute_sql(body: SqlRequest) -> SqlResult:
     Only read operations (SELECT, PRAGMA reads, etc.) are allowed.
     The connection is opened in SQLite read-only mode as defence-in-depth.
     """
+    require_fresh_sample(body.sample_id)
     _validate_read_only(body.sql)
 
     db_path = _get_sample_db_path(body.sample_id)

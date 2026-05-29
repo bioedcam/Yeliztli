@@ -5,11 +5,30 @@
  * Includes individual sample deletion with confirmation.
  */
 
-import { useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Pencil, Trash2, Save, X, ChevronDown, ChevronUp, Plus, AlertTriangle } from "lucide-react"
+import { useQueries } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { formatFileFormat } from "@/lib/format"
-import { useSamples, useSample, useUpdateSample, useDeleteSample } from "@/api/samples"
+import {
+  useSamples,
+  useSample,
+  useSampleMergedChildren,
+  useUpdateSample,
+  useDeleteSample,
+} from "@/api/samples"
+import {
+  individualsKeys,
+  useCreateIndividual,
+  useIndividuals,
+  useLinkSample,
+  useUnlinkSample,
+} from "@/api/individuals"
+import {
+  IndividualsApiError,
+  type IndividualDetail,
+  type IndividualSummary,
+} from "@/types/individuals"
 import type { SampleUpdate } from "@/types/samples"
 
 function ExtraFieldEditor({
@@ -287,6 +306,13 @@ function DeleteSampleConfirm({
   onDeleted: () => void
 }) {
   const deleteSample = useDeleteSample()
+  const mergedChildrenQuery = useSampleMergedChildren(sampleId)
+  const mergedChildren = mergedChildrenQuery.data ?? []
+  const cascadeCount = mergedChildren.length
+  const confirmLabel =
+    cascadeCount > 0
+      ? `Delete Sample + ${cascadeCount} Merged`
+      : "Delete Sample"
 
   function handleConfirm() {
     deleteSample.mutate(sampleId, { onSuccess: onDeleted })
@@ -309,17 +335,50 @@ function DeleteSampleConfirm({
             This will permanently remove the sample database file and all associated data
             (variants, annotations, findings, tags). This action cannot be undone.
           </p>
+          {mergedChildrenQuery.isLoading && (
+            <p
+              className="mt-2 text-xs text-red-700 dark:text-red-400"
+              data-testid={`delete-cascade-loading-${sampleId}`}
+            >
+              Checking for merged samples…
+            </p>
+          )}
+          {cascadeCount > 0 && (
+            <div
+              className="mt-3 rounded-md border border-red-400 dark:border-red-700 bg-red-100 dark:bg-red-950/60 p-3"
+              data-testid={`delete-cascade-${sampleId}`}
+            >
+              <p className="text-sm font-semibold text-red-800 dark:text-red-200">
+                Will also delete {cascadeCount} merged{" "}
+                {cascadeCount === 1 ? "sample" : "samples"}:
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-sm text-red-700 dark:text-red-300 space-y-0.5">
+                {mergedChildren.map((child) => (
+                  <li
+                    key={child.id}
+                    data-testid={`delete-cascade-child-${child.id}`}
+                  >
+                    {child.name}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-red-700 dark:text-red-400">
+                These merged samples were built from this source and cannot
+                be reconstructed without it.
+              </p>
+            </div>
+          )}
         </div>
       </div>
       <div className="flex gap-3">
         <button
           type="button"
           onClick={handleConfirm}
-          disabled={deleteSample.isPending}
+          disabled={deleteSample.isPending || mergedChildrenQuery.isLoading}
           className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
           data-testid="delete-confirm-btn"
         >
-          {deleteSample.isPending ? "Deleting..." : "Delete Sample"}
+          {deleteSample.isPending ? "Deleting..." : confirmLabel}
         </button>
         <button
           type="button"
@@ -340,10 +399,225 @@ function DeleteSampleConfirm({
   )
 }
 
+function AssignIndividualControl({
+  sampleId,
+  individuals,
+  currentIndividualId,
+}: {
+  sampleId: number
+  individuals: IndividualSummary[]
+  currentIndividualId: number | null
+}) {
+  const linkSample = useLinkSample()
+  const unlinkSample = useUnlinkSample()
+  const createIndividual = useCreateIndividual()
+
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const newNameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (creating) newNameInputRef.current?.focus()
+  }, [creating])
+
+  const isPending =
+    linkSample.isPending || unlinkSample.isPending || createIndividual.isPending
+
+  function formatError(err: unknown): string {
+    if (err instanceof IndividualsApiError && err.isLinkConflict()) {
+      return err.body.detail.message
+    }
+    if (err instanceof Error) return err.message
+    return String(err)
+  }
+
+  function clearCreate() {
+    setCreating(false)
+    setNewName("")
+  }
+
+  function relink(targetId: number) {
+    const doLink = () =>
+      linkSample.mutate(
+        { individualId: targetId, sampleId },
+        { onError: (err) => setError(formatError(err)) },
+      )
+    if (currentIndividualId != null) {
+      unlinkSample.mutate(
+        { individualId: currentIndividualId, sampleId },
+        { onSuccess: doLink, onError: (err) => setError(formatError(err)) },
+      )
+    } else {
+      doLink()
+    }
+  }
+
+  function handleSelect(value: string) {
+    setError(null)
+    if (value === "create") {
+      setCreating(true)
+      return
+    }
+    if (value === "unassigned") {
+      if (currentIndividualId != null) {
+        unlinkSample.mutate(
+          { individualId: currentIndividualId, sampleId },
+          { onError: (err) => setError(formatError(err)) },
+        )
+      }
+      return
+    }
+    const targetId = Number(value)
+    if (Number.isNaN(targetId) || targetId === currentIndividualId) return
+    relink(targetId)
+  }
+
+  async function handleCreateConfirm() {
+    const name = newName.trim()
+    if (!name) return
+    setError(null)
+    try {
+      const created = await createIndividual.mutateAsync({ display_name: name })
+      if (currentIndividualId != null) {
+        await unlinkSample.mutateAsync({
+          individualId: currentIndividualId,
+          sampleId,
+        })
+      }
+      await linkSample.mutateAsync({ individualId: created.id, sampleId })
+      clearCreate()
+    } catch (e) {
+      setError(formatError(e))
+    }
+  }
+
+  return (
+    <div
+      className="mt-1 flex flex-wrap items-center gap-2"
+      data-testid={`sample-assign-${sampleId}`}
+    >
+      <label
+        htmlFor={`assign-individual-${sampleId}`}
+        className="text-xs text-muted-foreground"
+      >
+        Individual:
+      </label>
+      {!creating ? (
+        <select
+          id={`assign-individual-${sampleId}`}
+          value={
+            currentIndividualId == null
+              ? "unassigned"
+              : String(currentIndividualId)
+          }
+          onChange={(e) => handleSelect(e.target.value)}
+          disabled={isPending}
+          className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+          data-testid={`assign-individual-select-${sampleId}`}
+        >
+          <option value="unassigned">Unassigned</option>
+          {individuals.map((ind) => (
+            <option key={ind.id} value={ind.id}>
+              {ind.display_name}
+            </option>
+          ))}
+          <option value="create">+ Create new…</option>
+        </select>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <input
+            ref={newNameInputRef}
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                void handleCreateConfirm()
+              } else if (e.key === "Escape") {
+                e.preventDefault()
+                clearCreate()
+                setError(null)
+              }
+            }}
+            placeholder="New individual name"
+            aria-label="New individual name"
+            className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+            data-testid={`assign-new-name-${sampleId}`}
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreateConfirm()}
+            disabled={!newName.trim() || isPending}
+            className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            data-testid={`assign-create-confirm-${sampleId}`}
+          >
+            Create &amp; link
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              clearCreate()
+              setError(null)
+            }}
+            disabled={isPending}
+            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50 transition-colors"
+            data-testid={`assign-create-cancel-${sampleId}`}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {error && (
+        <span
+          role="alert"
+          className="text-xs text-red-600 dark:text-red-400"
+          data-testid={`assign-error-${sampleId}`}
+        >
+          {error}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function SampleMetadataEditor() {
   const { data: samples, isLoading } = useSamples()
+  const { data: individualsData } = useIndividuals()
+  const individuals: IndividualSummary[] = Array.isArray(individualsData)
+    ? individualsData
+    : []
   const [editingSampleId, setEditingSampleId] = useState<number | null>(null)
   const [deletingSampleId, setDeletingSampleId] = useState<number | null>(null)
+
+  const detailQueries = useQueries({
+    queries: individuals.map((ind) => ({
+      queryKey: individualsKeys.detail(ind.id),
+      queryFn: async (): Promise<IndividualDetail> => {
+        const res = await fetch(`/api/individuals/${ind.id}`)
+        if (!res.ok) throw new Error(`Failed to fetch individual ${ind.id}`)
+        return (await res.json()) as IndividualDetail
+      },
+    })),
+  })
+
+  const detailsData = detailQueries
+    .map((q) => q.data as IndividualDetail | undefined)
+    .filter((d): d is IndividualDetail => d != null)
+  const detailsKey = JSON.stringify(
+    detailsData.map((d) => [d.id, d.linked_samples.map((s) => s.id)]),
+  )
+  const sampleToIndividual = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const detail of detailsData) {
+      for (const linked of detail.linked_samples) {
+        map.set(linked.id, detail.id)
+      }
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailsKey])
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading samples...</p>
@@ -405,6 +679,11 @@ export default function SampleMetadataEditor() {
                         </>
                       )}
                     </p>
+                    <AssignIndividualControl
+                      sampleId={sample.id}
+                      individuals={individuals}
+                      currentIndividualId={sampleToIndividual.get(sample.id) ?? null}
+                    />
                   </div>
                 </div>
 

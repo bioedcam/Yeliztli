@@ -815,3 +815,231 @@ class TestVariantSearch:
         client, sid = client_with_sample
         data = client.get(f"/api/variants/search?sample_id={sid}&q=%20").json()
         assert data == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Step 71 — Source / concordance columns + filter chips (Plan §10.7)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Merged-sample fixture: variants live on BOTH raw_variants (source,
+# concordance, alt_rsid populated) and annotated_variants (rsid-keyed). The
+# list endpoint reads from annotated_variants and LEFT-JOINs raw_variants to
+# surface the provenance columns + filter chips per Plan §10.7.
+MERGED_RAW_VARIANTS = [
+    {
+        "rsid": "rs100",
+        "chrom": "1",
+        "pos": 50000,
+        "genotype": "AA",
+        "source": "S1",
+        "concordance": "match",
+        "discordant_alt_genotype": "",
+        "alt_rsid": "",
+    },
+    {
+        "rsid": "rs101",
+        "chrom": "1",
+        "pos": 100000,
+        "genotype": "AG",
+        "source": "S2",
+        "concordance": "filled_nocall",
+        "discordant_alt_genotype": "",
+        "alt_rsid": "",
+    },
+    {
+        "rsid": "rs102",
+        "chrom": "1",
+        "pos": 200000,
+        "genotype": "??",
+        "source": "both",
+        "concordance": "discordant",
+        "discordant_alt_genotype": "S1=AG;S2=GG",
+        "alt_rsid": "",
+    },
+    {
+        "rsid": "rs200",
+        "chrom": "2",
+        "pos": 10000,
+        "genotype": "CC",
+        "source": "S1",
+        "concordance": "unique",
+        "discordant_alt_genotype": "",
+        "alt_rsid": "rs200_old",
+    },
+]
+
+MERGED_ANNOTATED_VARIANTS = [
+    {
+        "rsid": "rs100",
+        "chrom": "1",
+        "pos": 50000,
+        "genotype": "AA",
+        "gene_symbol": "BRCA1",
+        "annotation_coverage": 0b000111,
+    },
+    {
+        "rsid": "rs101",
+        "chrom": "1",
+        "pos": 100000,
+        "genotype": "AG",
+        "gene_symbol": "TP53",
+        "annotation_coverage": 0b000011,
+    },
+    {
+        "rsid": "rs102",
+        "chrom": "1",
+        "pos": 200000,
+        "genotype": "??",
+        "gene_symbol": "APOE",
+        "annotation_coverage": 0b000011,
+    },
+    {
+        "rsid": "rs200",
+        "chrom": "2",
+        "pos": 10000,
+        "genotype": "CC",
+        "gene_symbol": "MTHFR",
+        "annotation_coverage": 0b111111,
+    },
+]
+
+
+@pytest.fixture
+def client_with_merged_sample(tmp_data_dir: Path):
+    """FastAPI TestClient for a merged sample: raw_variants AND annotated_variants
+    populated, with non-empty source / concordance / alt_rsid values."""
+    settings = Settings(data_dir=tmp_data_dir, wal_mode=False)
+
+    ref_path = settings.reference_db_path
+    ref_engine = sa.create_engine(f"sqlite:///{ref_path}")
+    reference_metadata.create_all(ref_engine)
+
+    with ref_engine.begin() as conn:
+        result = conn.execute(
+            samples.insert().values(
+                name="merged_sample",
+                db_path="samples/merged.db",
+                file_format="merged_v1",
+                file_hash="mergedhash",
+            )
+        )
+        sample_id = result.lastrowid
+    ref_engine.dispose()
+
+    sample_db_path = tmp_data_dir / "samples" / "merged.db"
+    sample_engine = sa.create_engine(f"sqlite:///{sample_db_path}")
+    create_sample_tables(sample_engine)
+    with sample_engine.begin() as conn:
+        conn.execute(raw_variants.insert(), MERGED_RAW_VARIANTS)
+        conn.execute(annotated_variants.insert(), MERGED_ANNOTATED_VARIANTS)
+    sample_engine.dispose()
+
+    with (
+        patch("backend.main.get_settings", return_value=settings),
+        patch("backend.db.connection.get_settings", return_value=settings),
+        patch("backend.api.routes.variants.get_registry") as mock_reg,
+        patch("backend.api.routes.ingest.get_registry") as mock_reg2,
+        patch("backend.api.routes.samples.get_registry") as mock_reg3,
+    ):
+        reset_registry()
+        registry = DBRegistry(settings)
+        mock_reg.return_value = registry
+        mock_reg2.return_value = registry
+        mock_reg3.return_value = registry
+
+        from backend.main import create_app
+
+        app = create_app()
+        with TestClient(app) as tc:
+            yield tc, sample_id
+
+        registry.dispose_all()
+        reset_registry()
+
+
+class TestMergeProvenanceColumns:
+    """Step 71 / Plan §10.7 — Source, Concordance, alt_rsid surface on list
+    endpoint via LEFT-JOIN against raw_variants when the table is
+    annotated_variants. Filters validate against the closed enum sets."""
+
+    def test_list_surfaces_source_concordance_on_merged_sample(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&limit=50")
+        assert response.status_code == 200
+        items = {item["rsid"]: item for item in response.json()["items"]}
+        assert len(items) == 4
+        assert items["rs100"]["source"] == "S1"
+        assert items["rs100"]["concordance"] == "match"
+        assert items["rs101"]["source"] == "S2"
+        assert items["rs101"]["concordance"] == "filled_nocall"
+        assert items["rs102"]["source"] == "both"
+        assert items["rs102"]["concordance"] == "discordant"
+        assert items["rs200"]["alt_rsid"] == "rs200_old"
+
+    def test_unmerged_sample_carries_empty_provenance(self, client_with_sample):
+        """Unmerged samples carry server-default '' for the new columns; the
+        list endpoint passes them through unchanged."""
+        client, sid = client_with_sample
+        response = client.get(f"/api/variants?sample_id={sid}&limit=1")
+        item = response.json()["items"][0]
+        assert item["source"] == ""
+        assert item["concordance"] == ""
+        assert item["alt_rsid"] == ""
+
+    def test_filter_by_source_s1(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=source:S1")
+        rsids = [i["rsid"] for i in response.json()["items"]]
+        assert set(rsids) == {"rs100", "rs200"}
+
+    def test_filter_by_source_both(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=source:both")
+        rsids = [i["rsid"] for i in response.json()["items"]]
+        assert rsids == ["rs102"]
+
+    def test_filter_by_concordance_discordant(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=concordance:discordant")
+        rsids = [i["rsid"] for i in response.json()["items"]]
+        assert rsids == ["rs102"]
+
+    def test_filter_combined_source_and_concordance(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=source:S1,concordance:unique")
+        rsids = [i["rsid"] for i in response.json()["items"]]
+        assert rsids == ["rs200"]
+
+    def test_invalid_source_value_silently_dropped(self, client_with_merged_sample):
+        """Stray ``source:bogus`` falls outside the enum set and is ignored —
+        the response should match the unfiltered case rather than zero-row."""
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=source:bogus")
+        assert len(response.json()["items"]) == 4
+
+    def test_invalid_concordance_value_silently_dropped(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=concordance:not_a_bucket")
+        assert len(response.json()["items"]) == 4
+
+    def test_count_filter_by_source(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants/count?sample_id={sid}&filter=source:S1")
+        data = response.json()
+        assert data["total"] == 2
+        assert data["filtered"] is True
+
+    def test_count_filter_by_concordance(self, client_with_merged_sample):
+        client, sid = client_with_merged_sample
+        response = client.get(f"/api/variants/count?sample_id={sid}&filter=concordance:match")
+        data = response.json()
+        assert data["total"] == 1
+        assert data["filtered"] is True
+
+    def test_raw_variants_table_filters_by_source(self, client_with_sample):
+        """When the route falls back to raw_variants (no annotation yet),
+        source / concordance filters still resolve directly against it.
+        The unmerged fixture has source='' everywhere so source:S1 zero-rows."""
+        client, sid = client_with_sample
+        response = client.get(f"/api/variants?sample_id={sid}&filter=source:S1")
+        assert response.json()["items"] == []

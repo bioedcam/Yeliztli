@@ -34,7 +34,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from backend.db.tables import annotated_variants, clinvar_variants, database_versions, raw_variants
+from backend.db.tables import annotated_variants, clinvar_variants, raw_variants
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -470,37 +470,16 @@ def record_clinvar_version(
     checksum: str | None = None,
 ) -> None:
     """Insert or update the ClinVar version in the database_versions table."""
-    with engine.begin() as conn:
-        # Check if a record exists
-        existing = conn.execute(
-            sa.select(database_versions.c.db_name).where(database_versions.c.db_name == "clinvar")
-        ).first()
+    from backend.db.database_registry import _record_db_version
 
-        now = datetime.now(UTC)
-
-        if existing:
-            conn.execute(
-                database_versions.update()
-                .where(database_versions.c.db_name == "clinvar")
-                .values(
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
-        else:
-            conn.execute(
-                database_versions.insert().values(
-                    db_name="clinvar",
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
+    _record_db_version(
+        engine,
+        db_name="clinvar",
+        version=version,
+        file_size_bytes=file_size_bytes,
+        sha256=checksum,
+        file_path=file_path,
+    )
 
 
 def download_clinvar_vcf(

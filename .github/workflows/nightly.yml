@@ -1,0 +1,200 @@
+name: Nightly slow-tier tests
+
+# Runs the dormant slow-tier test suite (pytest -m slow) at 04:00 UTC every
+# day, plus on-demand via workflow_dispatch. Tests marked `requires_real_bundle`
+# auto-skip locally and in PR-blocking CI; this workflow stages the production
+# VEP + LAI release assets so they wake up.
+#
+# Cross-step ownership:
+# - Step 25a  — `tests/backend/test_lai.py::TestRealBundleLAIAccuracy`
+# - Step 42   — `tests/backend/test_annotation_engine_ancestrydna_real_bundle.py`
+# - Step 85   — `tests/backend/test_sample_merge_performance.py`
+#
+# Plan §13.1 / §16.5: cache release assets on the manifest's `sha256` so the
+# nightly run reuses them until a new bundle ships; on test failure, file
+# a GitHub Issue labeled `slow-tier-regression` so bio-validator can triage
+# without watching the Actions UI.
+
+on:
+  schedule:
+    # 04:00 UTC daily. GitHub may delay or skip scheduled runs under load —
+    # treat this as an SLA target, not a guarantee.
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: nightly-slow-tier
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  slow-tests:
+    name: Slow-tier pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Setup Java (for LAI Beagle phasing)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      # ── Resolve bundle metadata ────────────────────────────────────────
+      - name: Resolve bundle manifest entries
+        id: manifest
+        run: |
+          python <<'PY'
+          import json, os, pathlib
+
+          manifest = json.loads(pathlib.Path("bundles/manifest.json").read_text())
+          out = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a") as fh:
+              for key in ("vep_bundle", "lai_bundle"):
+                  entry = manifest.get("bundles", {}).get(key, {})
+                  fh.write(f"{key}_url={entry.get('url', '')}\n")
+                  fh.write(f"{key}_sha256={entry.get('sha256', '')}\n")
+                  fh.write(f"{key}_size={entry.get('size_bytes', 0)}\n")
+          PY
+
+      # ── VEP bundle (step 42) ──────────────────────────────────────────
+      - name: Cache VEP bundle
+        id: vep-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.genomeinsight/vep_bundle.db
+          key: vep-bundle-${{ steps.manifest.outputs.vep_bundle_sha256 }}
+
+      - name: Download VEP bundle
+        if: steps.vep-cache.outputs.cache-hit != 'true' && steps.manifest.outputs.vep_bundle_url != ''
+        continue-on-error: true
+        run: |
+          mkdir -p "$HOME/.genomeinsight"
+          url='${{ steps.manifest.outputs.vep_bundle_url }}'
+          dest="$HOME/.genomeinsight/vep_bundle.db"
+          echo "Fetching $url"
+          # Tolerate placeholder URLs / drafted releases: a download miss
+          # leaves the slow-tier test dormant rather than failing the run.
+          if ! curl -fL --retry 3 --retry-delay 10 -o "$dest" "$url"; then
+            echo "::warning::VEP bundle download failed; slow-tier VEP tests will skip."
+            rm -f "$dest"
+          fi
+
+      - name: Verify VEP bundle sha256
+        # `hashFiles()` only matches paths under GITHUB_WORKSPACE, so it can never
+        # see a bundle staged in $HOME — gate on an explicit existence check instead.
+        continue-on-error: true
+        run: |
+          dest="$HOME/.genomeinsight/vep_bundle.db"
+          if [ ! -f "$dest" ]; then
+            echo "::warning::VEP bundle not present; skipping sha256 verification."
+            exit 0
+          fi
+          expected='${{ steps.manifest.outputs.vep_bundle_sha256 }}'
+          actual=$(sha256sum "$dest" | awk '{print $1}')
+          if [ "$expected" = "0000000000000000000000000000000000000000000000000000000000000000" ]; then
+            echo "::warning::VEP manifest sha256 is the placeholder; skipping verification."
+          elif [ "$actual" != "$expected" ]; then
+            echo "::warning::VEP bundle sha256 mismatch (expected $expected, got $actual); removing."
+            rm -f "$HOME/.genomeinsight/vep_bundle.db"
+          else
+            echo "VEP bundle sha256 OK: $actual"
+          fi
+
+      # ── LAI bundle (step 25a) ─────────────────────────────────────────
+      - name: Cache LAI bundle
+        id: lai-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.genomeinsight/lai_bundle
+          key: lai-bundle-${{ steps.manifest.outputs.lai_bundle_sha256 }}
+
+      - name: Download + extract LAI bundle
+        if: steps.lai-cache.outputs.cache-hit != 'true' && steps.manifest.outputs.lai_bundle_url != ''
+        continue-on-error: true
+        run: |
+          mkdir -p "$HOME/.genomeinsight"
+          url='${{ steps.manifest.outputs.lai_bundle_url }}'
+          tarball="$RUNNER_TEMP/lai_bundle.tar.gz"
+          echo "Fetching $url"
+          if ! curl -fL --retry 3 --retry-delay 10 -o "$tarball" "$url"; then
+            echo "::warning::LAI bundle download failed; slow-tier LAI tests will skip."
+            exit 0
+          fi
+          expected='${{ steps.manifest.outputs.lai_bundle_sha256 }}'
+          if [ "$expected" != "0000000000000000000000000000000000000000000000000000000000000000" ]; then
+            actual=$(sha256sum "$tarball" | awk '{print $1}')
+            if [ "$actual" != "$expected" ]; then
+              echo "::warning::LAI bundle sha256 mismatch (expected $expected, got $actual); aborting extract."
+              rm -f "$tarball"
+              exit 0
+            fi
+          else
+            echo "::warning::LAI manifest sha256 is the placeholder; skipping verification."
+          fi
+          tar -xzf "$tarball" -C "$HOME/.genomeinsight/"
+          rm -f "$tarball"
+
+      # ── Run slow-tier tests ────────────────────────────────────────────
+      - name: Show staged bundles
+        run: |
+          echo "data_dir contents:"
+          ls -la "$HOME/.genomeinsight/" || true
+          if [ -d "$HOME/.genomeinsight/lai_bundle" ]; then
+            echo "lai_bundle entries:"
+            find "$HOME/.genomeinsight/lai_bundle/" -maxdepth 1 -printf '%f\n' | head
+          fi
+
+      - name: Run slow-tier pytest
+        id: pytest
+        run: python -m pytest tests/backend/ -v --tb=short -m slow
+
+      # ── Failure → file slow-tier-regression issue ──────────────────────
+      - name: File slow-tier-regression issue
+        if: failure() && steps.pytest.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `[slow-tier-regression] Nightly pytest -m slow failed on ${today}`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `The nightly slow-tier workflow failed on ${today}.`,
+              ``,
+              `**Run:** ${runUrl}`,
+              `**Commit:** ${context.sha}`,
+              ``,
+              `Slow-tier suite covers:`,
+              `- \`tests/backend/test_lai.py::TestRealBundleLAIAccuracy\` (step 25a)`,
+              `- \`tests/backend/test_annotation_engine_ancestrydna_real_bundle.py\` (step 42)`,
+              `- \`tests/backend/test_sample_merge_performance.py\` (step 85)`,
+              ``,
+              `Owner: bio-validator. Triage by re-running the workflow with the`,
+              `\`workflow_dispatch\` button after inspecting the failing assertion;`,
+              `re-tune the calibrated thresholds in the test file only after`,
+              `confirming the underlying bundle change is intentional.`,
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['slow-tier-regression'],
+            });

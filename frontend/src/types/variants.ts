@@ -26,6 +26,40 @@ export interface VariantRow {
   chrom_grch38: string | null
   pos_grch38: number | null
   tags?: string[] | null
+  /** Merge-provenance columns (AncestryDNA Plan §10.4 / Step 71).
+   *  Server-default '' on unmerged samples; on merged samples the backend
+   *  LEFT-JOINs raw_variants to surface them through the variants list. */
+  source?: SourceTag | ""
+  concordance?: ConcordanceTag | ""
+  alt_rsid?: string
+}
+
+/** Per-row source attribution on a merged sample (Plan §10.4). */
+export type SourceTag = "S1" | "S2" | "both"
+
+/** Per-row concordance bucket on a merged sample (Plan §10.4). */
+export type ConcordanceTag = "match" | "filled_nocall" | "discordant" | "unique"
+
+export const SOURCE_OPTIONS: readonly SourceTag[] = ["S1", "S2", "both"] as const
+export const CONCORDANCE_OPTIONS: readonly ConcordanceTag[] = [
+  "match",
+  "filled_nocall",
+  "discordant",
+  "unique",
+] as const
+
+/** Human-readable labels for the merged-sample filter chips. */
+export const SOURCE_LABELS: Record<SourceTag, string> = {
+  S1: "S₁",
+  S2: "S₂",
+  both: "Both",
+}
+
+export const CONCORDANCE_LABELS: Record<ConcordanceTag, string> = {
+  match: "Match",
+  filled_nocall: "Filled no-call",
+  discordant: "Discordant",
+  unique: "Unique",
 }
 
 export interface VariantPage {

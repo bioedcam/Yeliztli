@@ -81,15 +81,11 @@ def run_lai_analysis(
     # Ensure lai_results table exists (CREATE TABLE IF NOT EXISTS)
     _ensure_lai_tables(sample_engine)
 
-    # Read genotypes from sample DB
-    from backend.db.tables import raw_variants
-
-    with sample_engine.connect() as conn:
-        rows = conn.execute(sa.select(raw_variants)).fetchall()
-
-    genotypes = [
-        {"rsid": r.rsid, "chrom": r.chrom, "pos": r.pos, "genotype": r.genotype} for r in rows
-    ]
+    # Read genotypes (+ optional source column on Phase 3+ sample DBs) and the
+    # parent sample's file_format. Source dispatches single-key vs three-key
+    # telemetry in the runner (Plan §6.6).
+    file_format = _read_sample_file_format(sample_engine)
+    genotypes = _read_sample_genotypes(sample_engine)
 
     if not genotypes:
         raise RuntimeError("No genotypes found in sample database")
@@ -110,6 +106,7 @@ def run_lai_analysis(
         output_dir=str(output_dir),
         progress_callback=progress_callback,
         cleanup=True,
+        file_format=file_format,
     )
 
     # Store results
@@ -125,6 +122,56 @@ def run_lai_analysis(
 def _ensure_lai_tables(engine: sa.Engine) -> None:
     """Create the lai_results table if it doesn't exist."""
     lai_results.create(engine, checkfirst=True)
+
+
+def _read_sample_file_format(engine: sa.Engine) -> str:
+    """Return ``sample_metadata.file_format`` for the sample, or empty string.
+
+    Drives the LAI runner's single-key vs three-key telemetry dispatch
+    (Plan §6.6). Sample DBs predating the metadata table get an empty string;
+    the runner falls back to the ``unknown`` vendor key in that case.
+    """
+    from backend.db.tables import sample_metadata_table
+
+    inspector = sa.inspect(engine)
+    if "sample_metadata" not in inspector.get_table_names():
+        return ""
+    with engine.connect() as conn:
+        row = conn.execute(
+            sa.select(sample_metadata_table.c.file_format).where(sample_metadata_table.c.id == 1)
+        ).fetchone()
+    if row is None or row.file_format is None:
+        return ""
+    return str(row.file_format)
+
+
+def _read_sample_genotypes(engine: sa.Engine) -> list[dict]:
+    """Read raw_variants, defaulting ``source`` to ``""`` on pre-Phase-3 DBs.
+
+    The runner's per-source telemetry accumulator reads ``source`` directly,
+    so older sample DBs (created before the v8 schema's ``source`` column)
+    fall through with empty strings and the file_format vendor key drives the
+    single-key payload (Plan §6.6).
+    """
+    inspector = sa.inspect(engine)
+    raw_cols = {c["name"] for c in inspector.get_columns("raw_variants")}
+    has_source = "source" in raw_cols
+    if has_source:
+        stmt = sa.text("SELECT rsid, chrom, pos, genotype, source FROM raw_variants")
+    else:
+        stmt = sa.text("SELECT rsid, chrom, pos, genotype FROM raw_variants")
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    return [
+        {
+            "rsid": r.rsid,
+            "chrom": r.chrom,
+            "pos": r.pos,
+            "genotype": r.genotype,
+            "source": (getattr(r, "source", None) or "") if has_source else "",
+        }
+        for r in rows
+    ]
 
 
 def _store_lai_results(

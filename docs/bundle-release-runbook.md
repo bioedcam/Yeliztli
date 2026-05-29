@@ -274,11 +274,10 @@ python -c "
 from backend.db.manifest import fetch_manifest
 m = fetch_manifest()
 entry = m.bundles['vep_bundle']
-print(entry.version, entry.url, entry.sha256, entry.size_bytes)
+print(entry.version, entry.url, entry.sha256, entry.size_bytes, entry.min_app_version)
 assert entry.version == 'v2.0.0'
+assert entry.min_app_version == '0.2.0'
 "
-# Step 5 adds `min_app_version` to `BundleManifestEntry`; once it lands,
-# extend this smoke with: `assert entry.min_app_version == '0.2.0'`.
 ```
 
 The output should print the v2.0.0 entry exactly as recorded in the

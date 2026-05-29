@@ -38,6 +38,7 @@ from pathlib import Path
 import sqlalchemy as sa
 import structlog
 
+from backend.analysis.zygosity import is_no_call
 from backend.annotation.engine import GWAS_BIT
 from backend.db.tables import (
     annotated_variants,
@@ -242,7 +243,7 @@ def _normalize_genotype(genotype: str | None) -> str | None:
     Handles common formats: 'CT', 'TC', '--' (no-call).
     Returns None for no-calls or missing data.
     """
-    if genotype is None or genotype.strip() in ("", "--", "II", "DD", "DI", "ID"):
+    if is_no_call(genotype):
         return None
     return genotype.strip().upper()
 
@@ -439,7 +440,7 @@ def _compute_panel_coverage(
             raw_gt = genotypes.get(snp.rsid)
             if raw_gt is None:
                 status = "not_on_array"
-            elif raw_gt.strip() in ("", "--", "II", "DD", "DI", "ID"):
+            elif is_no_call(raw_gt):
                 status = "no_call"
             else:
                 status = "called"

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /** Update Manager Settings sub-page (P4-18).
  *
  * Per-database table with version info, auto-update toggles,
@@ -7,6 +8,7 @@
 
 import { useState } from 'react'
 import {
+  useAppUpdate,
   useDatabaseStatuses,
   useUpdateCheck,
   useUpdateHistory,
@@ -18,6 +20,7 @@ import {
   type UpdateAvailable,
   type UpdateHistoryEntry,
   type ReannotationPrompt,
+  type TriggerUpdateVariables,
 } from '@/api/updates'
 import { cn } from '@/lib/utils'
 import {
@@ -28,7 +31,9 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  ExternalLink,
   XCircle,
+  Zap,
 } from 'lucide-react'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -72,6 +77,36 @@ function getUpdateCadence(dbName: string, autoUpdate: boolean): string {
   if (dbName === 'gwas_catalog') return 'Monthly'
   if (dbName === 'cpic') return 'Monthly'
   return 'Auto'
+}
+
+// ── Bandwidth window helpers ─────────────────────────────────────────
+
+/** Format ``"02:00-06:00"`` as ``"02:00–06:00"`` (en-dash) for display. */
+function formatWindow(window: string): string {
+  return window.replace('-', '–')
+}
+
+/**
+ * Return true when `now` falls outside the configured bandwidth window.
+ * Windows are ``"HH:MM-HH:MM"``; ranges may wrap past midnight
+ * (e.g. ``"22:00-06:00"``). Returns false for missing/malformed windows
+ * so a misconfigured value never blocks an update.
+ */
+export function isOutsideBandwidthWindow(
+  window: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!window) return false
+  const match = window.match(/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/)
+  if (!match) return false
+  const startMin = Number(match[1]) * 60 + Number(match[2])
+  const endMin = Number(match[3]) * 60 + Number(match[4])
+  const nowMin = now.getHours() * 60 + now.getMinutes()
+  if (startMin <= endMin) {
+    return !(startMin <= nowMin && nowMin <= endMin)
+  }
+  // Window wraps midnight
+  return !(nowMin >= startMin || nowMin <= endMin)
 }
 
 // ── Re-annotation Banner ─────────────────────────────────────────────
@@ -133,7 +168,7 @@ interface DatabaseRowProps {
   status: DatabaseStatus
   updateInfo: UpdateAvailable | undefined
   checkedAt: string | null
-  onTriggerUpdate: (dbName: string) => void
+  onTriggerUpdate: (dbName: string, force: boolean) => void
   onToggleAutoUpdate: (dbName: string, enabled: boolean) => void
   isUpdating: boolean
   isTogglingAutoUpdate: boolean
@@ -149,6 +184,10 @@ function DatabaseRow({
   isTogglingAutoUpdate,
 }: DatabaseRowProps) {
   const hasUpdate = status.update_available || updateInfo != null
+  const outsideWindow = isOutsideBandwidthWindow(status.update_download_window)
+  const windowTooltip = status.update_download_window
+    ? `Outside bandwidth window (${formatWindow(status.update_download_window)}). Update will run in window or click Force update.`
+    : ''
 
   return (
     <tr className="border-b border-border last:border-0">
@@ -243,31 +282,149 @@ function DatabaseRow({
       {/* Update now */}
       <td className="py-3 px-4">
         {hasUpdate && (
-          <button
-            type="button"
-            onClick={() => onTriggerUpdate(status.db_name)}
-            disabled={isUpdating}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onTriggerUpdate(status.db_name, false)}
+              disabled={isUpdating}
+              title={outsideWindow ? windowTooltip : undefined}
+              aria-describedby={
+                outsideWindow ? `${status.db_name}-window-hint` : undefined
+              }
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium',
+                'bg-primary text-primary-foreground',
+                'hover:bg-primary/90',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+              )}
+            >
+              {isUpdating ? (
+                <>
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                  Updating…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3 w-3" />
+                  Update now
+                </>
+              )}
+            </button>
+            {outsideWindow && (
+              <>
+                <span id={`${status.db_name}-window-hint`} className="sr-only">
+                  {windowTooltip}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ok = window.confirm(
+                      `Force update bypasses the bandwidth window (${formatWindow(
+                        status.update_download_window!,
+                      )}). Large downloads may impact other network activity. Continue?`,
+                    )
+                    if (ok) onTriggerUpdate(status.db_name, true)
+                  }}
+                  disabled={isUpdating}
+                  title="Force update — bypasses the bandwidth window."
+                  aria-label={`Force update ${status.display_name}`}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium',
+                    'border-amber-400 text-amber-700 hover:bg-amber-50',
+                    'dark:border-amber-600 dark:text-amber-300 dark:hover:bg-amber-950/30',
+                    'disabled:opacity-50 disabled:cursor-not-allowed',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+                  )}
+                >
+                  <Zap className="h-3 w-3" />
+                  Force
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+// ── App version row ─────────────────────────────────────────────────
+
+function AppVersionRow() {
+  const { data: appUpdate } = useAppUpdate()
+  if (!appUpdate) return null
+
+  const hasUpdate = appUpdate.update_available && appUpdate.latest_version
+
+  return (
+    <tr
+      className="border-b border-border bg-muted/20"
+      data-testid="app-version-row"
+    >
+      {/* App name */}
+      <td className="py-3 px-4">
+        <div className="flex items-center gap-2">
+          <span
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium',
-              'bg-primary text-primary-foreground',
-              'hover:bg-primary/90',
-              'disabled:opacity-50 disabled:cursor-not-allowed',
+              'inline-block h-2 w-2 rounded-full shrink-0',
+              hasUpdate ? 'border border-amber-500' : 'bg-primary',
+            )}
+            aria-hidden="true"
+          />
+          <span className="font-medium text-sm">GenomeInsight</span>
+        </div>
+      </td>
+
+      {/* Current version */}
+      <td className="py-3 px-4 text-sm text-muted-foreground">
+        v{appUpdate.current_version}
+      </td>
+
+      {/* Latest available */}
+      <td className="py-3 px-4 text-sm">
+        {hasUpdate ? (
+          <span className="text-amber-600 dark:text-amber-400 font-medium">
+            v{appUpdate.latest_version}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">Up to date</span>
+        )}
+      </td>
+
+      {/* Size */}
+      <td className="py-3 px-4 text-sm text-muted-foreground">—</td>
+
+      {/* Last checked */}
+      <td className="py-3 px-4 text-sm text-muted-foreground">—</td>
+
+      {/* Cadence */}
+      <td className="py-3 px-4 text-sm">
+        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+          Manual
+        </span>
+      </td>
+
+      {/* Auto-update */}
+      <td className="py-3 px-4 text-sm text-muted-foreground">—</td>
+
+      {/* Action — release notes link */}
+      <td className="py-3 px-4">
+        {hasUpdate && appUpdate.release_url ? (
+          <a
+            href={appUpdate.release_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium',
+              'hover:bg-muted/50 transition-colors',
               'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
             )}
           >
-            {isUpdating ? (
-              <>
-                <RefreshCw className="h-3 w-3 animate-spin" />
-                Updating…
-              </>
-            ) : (
-              <>
-                <Download className="h-3 w-3" />
-                Update now
-              </>
-            )}
-          </button>
-        )}
+            <ExternalLink className="h-3 w-3" />
+            Release notes
+          </a>
+        ) : null}
       </td>
     </tr>
   )
@@ -501,6 +658,7 @@ export default function UpdateManager() {
             </tr>
           </thead>
           <tbody>
+            <AppVersionRow />
             {isLoading ? (
               <tr>
                 <td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
@@ -517,13 +675,16 @@ export default function UpdateManager() {
                   }}
                   updateInfo={updatesMap.get(s.db_name)}
                   checkedAt={updateCheck?.checked_at ?? null}
-                  onTriggerUpdate={(dbName) => triggerMutation.mutate(dbName)}
+                  onTriggerUpdate={(dbName, force) =>
+                    triggerMutation.mutate({ dbName, force })
+                  }
                   onToggleAutoUpdate={(dbName, enabled) =>
                     autoUpdateMutation.mutate({ dbName, enabled })
                   }
                   isUpdating={
                     triggerMutation.isPending &&
-                    triggerMutation.variables === s.db_name
+                    (triggerMutation.variables as TriggerUpdateVariables | undefined)
+                      ?.dbName === s.db_name
                   }
                   isTogglingAutoUpdate={
                     autoUpdateMutation.isPending &&

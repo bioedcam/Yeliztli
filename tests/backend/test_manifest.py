@@ -38,7 +38,7 @@ SAMPLE_PAYLOAD: dict = {
     "generated_at": "2026-05-08T00:00:00Z",
     "bundles": {
         "lai_bundle": {
-            "version": "v1.1",
+            "version": "v1.1.0",
             "build_date": "2026-04-07",
             "url": "https://example.com/lai.tar.gz",
             "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
@@ -69,7 +69,7 @@ V2_PAYLOAD: dict = {
     "generated_at": "2026-05-18T00:00:00Z",
     "bundles": {
         "lai_bundle": {
-            "version": "v1.1",
+            "version": "v1.1.0",
             "build_date": "2026-04-07",
             "url": "https://example.com/lai.tar.gz",
             "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
@@ -115,7 +115,7 @@ def _make_response(json_data: dict, status: int = 200) -> MagicMock:
     return resp
 
 
-# ── dataclass surface ─────────────────────────────────────────────────
+# ── dataclass surface ─────────────────────────────────────────────
 
 
 class TestDataclasses:
@@ -137,7 +137,7 @@ class TestDataclasses:
             m.schema_version = 2  # type: ignore[misc]
 
 
-# ── env-var local override ────────────────────────────────────────────
+# ── env-var local override ───────────────────────────────────────
 
 
 class TestLocalOverride:
@@ -149,7 +149,7 @@ class TestLocalOverride:
         assert m.schema_version == 1
         assert m.generated_at == "2026-05-08T00:00:00Z"
         assert "lai_bundle" in m.bundles
-        assert m.bundles["lai_bundle"].version == "v1.1"
+        assert m.bundles["lai_bundle"].version == "v1.1.0"
         assert m.bundles["lai_bundle"].size_bytes == 523_801_111
         assert m.pipeline_pins["dbnsfp"].last_known_version == "5.3.1a"
 
@@ -168,14 +168,14 @@ class TestLocalOverride:
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
 
         first = fetch_manifest()
-        assert first.bundles["lai_bundle"].version == "v1.1"
+        assert first.bundles["lai_bundle"].version == "v1.1.0"
 
         updated = json.loads(json.dumps(SAMPLE_PAYLOAD))
-        updated["bundles"]["lai_bundle"]["version"] = "v1.2"
+        updated["bundles"]["lai_bundle"]["version"] = "v1.2.0"
         _write_manifest(path, updated)
 
         second = fetch_manifest()
-        assert second.bundles["lai_bundle"].version == "v1.2"
+        assert second.bundles["lai_bundle"].version == "v1.2.0"
 
     def test_missing_local_file_raises(self, tmp_path: Path, monkeypatch):
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(tmp_path / "nope.json"))
@@ -190,7 +190,7 @@ class TestLocalOverride:
             fetch_manifest()
 
 
-# ── remote fetch + caching ────────────────────────────────────────────
+# ── remote fetch + caching ───────────────────────────────────────
 
 
 class TestRemoteFetch:
@@ -332,10 +332,10 @@ class TestRemoteFetch:
             m = fetch_manifest()
 
         assert http_get.call_count == 2
-        assert m.bundles["lai_bundle"].version == "v1.1"
+        assert m.bundles["lai_bundle"].version == "v1.1.0"
 
 
-# ── accessor helpers ──────────────────────────────────────────────────
+# ── accessor helpers ─────────────────────────────────────────────
 
 
 class TestAccessors:
@@ -345,7 +345,7 @@ class TestAccessors:
 
         entry = get_bundle_info("lai_bundle")
         assert entry is not None
-        assert entry.version == "v1.1"
+        assert entry.version == "v1.1.0"
         assert entry.size_bytes == 523_801_111
 
     def test_get_bundle_info_unknown_returns_none(self, tmp_path: Path, monkeypatch):
@@ -384,7 +384,7 @@ class TestAccessors:
             assert get_pipeline_pin("clinvar") is None
 
 
-# ── v2.0.0 bundle fixture ─────────────────────────────────────────────
+# ── v2.0.0 bundle fixture ────────────────────────────────────────
 
 
 class TestBundleV2:
@@ -425,7 +425,7 @@ class TestBundleV2:
         assert SAMPLE_PAYLOAD["bundles"]["vep_bundle"]["version"] == "v1.0.0"
 
 
-# ── min_app_version advisory warning (step 5) ─────────────────────────
+# ── min_app_version advisory warning (step 5) ──────────────────────
 
 
 class TestMinAppVersionField:
@@ -620,3 +620,50 @@ class TestRepoManifest:
         assert vep.sha256 == VEP_BUNDLE_SHA256_PLACEHOLDER
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["bundles"]["vep_bundle"]["min_app_version"] == "0.2.0"
+
+
+# ── committed v2 manifest fixture (Step 18 / Plan §16.1) ──────────────
+
+
+class TestManifestV2Fixture:
+    """Phase 0 closure: `tests/fixtures/manifest_v2.json` loads cleanly.
+
+    The committed fixture is the shared test artifact for Phase 0 — keeps
+    other test modules from re-declaring V2_PAYLOAD inline and gives the
+    AncestryDNA fixture chain a single source of truth.
+    """
+
+    FIXTURE_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "manifest_v2.json"
+
+    def test_fixture_exists(self):
+        assert self.FIXTURE_PATH.is_file()
+
+    def test_fixture_loads_with_v2_0_0_fields(self, monkeypatch):
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(self.FIXTURE_PATH))
+        m = fetch_manifest()
+
+        vep = m.bundles["vep_bundle"]
+        assert vep.version == "v2.0.0"
+        assert vep.url.endswith("/bundle-v2.0.0/vep_bundle.db")
+        assert vep.size_bytes == 600_000_000
+        assert vep.min_app_version == "0.2.0"
+
+        # LAI v1.1.0 normalized (Plan §12.2 LAI-00a).
+        lai = m.bundles["lai_bundle"]
+        assert lai.version == "v1.1.0"
+        assert lai.min_app_version == "0.2.0"
+
+    def test_fixture_passes_min_app_version_check_at_threshold(self, monkeypatch):
+        """An app at 0.2.0 sees no advisory warning against the v2 fixture."""
+        from structlog.testing import capture_logs
+
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(self.FIXTURE_PATH))
+        monkeypatch.setattr(manifest_mod, "_current_app_version", lambda: "0.2.0")
+
+        with capture_logs() as cap_logs:
+            fetch_manifest()
+
+        events = [
+            e for e in cap_logs if e.get("event") == "manifest_min_app_version_below_threshold"
+        ]
+        assert events == []

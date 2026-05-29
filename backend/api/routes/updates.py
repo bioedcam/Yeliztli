@@ -19,7 +19,9 @@ from backend.db.update_manager import (
     format_version_display,
     get_active_prompts,
     get_all_version_stamps,
+    get_auto_update,
     get_update_history,
+    set_auto_update,
     should_download_now,
 )
 
@@ -92,6 +94,16 @@ class TriggerUpdateResponse(BaseModel):
     job_id: str
     db_name: str
     message: str
+
+
+class AutoUpdateRequest(BaseModel):
+    db_name: str
+    enabled: bool
+
+
+class AutoUpdateResponse(BaseModel):
+    db_name: str
+    enabled: bool
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -219,7 +231,8 @@ async def get_database_statuses() -> list[DatabaseStatus]:
     # We only mark update_available based on whether we have a version at all;
     # actual update checks are done via GET /updates/check
     result = []
-    for db_name, auto_update in AUTO_UPDATE_DEFAULTS.items():
+    for db_name in AUTO_UPDATE_DEFAULTS:
+        auto_update = get_auto_update(engine, db_name)
         stamp = stamps.get(db_name)
         version = stamp["version"] if stamp else None
         downloaded_at = stamp["downloaded_at"] if stamp else None
@@ -300,3 +313,19 @@ async def dismiss_reannotation_prompt(prompt_id: int) -> dict:
     if not ok:
         raise HTTPException(status_code=404, detail="Prompt not found")
     return {"status": "dismissed", "prompt_id": prompt_id}
+
+
+@router.post("/auto-update", response_model=AutoUpdateResponse)
+async def toggle_auto_update(req: AutoUpdateRequest) -> AutoUpdateResponse:
+    """Persist the per-database auto-update toggle.
+
+    The set of valid ``db_name`` values is the union of the database
+    registry and ``AUTO_UPDATE_DEFAULTS``. Unknown databases yield 404.
+    """
+    known = set(DATABASES) | set(AUTO_UPDATE_DEFAULTS)
+    if req.db_name not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown database: {req.db_name}")
+
+    registry = get_registry()
+    set_auto_update(registry.reference_engine, req.db_name, req.enabled)
+    return AutoUpdateResponse(db_name=req.db_name, enabled=req.enabled)

@@ -1,0 +1,26 @@
+#AncestryDNA raw data download
+#Synthetic fixture for tests/backend/test_validate_sex_thresholds.py — XY case.
+#NEVER copied from a real export; every genotype is hand-fabricated to exercise
+#Plan §9.4 candidate-XY path: 0 het + >=1 hom on non-PAR chrX, chrY non-no-call
+#rate above the default 0.30 XY-confirm threshold.
+# AncestryDNA array version: V2.0
+rsid	chromosome	position	allele1	allele2
+rs9001001	1	100000	A	G
+rs9001002	1	200000	C	C
+rs9001003	1	300000	T	T
+rs9001101	23	50000000	A	A
+rs9001102	23	60000000	C	C
+rs9001103	23	70000000	G	G
+rs9001104	23	80000000	T	T
+rs9001105	23	90000000	0	0
+rs9001201	25	500000	A	G
+rs9001301	24	5000000	A	A
+rs9001302	24	6000000	C	C
+rs9001303	24	7000000	G	G
+rs9001304	24	8000000	T	T
+rs9001305	24	9000000	A	A
+rs9001306	24	10000000	C	C
+rs9001307	24	11000000	G	G
+rs9001308	24	12000000	T	T
+rs9001309	24	13000000	0	0
+rs9001310	24	14000000	0	0

@@ -27,6 +27,7 @@ import HaplogroupCard from "@/components/ancestry/HaplogroupCard"
 import AnalysisDetails from "@/components/ancestry/AnalysisDetails"
 import ChromosomePainting from "@/components/charts/ChromosomePainting"
 import AncestryPieChart from "@/components/charts/AncestryPieChart"
+import LAICoverageTelemetryPanel from "@/components/ancestry/LAICoverageTelemetryPanel"
 import { POPULATION_LABELS } from "@/components/ancestry/constants"
 
 export default function AncestryView() {
@@ -382,6 +383,14 @@ export default function AncestryView() {
                         <CheckCircle className="h-4 w-4" />
                         Chromosome painting complete
                       </div>
+
+                      {/* LAI coverage telemetry (Step 24, Plan §6.7) */}
+                      {laiResultsQuery.data.coverage_telemetry && (
+                        <LAICoverageTelemetryPanel
+                          telemetry={laiResultsQuery.data.coverage_telemetry}
+                          sampleId={sampleId}
+                        />
+                      )}
 
                       {/* Chromosome Painting */}
                       <ChromosomePainting painting={laiResultsQuery.data.chromosome_painting} />

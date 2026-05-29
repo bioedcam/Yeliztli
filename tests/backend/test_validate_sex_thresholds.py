@@ -1,0 +1,268 @@
+"""Tests for ``scripts/validate_sex_thresholds.py`` (Step 52; Plan §9.4).
+
+Runs the validation script against the committed synthetic fixtures under
+``tests/fixtures/sex_inference_synthetic/`` (XX, XY, manual_review) and
+asserts both the reported aggregate rates and the Plan §9.4 classification.
+
+The script is local-only in production (the bio-validator runs it against a
+private real export to attest thresholds — Step 53). CI runs it only against
+the synthetic fixtures, which are hand-fabricated and never contain real
+genotype rows.
+
+Coverage:
+
+- Programmatic ``build_report`` shape + classification across the three
+  fixtures.
+- ``classify()`` helper unit cases pinning the Plan §9.4 algorithm branches
+  directly (dispositive XX, candidate-XY → confirmed/manual_review/unknown
+  via chrY rate, fallback to ``unknown`` when chrX is uninformative).
+- PAR pre-filter actually drops PAR1/PAR2 rows (asserted via the XX +
+  XY fixtures, both of which carry chr-25 PAR1 hets that would flip the
+  classification if leaked through).
+- CLI surface: text and ``--json`` output, exit codes for missing file +
+  bad threshold input, ``--xy-threshold`` / ``--par-noise`` overrides that
+  re-classify the manual_review fixture into XY (lower confirm threshold)
+  or unknown (raise PAR-noise above the fixture's chrY rate).
+- Dispatcher passthrough: a 23andMe header fed to the script parses cleanly
+  and runs through the same algorithm (no AncestryDNA-only branches).
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "validate_sex_thresholds.py"
+FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "sex_inference_synthetic"
+
+# Ensure the script module is importable for the in-process unit cases.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.validate_sex_thresholds import (  # noqa: E402 — sys.path tweak above
+    DEFAULT_PAR_NOISE,
+    DEFAULT_XY_CONFIRM,
+    build_report,
+    classify,
+)
+
+# ---------------------------------------------------------------------------
+# Programmatic build_report() over the committed synthetic fixtures
+# ---------------------------------------------------------------------------
+
+
+def test_xx_fixture_classifies_as_xx_with_dispositive_het() -> None:
+    report = build_report(FIXTURE_DIR / "xx_sample.txt")
+
+    assert report.vendor == "ancestrydna"
+    assert report.version == "v2.0"
+    assert report.classification == "XX"
+
+    # Non-PAR chrX tabulation: 2 het + 2 hom + 1 no-call.
+    assert report.x_nonpar_het == 2
+    assert report.x_nonpar_hom == 2
+    assert report.x_nonpar_nocall == 1
+    assert report.x_nonpar_typed == 4
+    assert report.x_nonpar_het_rate == pytest.approx(0.5)
+
+    # Two PAR1 het rows (chr 25) must be pre-filtered out of the typed pool.
+    assert report.x_par_count == 2
+    assert report.x_total == report.x_par_count + report.x_nonpar_typed + report.x_nonpar_nocall
+
+    # chrY rate is 0 here; XX is dispositive regardless.
+    assert report.y_total == 6
+    assert report.y_typed == 0
+    assert report.y_rate == pytest.approx(0.0)
+
+
+def test_xy_fixture_classifies_as_xy_with_chry_confirmation() -> None:
+    report = build_report(FIXTURE_DIR / "xy_sample.txt")
+
+    assert report.classification == "XY"
+    assert report.x_nonpar_het == 0
+    assert report.x_nonpar_hom == 4
+    assert report.x_nonpar_typed == 4
+
+    # One chr 25 PAR1 het exists and must be filtered (otherwise classification
+    # would flip to XX dispositively).
+    assert report.x_par_count == 1
+
+    # 8 typed chrY calls out of 10 → 0.80 > 0.30 confirm threshold.
+    assert report.y_total == 10
+    assert report.y_typed == 8
+    assert report.y_rate == pytest.approx(0.8)
+
+
+def test_manual_review_fixture_classifies_as_manual_review() -> None:
+    report = build_report(FIXTURE_DIR / "manual_review_sample.txt")
+
+    assert report.classification == "manual_review"
+    assert report.x_nonpar_het == 0
+    assert report.x_nonpar_hom == 4
+    assert report.x_nonpar_typed == 4
+
+    # 2 typed chrY calls out of 10 → 0.20 (in the (0.10, 0.30] band).
+    assert report.y_total == 10
+    assert report.y_typed == 2
+    assert report.y_rate == pytest.approx(0.2)
+
+
+def test_manual_review_thresholds_round_trip_defaults() -> None:
+    report = build_report(FIXTURE_DIR / "manual_review_sample.txt")
+    assert report.xy_confirm_threshold == DEFAULT_XY_CONFIRM
+    assert report.par_noise_threshold == DEFAULT_PAR_NOISE
+
+
+# ---------------------------------------------------------------------------
+# classify() unit cases — pin the Plan §9.4 branches directly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "params, expected",
+    [
+        # Dispositive XX — any het overrides everything, including high chrY rate.
+        (dict(x_nonpar_het=1, x_nonpar_typed=4, x_nonpar_hom=3, y_rate=0.9), "XX"),
+        (dict(x_nonpar_het=1, x_nonpar_typed=1, x_nonpar_hom=0, y_rate=0.0), "XX"),
+        # Candidate XY — chrY rate above XY-confirm → XY.
+        (dict(x_nonpar_het=0, x_nonpar_typed=4, x_nonpar_hom=4, y_rate=0.31), "XY"),
+        # Candidate XY — chrY rate in (PAR-noise, XY-confirm] → manual_review.
+        (dict(x_nonpar_het=0, x_nonpar_typed=4, x_nonpar_hom=4, y_rate=0.30), "manual_review"),
+        (dict(x_nonpar_het=0, x_nonpar_typed=4, x_nonpar_hom=4, y_rate=0.11), "manual_review"),
+        # Candidate XY — chrY rate at/below PAR-noise → unknown (don't auto-assign).
+        (dict(x_nonpar_het=0, x_nonpar_typed=4, x_nonpar_hom=4, y_rate=0.10), "unknown"),
+        (dict(x_nonpar_het=0, x_nonpar_typed=4, x_nonpar_hom=4, y_rate=0.00), "unknown"),
+        # Zero typed non-PAR chrX → unknown regardless of chrY rate.
+        (dict(x_nonpar_het=0, x_nonpar_typed=0, x_nonpar_hom=0, y_rate=0.99), "unknown"),
+    ],
+)
+def test_classify_branches(params: dict, expected: str) -> None:
+    assert (
+        classify(
+            xy_confirm=DEFAULT_XY_CONFIRM,
+            par_noise=DEFAULT_PAR_NOISE,
+            **params,
+        )
+        == expected
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI surface (subprocess) — text + JSON output, exit codes, threshold flags
+# ---------------------------------------------------------------------------
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_cli_text_output_includes_classification_and_rates() -> None:
+    result = _run([str(FIXTURE_DIR / "xy_sample.txt")])
+    assert result.returncode == 0
+    out = result.stdout
+    assert "classification            : XY" in out
+    assert "non-no-call rate        : 0.800" in out
+    assert "non-PAR het rate        : 0.000" in out
+
+
+def test_cli_json_output_round_trips_through_build_report() -> None:
+    result = _run([str(FIXTURE_DIR / "manual_review_sample.txt"), "--json"])
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["classification"] == "manual_review"
+    assert payload["vendor"] == "ancestrydna"
+    assert payload["x_nonpar_typed"] == 4
+    assert payload["y_rate"] == pytest.approx(0.2)
+
+
+def test_cli_lower_xy_threshold_promotes_manual_review_to_xy() -> None:
+    result = _run(
+        [
+            str(FIXTURE_DIR / "manual_review_sample.txt"),
+            "--xy-threshold",
+            "0.15",
+            "--par-noise",
+            "0.05",
+            "--json",
+        ]
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["classification"] == "XY"
+    assert payload["xy_confirm_threshold"] == pytest.approx(0.15)
+    assert payload["par_noise_threshold"] == pytest.approx(0.05)
+
+
+def test_cli_higher_par_noise_demotes_manual_review_to_unknown() -> None:
+    result = _run(
+        [
+            str(FIXTURE_DIR / "manual_review_sample.txt"),
+            "--par-noise",
+            "0.25",
+            "--xy-threshold",
+            "0.30",
+            "--json",
+        ]
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["classification"] == "unknown"
+
+
+def test_cli_missing_file_exits_nonzero(tmp_path: Path) -> None:
+    result = _run([str(tmp_path / "nope.txt")])
+    assert result.returncode == 2
+    assert "file not found" in result.stderr
+
+
+def test_cli_rejects_inverted_thresholds() -> None:
+    result = _run(
+        [
+            str(FIXTURE_DIR / "xy_sample.txt"),
+            "--par-noise",
+            "0.5",
+            "--xy-threshold",
+            "0.3",
+        ]
+    )
+    assert result.returncode == 2
+    assert "--par-noise must be <= --xy-threshold" in result.stderr
+
+
+def test_cli_rejects_threshold_out_of_range() -> None:
+    result = _run(
+        [
+            str(FIXTURE_DIR / "xy_sample.txt"),
+            "--xy-threshold",
+            "1.5",
+        ]
+    )
+    assert result.returncode == 2
+    assert "--xy-threshold must be in" in result.stderr
+
+
+def test_cli_parses_23andme_input_through_dispatcher(tmp_path: Path) -> None:
+    """Smoke that the dispatcher passthrough covers 23andMe inputs too.
+
+    The script is vendor-agnostic — Step 53's bio-validator may run it against
+    a 23andMe export. We don't need a full 23andMe sex-inference fixture for
+    Step 52; the existing committed v5 fixture exercises the dispatcher path.
+    """
+    sample = REPO_ROOT / "tests" / "fixtures" / "sample_23andme_v5.txt"
+    if not sample.exists():
+        pytest.skip("sample_23andme_v5.txt fixture not present")
+    result = _run([str(sample), "--json"])
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["vendor"] == "23andme"
+    assert payload["classification"] in {"XX", "XY", "manual_review", "unknown"}

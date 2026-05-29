@@ -1,10 +1,29 @@
-/** Variant table toolbar: search + unannotated toggle + conflicts-only toggle + tag filter + preset selector + filter badge (P1-15a, P1-15c, P1-15e, P2-22, P4-12b). */
+/** Variant table toolbar: search + unannotated toggle + conflicts-only toggle + tag filter + preset selector + filter badge (P1-15a, P1-15c, P1-15e, P2-22, P4-12b).
+ *  Source / Concordance filter chips for merged samples (AncestryDNA Plan §10.7 / Step 71). */
 
 import { useEffect, useRef, useState } from "react"
-import { Search, Eye, EyeOff, AlertTriangle, X, Tag, ArrowRightLeft } from "lucide-react"
+import {
+  Search,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  X,
+  Tag,
+  ArrowRightLeft,
+  GitMerge,
+  ScanSearch,
+} from "lucide-react"
 import ColumnPresets from "./ColumnPresets"
 import { filterLabel } from "./filterSuggestions"
 import { useTags } from "@/api/tags"
+import {
+  CONCORDANCE_LABELS,
+  CONCORDANCE_OPTIONS,
+  SOURCE_LABELS,
+  SOURCE_OPTIONS,
+  type ConcordanceTag,
+  type SourceTag,
+} from "@/types/variants"
 
 interface VariantToolbarProps {
   searchQuery: string
@@ -26,6 +45,13 @@ interface VariantToolbarProps {
   onTagFilter?: (tagName: string | null) => void
   showGRCh38: boolean
   onToggleGRCh38: () => void
+  /** AncestryDNA Plan §10.7 / Step 71: merged-sample chips render only when
+   *  the sample's ``merge-provenance`` row resolves successfully. */
+  isMergedSample: boolean
+  sourceFilter: SourceTag | null
+  onSourceFilter: (value: SourceTag | null) => void
+  concordanceFilter: ConcordanceTag | null
+  onConcordanceFilter: (value: ConcordanceTag | null) => void
 }
 
 export default function VariantToolbar({
@@ -48,9 +74,18 @@ export default function VariantToolbar({
   onTagFilter,
   showGRCh38,
   onToggleGRCh38,
+  isMergedSample,
+  sourceFilter,
+  onSourceFilter,
+  concordanceFilter,
+  onConcordanceFilter,
 }: VariantToolbarProps) {
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
+  const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false)
+  const [concordanceDropdownOpen, setConcordanceDropdownOpen] = useState(false)
   const tagDropdownRef = useRef<HTMLDivElement>(null)
+  const sourceDropdownRef = useRef<HTMLDivElement>(null)
+  const concordanceDropdownRef = useRef<HTMLDivElement>(null)
   const { data: tags } = useTags(sampleId)
 
   // Close dropdown on outside click
@@ -64,6 +99,34 @@ export default function VariantToolbar({
     document.addEventListener("mousedown", handleClick)
     return () => document.removeEventListener("mousedown", handleClick)
   }, [tagDropdownOpen])
+
+  useEffect(() => {
+    if (!sourceDropdownOpen) return
+    function handleClick(e: MouseEvent) {
+      if (
+        sourceDropdownRef.current &&
+        !sourceDropdownRef.current.contains(e.target as Node)
+      ) {
+        setSourceDropdownOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [sourceDropdownOpen])
+
+  useEffect(() => {
+    if (!concordanceDropdownOpen) return
+    function handleClick(e: MouseEvent) {
+      if (
+        concordanceDropdownRef.current &&
+        !concordanceDropdownRef.current.contains(e.target as Node)
+      ) {
+        setConcordanceDropdownOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [concordanceDropdownOpen])
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-card">
@@ -210,6 +273,131 @@ export default function VariantToolbar({
           {filterLabel(activeFilter)}
           <X className="h-3 w-3" />
         </button>
+      )}
+
+      {/* Merged-sample source / concordance filter chips (AncestryDNA Plan §10.7 / Step 71).
+          Rendered only when ``useMergeProvenance`` resolves successfully; unmerged
+          samples never see these chips, matching the per-sample column visibility. */}
+      {isMergedSample && (
+        <>
+          <div className="relative" ref={sourceDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setSourceDropdownOpen((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                sourceFilter
+                  ? "border-sky-500 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                  : "border-input bg-background text-muted-foreground hover:text-foreground"
+              }`}
+              aria-expanded={sourceDropdownOpen}
+              aria-haspopup="listbox"
+              aria-label={
+                sourceFilter
+                  ? `Source filter: ${SOURCE_LABELS[sourceFilter]}`
+                  : "Filter by source"
+              }
+            >
+              <GitMerge className="h-4 w-4" />
+              <span>{sourceFilter ? SOURCE_LABELS[sourceFilter] : "Source"}</span>
+              {sourceFilter && (
+                <X
+                  className="h-3 w-3 ml-0.5"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSourceFilter(null)
+                  }}
+                />
+              )}
+            </button>
+            {sourceDropdownOpen && (
+              <div
+                className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-md border border-border bg-popover shadow-md py-1"
+                role="listbox"
+                aria-label="Source values"
+              >
+                {SOURCE_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="option"
+                    aria-selected={sourceFilter === value}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent transition-colors ${
+                      sourceFilter === value ? "bg-accent" : ""
+                    }`}
+                    onClick={() => {
+                      onSourceFilter(sourceFilter === value ? null : value)
+                      setSourceDropdownOpen(false)
+                    }}
+                  >
+                    {SOURCE_LABELS[value]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="relative" ref={concordanceDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setConcordanceDropdownOpen((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                concordanceFilter
+                  ? "border-sky-500 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                  : "border-input bg-background text-muted-foreground hover:text-foreground"
+              }`}
+              aria-expanded={concordanceDropdownOpen}
+              aria-haspopup="listbox"
+              aria-label={
+                concordanceFilter
+                  ? `Concordance filter: ${CONCORDANCE_LABELS[concordanceFilter]}`
+                  : "Filter by concordance"
+              }
+            >
+              <ScanSearch className="h-4 w-4" />
+              <span>
+                {concordanceFilter
+                  ? CONCORDANCE_LABELS[concordanceFilter]
+                  : "Concordance"}
+              </span>
+              {concordanceFilter && (
+                <X
+                  className="h-3 w-3 ml-0.5"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onConcordanceFilter(null)
+                  }}
+                />
+              )}
+            </button>
+            {concordanceDropdownOpen && (
+              <div
+                className="absolute top-full left-0 mt-1 z-50 min-w-[180px] rounded-md border border-border bg-popover shadow-md py-1"
+                role="listbox"
+                aria-label="Concordance values"
+              >
+                {CONCORDANCE_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="option"
+                    aria-selected={concordanceFilter === value}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent transition-colors ${
+                      concordanceFilter === value ? "bg-accent" : ""
+                    }`}
+                    onClick={() => {
+                      onConcordanceFilter(
+                        concordanceFilter === value ? null : value,
+                      )
+                      setConcordanceDropdownOpen(false)
+                    }}
+                  >
+                    {CONCORDANCE_LABELS[value]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* GRCh38 liftover toggle (P4-20) */}

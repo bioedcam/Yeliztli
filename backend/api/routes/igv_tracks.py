@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import clinvar_variants, raw_variants, samples
 
@@ -152,7 +153,7 @@ def _genotype_to_vcf_fields(genotype: str) -> tuple[str, str, str]:
         return allele1, allele2, "0/1"
 
 
-@router.get("/sample/{sample_id}/header")
+@router.get("/sample/{sample_id}/header", dependencies=[Depends(require_fresh_sample)])
 async def sample_vcf_header(
     sample_id: int = Path(..., description="Sample ID"),
 ) -> Response:
@@ -162,7 +163,7 @@ async def sample_vcf_header(
     return Response(content=USER_VCF_HEADER + "\n", media_type="text/plain")
 
 
-@router.get("/sample/{sample_id}/variants")
+@router.get("/sample/{sample_id}/variants", dependencies=[Depends(require_fresh_sample)])
 async def sample_vcf_region(
     sample_id: int = Path(..., description="Sample ID"),
     chr: str = Query(..., description="Chromosome (e.g., 'chr1', '1')"),

@@ -305,7 +305,7 @@ GenomeInsight is designed with privacy as a core principle:
 A standard 23andMe file (~600,000 variants) annotates in under 2 minutes.
 
 **Q: Can I analyze multiple samples?**
-Yes. Upload additional files from the Upload page. Each sample gets its own isolated database. Use the sample selector in the top nav to switch between them.
+Yes. Upload additional files from the Upload page. Each sample gets its own isolated database. Use the sample selector in the top nav to switch between them. If two samples come from the same person — for example, a 23andMe export and an AncestryDNA export — you can group them under an **individual** and optionally **merge** them into a single union sample with a concordance report. See [Multi-Source Sample Merging](multi-source-merging.md) for the end-to-end walkthrough.
 
 **Q: What if annotation is interrupted?**
 GenomeInsight uses crash recovery: the partial annotation is deleted and re-run from scratch. With under 2-minute runtime, checkpointing is unnecessary.

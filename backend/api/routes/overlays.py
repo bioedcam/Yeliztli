@@ -18,7 +18,7 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from backend.annotation.vcfanno_runner import (
@@ -32,6 +32,7 @@ from backend.annotation.vcfanno_runner import (
     list_overlays,
     save_overlay_config,
 )
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.sample_schema import ensure_sample_schema_current
 from backend.db.tables import samples
@@ -301,7 +302,7 @@ def delete_overlay_config(overlay_id: int) -> dict[str, str]:
     return {"status": "deleted", "overlay_id": str(overlay_id)}
 
 
-@router.post("/{overlay_id}/apply")
+@router.post("/{overlay_id}/apply", dependencies=[Depends(require_fresh_sample)])
 def apply_overlay_to_sample(
     overlay_id: int,
     sample_id: int = Query(..., description="Sample ID"),
@@ -348,7 +349,7 @@ def apply_overlay_to_sample(
     )
 
 
-@router.get("/{overlay_id}/results")
+@router.get("/{overlay_id}/results", dependencies=[Depends(require_fresh_sample)])
 def get_overlay_sample_results(
     overlay_id: int,
     sample_id: int = Query(..., description="Sample ID"),

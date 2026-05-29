@@ -22,16 +22,22 @@ import re
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.analysis.ancestry import get_ancestry_matched_af_column, get_inferred_ancestry
+from backend.analysis.zygosity import is_no_call
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, raw_variants, samples, tags, variant_tags
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/variants", tags=["variants"])
+router = APIRouter(
+    prefix="/variants",
+    tags=["variants"],
+    dependencies=[Depends(require_fresh_sample)],
+)
 
 # Canonical chromosome sort order — same as VCF export.
 CHROM_ORDER: dict[str, int] = {
@@ -41,24 +47,37 @@ CHROM_ORDER: dict[str, int] = {
     "MT": 25,
 }
 
+# Merge-provenance filter values per AncestryDNA Plan §10.4/§10.7 (Step 71).
+# These columns live on ``raw_variants`` (server_default ''); when a merged
+# sample is being read through ``annotated_variants`` we LEFT-JOIN to surface
+# them. Filter values are validated against the closed enum sets below so a
+# stray ``source:bogus`` query is silently dropped rather than 0-rowing the
+# response by accident.
+_MERGE_PROV_FILTER_COLS = frozenset({"source", "concordance"})
+_VALID_SOURCE_VALUES = frozenset({"S1", "S2", "both"})
+_VALID_CONCORDANCE_VALUES = frozenset({"match", "filled_nocall", "discordant", "unique"})
+
 # Columns allowed as filter keys on raw_variants.
-_RAW_FILTER_COLS = frozenset({"chrom", "genotype"})
+_RAW_FILTER_COLS = frozenset({"chrom", "genotype"}) | _MERGE_PROV_FILTER_COLS
 
 # Columns allowed as filter keys on annotated_variants.
-_ANNOTATED_FILTER_COLS = frozenset(
-    {
-        "chrom",
-        "genotype",
-        "gene_symbol",
-        "consequence",
-        "clinvar_significance",
-        "rare_flag",
-        "ultra_rare_flag",
-        "evidence_conflict",
-        "ensemble_pathogenic",
-        "zygosity",
-        "annotation_coverage",
-    }
+_ANNOTATED_FILTER_COLS = (
+    frozenset(
+        {
+            "chrom",
+            "genotype",
+            "gene_symbol",
+            "consequence",
+            "clinvar_significance",
+            "rare_flag",
+            "ultra_rare_flag",
+            "evidence_conflict",
+            "ensemble_pathogenic",
+            "zygosity",
+            "annotation_coverage",
+        }
+    )
+    | _MERGE_PROV_FILTER_COLS
 )
 
 # Columns that support special IS NULL / IS NOT NULL filtering.
@@ -103,6 +122,14 @@ class VariantRow(BaseModel):
     # P4-19: GRCh38 liftover coordinates
     chrom_grch38: str | None = None
     pos_grch38: int | None = None
+    # AncestryDNA Plan §10.4 / §10.7 (Step 71): per-row merge provenance.
+    # Carried verbatim from ``raw_variants`` (server_default ''); on unmerged
+    # samples every row reports empty strings. ``alt_rsid`` surfaces the
+    # rejected rsid at a different-rsid-same-coordinate collapse so the
+    # variant detail panel can link it back.
+    source: str = ""
+    concordance: str = ""
+    alt_rsid: str = ""
 
 
 class VariantPage(BaseModel):
@@ -176,7 +203,12 @@ def _parse_filters(filter_str: str | None, table: sa.Table) -> list[sa.ColumnEle
     Filter format: ``key:value`` pairs separated by commas.
     Example: ``chrom:1,gene_symbol:BRCA1,rare_flag:1``
 
-    Returns a list of SQLAlchemy column conditions.
+    Returns a list of SQLAlchemy column conditions. The merge-provenance
+    keys ``source`` / ``concordance`` (Step 71 / Plan §10.7) always resolve
+    to ``raw_variants`` regardless of which table the list endpoint reads
+    from, because those columns only live on ``raw_variants``; the
+    ``list_variants`` LEFT-JOIN keeps the reference valid when the primary
+    table is ``annotated_variants``.
     """
     if not filter_str:
         return []
@@ -196,6 +228,20 @@ def _parse_filters(filter_str: str | None, table: sa.Table) -> list[sa.ColumnEle
 
         if key not in allowed_cols:
             continue
+
+        # Merge-provenance filters always resolve to raw_variants and
+        # validate against the closed enum sets from Plan §10.4.
+        if key == "source":
+            if value not in _VALID_SOURCE_VALUES:
+                continue
+            clauses.append(raw_variants.c.source == value)
+            continue
+        if key == "concordance":
+            if value not in _VALID_CONCORDANCE_VALUES:
+                continue
+            clauses.append(raw_variants.c.concordance == value)
+            continue
+
         if not hasattr(table.c, key):
             continue
 
@@ -214,6 +260,24 @@ def _parse_filters(filter_str: str | None, table: sa.Table) -> list[sa.ColumnEle
             clauses.append(col == value)
 
     return clauses
+
+
+def _filter_requires_raw_join(filter_str: str | None) -> bool:
+    """Return True when filter_str references a merge-provenance column.
+
+    Used by ``list_variants`` / ``variant_count`` / ``chromosome_counts`` to
+    decide whether to LEFT-JOIN ``raw_variants`` so the ``source`` /
+    ``concordance`` filters from Plan §10.7 can resolve against it even when
+    the primary table is ``annotated_variants``. Cheap text-scan; the
+    canonical validation still lives in :func:`_parse_filters`.
+    """
+    if not filter_str:
+        return False
+    for part in filter_str.split(","):
+        key, _, _ = part.strip().partition(":")
+        if key.strip() in _MERGE_PROV_FILTER_COLS:
+            return True
+    return False
 
 
 def _chrom_order_expr(table: sa.Table) -> sa.Case:
@@ -308,6 +372,15 @@ def _row_to_variant(
             data["ancestry_matched_af"] = getattr(row, ancestry_af_col, None)
             data["ancestry_matched_population"] = ancestry_population
 
+    # AncestryDNA Plan §10.4 / §10.7 (Step 71): provenance columns ride along
+    # whenever they're present in the row (set by ``list_variants`` via
+    # LEFT JOIN raw_variants when reading annotated_variants, or selected
+    # directly when reading raw_variants). Default to '' for older rows.
+    for field in ("source", "concordance", "alt_rsid"):
+        value = getattr(row, field, None)
+        if value is not None:
+            data[field] = value
+
     return VariantRow(**data)
 
 
@@ -339,8 +412,28 @@ def list_variants(
         if ancestry_population:
             ancestry_af_col = get_ancestry_matched_af_column(ancestry_population)
 
-    # Build query
-    query = sa.select(table)
+    # AncestryDNA Plan §10.7 (Step 71): always carry the merge-provenance
+    # columns through to the page payload so the variant table can render
+    # the Source / Concordance columns + filter chips for merged samples.
+    # When the primary table is ``annotated_variants`` we LEFT JOIN against
+    # ``raw_variants`` (rsid PK on both) so source/concordance/alt_rsid ride
+    # along even though they only live on ``raw_variants``. Unmerged samples
+    # carry the server-default '' values verbatim.
+    if table is annotated_variants:
+        source_select = [
+            annotated_variants,
+            raw_variants.c.source.label("source"),
+            raw_variants.c.concordance.label("concordance"),
+            raw_variants.c.alt_rsid.label("alt_rsid"),
+        ]
+        from_clause = annotated_variants.outerjoin(
+            raw_variants, annotated_variants.c.rsid == raw_variants.c.rsid
+        )
+    else:
+        source_select = [raw_variants]
+        from_clause = raw_variants
+
+    query = sa.select(*source_select).select_from(from_clause)
 
     # Apply filters
     filter_clauses = _parse_filters(filter, table)
@@ -420,7 +513,17 @@ def variant_count(
     sample_engine = _get_sample_engine(sample_id)
     table = _select_table(sample_engine)
 
-    query = sa.select(sa.func.count()).select_from(table)
+    # AncestryDNA Plan §10.7 (Step 71): mirror ``list_variants`` and LEFT JOIN
+    # ``raw_variants`` whenever the filter references a merge-provenance
+    # column so source / concordance filter chips report the correct count.
+    if table is annotated_variants and _filter_requires_raw_join(filter):
+        from_clause = annotated_variants.outerjoin(
+            raw_variants, annotated_variants.c.rsid == raw_variants.c.rsid
+        )
+    else:
+        from_clause = table
+
+    query = sa.select(sa.func.count()).select_from(from_clause)
 
     filter_clauses = _parse_filters(filter, table)
     if filter_clauses:
@@ -454,9 +557,22 @@ def chromosome_counts(
     sample_engine = _get_sample_engine(sample_id)
     table = _select_table(sample_engine)
 
+    # AncestryDNA Plan §10.7 (Step 71): mirror ``list_variants`` /
+    # ``variant_count`` and LEFT JOIN ``raw_variants`` whenever the filter
+    # references a merge-provenance column, since ``_parse_filters`` emits
+    # predicates against ``raw_variants.c.source`` / ``.c.concordance`` even
+    # when the primary table is ``annotated_variants``. Without the join the
+    # FROM would be invalid and per-chromosome counts wrong.
+    if table is annotated_variants and _filter_requires_raw_join(filter):
+        from_clause = annotated_variants.outerjoin(
+            raw_variants, annotated_variants.c.rsid == raw_variants.c.rsid
+        )
+    else:
+        from_clause = table
+
     query = (
         sa.select(table.c.chrom, sa.func.count().label("count"))
-        .select_from(table)
+        .select_from(from_clause)
         .group_by(table.c.chrom)
     )
 
@@ -499,18 +615,25 @@ class QCStatsResponse(BaseModel):
     per_chromosome: list[ChromosomeQCStats]
 
 
-def _classify_genotype(genotype: str) -> str:
+def _classify_genotype(genotype: str | None) -> str:
     """Classify a genotype string as het, hom, or nocall.
 
-    23andMe genotypes:
-      - "--" or "" → nocall
-      - Single character ("A") → haploid (hom for stats)
-      - Two identical chars ("AA") → homozygous
-      - Two different chars ("AG") → heterozygous
-      - "D" or "I" (indels) → treated as hom
-      - "DI" or "ID" → treated as het
+    Routes recognition through the shared
+    :func:`backend.analysis.zygosity.is_no_call` helper so that AncestryDNA's
+    ``"00"`` rows and the indel codes ``"DD"`` / ``"II"`` / ``"DI"`` / ``"ID"``
+    count toward the QC no-call bucket (Plan §11.3) rather than inflating the
+    homozygous / heterozygous denominators. Pre-Phase-3 these codes were
+    silently bucketed as ``hom`` (``"DD"`` / ``"II"``) or ``het`` (``"DI"`` /
+    ``"ID"``) and AncestryDNA ``"00"`` was ``het`` — wrong for every flavor
+    of QC interpretation. This is the single QC site held to a non-byte-
+    identical contract by the MRG-01a sweep.
+
+    Remaining classification (after the no-call filter):
+      - Single base call (``"A"``, ``"D"``, ``"I"``) → haploid, bucketed as ``hom``
+      - Two identical chars (``"AA"``) → homozygous
+      - Two different chars (``"AG"``) → heterozygous
     """
-    if not genotype or genotype == "--":
+    if is_no_call(genotype):
         return "nocall"
     if len(genotype) == 1:
         return "hom"

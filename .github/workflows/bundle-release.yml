@@ -20,6 +20,7 @@ on:
         default: "vep_bundle"
         options:
           - vep_bundle
+          - lai_bundle
 
 concurrency:
   group: bundle-release-${{ inputs.release_tag }}
@@ -35,6 +36,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -80,7 +83,11 @@ jobs:
         run: |
           tag="${{ inputs.release_tag }}"
           manifest_version="${{ steps.manifest.outputs.version }}"
-          expected="bundle-${manifest_version}"
+          case "${{ inputs.bundle_key }}" in
+            vep_bundle)  expected="bundle-${manifest_version}" ;;
+            lai_bundle)  expected="lai-bundle-${manifest_version}" ;;
+            *) echo "::error::unknown bundle_key '${{ inputs.bundle_key }}'" ; exit 1 ;;
+          esac
           if [ "$tag" != "$expected" ]; then
             echo "::error::release_tag '$tag' does not match manifest version '$manifest_version' (expected '$expected')"
             exit 1
@@ -88,13 +95,26 @@ jobs:
           echo "Tag matches manifest version: $tag"
 
       - name: Download release asset (verified by tag)
+        id: download
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p artifacts
           tag="${{ inputs.release_tag }}"
           manifest_url="${{ steps.manifest.outputs.url }}"
-          asset_name="vep_bundle.db"
+          # Derive the asset name from the manifest URL basename so the
+          # tag-verification works for any bundle (e.g. vep_bundle.db or
+          # genomeinsight_lai_bundle_v1.1.tar.gz) without hardcoding versions.
+          asset_name="${manifest_url##*/}"
+          case "${{ inputs.bundle_key }}" in
+            vep_bundle)  out="artifacts/vep_bundle.db" ;;
+            lai_bundle)  out="artifacts/lai_bundle.tar.gz" ;;
+            *) echo "::error::unknown bundle_key '${{ inputs.bundle_key }}'" ; exit 1 ;;
+          esac
+          if [ -z "$asset_name" ]; then
+            echo "::error::could not derive asset name from manifest URL ($manifest_url)"
+            exit 1
+          fi
           # Resolve the asset's authoritative download URL from the release
           # specified by the input tag, instead of trusting the manifest URL
           # blindly. A mismatch means the manifest points outside this tag.
@@ -115,12 +135,18 @@ jobs:
             --pattern "${asset_name}" \
             --dir artifacts \
             --clobber
+          # Normalize the on-disk path so downstream steps can reference it
+          # uniformly regardless of bundle type.
+          if [ "artifacts/${asset_name}" != "$out" ]; then
+            mv "artifacts/${asset_name}" "$out"
+          fi
+          echo "path=$out" >> "$GITHUB_OUTPUT"
           ls -la artifacts/
 
       - name: Verify SHA-256
         run: |
           expected="${{ steps.manifest.outputs.sha256 }}"
-          actual=$(sha256sum artifacts/vep_bundle.db | awk '{print $1}')
+          actual=$(sha256sum "${{ steps.download.outputs.path }}" | awk '{print $1}')
           if [ "$actual" != "$expected" ]; then
             echo "::error::SHA-256 mismatch: expected $expected, got $actual"
             exit 1
@@ -130,7 +156,7 @@ jobs:
       - name: Verify size in bytes
         run: |
           expected="${{ steps.manifest.outputs.size_bytes }}"
-          actual=$(stat -c %s artifacts/vep_bundle.db)
+          actual=$(stat -c %s "${{ steps.download.outputs.path }}")
           if [ "$actual" != "$expected" ]; then
             echo "::error::size_bytes mismatch: expected $expected, got $actual"
             exit 1
@@ -138,6 +164,7 @@ jobs:
           echo "size_bytes OK: $actual"
 
       - name: Verify internal bundle_metadata.bundle_version
+        if: inputs.bundle_key == 'vep_bundle'
         run: |
           python <<'PY'
           import sqlite3, sys
@@ -171,6 +198,20 @@ jobs:
               sys.exit(1)
 
           print(f"Internal bundle_version OK: {internal}")
+          PY
+
+      - name: Verify internal metadata.json (LAI)
+        if: inputs.bundle_key == 'lai_bundle'
+        run: |
+          mkdir -p artifacts/extracted
+          tar -xzf "${{ steps.download.outputs.path }}" -C artifacts/extracted
+          python <<'PY'
+          import json, os, sys
+          meta = json.load(open("artifacts/extracted/metadata.json"))
+          expected = "${{ steps.manifest.outputs.version }}"
+          if meta["bundle_version"] != expected:
+              sys.exit(f"::error::metadata.json bundle_version {meta['bundle_version']!r} != manifest {expected!r}")
+          print("metadata.json::bundle_version OK", meta["bundle_version"])
           PY
 
       - name: Summary

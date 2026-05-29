@@ -7,9 +7,10 @@
  * Databases with build_mode="bundled" show a green "Included" badge.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DATABASE_LIST_KEY, useDatabaseList, useTriggerDownload } from '@/api/setup'
 import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import type { DatabaseProgressEvent, DownloadProgressData } from '@/types/setup'
 import { cn } from '@/lib/utils'
 import {
@@ -23,6 +24,16 @@ import {
   RefreshCw,
   Wrench,
 } from 'lucide-react'
+
+const DEFAULT_OPTIONAL_DBS = new Set(['lai_bundle', 'encode_ccres'])
+
+function isSelectable(db: { build_mode: string; downloaded: boolean }) {
+  return (
+    !db.downloaded &&
+    db.build_mode !== 'bundled' &&
+    db.build_mode !== 'manual'
+  )
+}
 
 interface DatabasesStepProps {
   onNext: () => void
@@ -50,6 +61,43 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
+  // Per-DB selection. Required DBs are always selected (locked). lai_bundle
+  // and encode_ccres default selected (toggleable). Other optional DBs default
+  // off. We track user overrides separately so we can recompute the effective
+  // selection whenever the database list refreshes (e.g. after a download
+  // completes) without overwriting user choices.
+  const [userOverrides, setUserOverrides] = useState<Record<string, boolean>>(
+    {},
+  )
+
+  const selectedDbs = useMemo(() => {
+    const sel = new Set<string>()
+    if (!dbList) return sel
+    for (const db of dbList.databases) {
+      if (!isSelectable(db)) continue
+      if (db.required) {
+        sel.add(db.name)
+        continue
+      }
+      if (Object.prototype.hasOwnProperty.call(userOverrides, db.name)) {
+        if (userOverrides[db.name]) sel.add(db.name)
+        continue
+      }
+      if (DEFAULT_OPTIONAL_DBS.has(db.name)) sel.add(db.name)
+    }
+    return sel
+  }, [dbList, userOverrides])
+
+  const toggleDb = useCallback((name: string) => {
+    setUserOverrides((prev) => {
+      const previouslySet = Object.prototype.hasOwnProperty.call(prev, name)
+      const previousValue = previouslySet
+        ? prev[name]
+        : DEFAULT_OPTIONAL_DBS.has(name)
+      return { ...prev, [name]: !previousValue }
+    })
+  }, [])
+
   // Cleanup SSE on unmount
   useEffect(() => {
     return () => {
@@ -60,16 +108,7 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
   const handleStartDownload = useCallback(() => {
     if (!dbList) return
 
-    // Get databases that need downloading (exclude manual/bundled)
-    const toDownload = dbList.databases
-      .filter(
-        (db) =>
-          !db.downloaded &&
-          db.build_mode !== 'manual' &&
-          db.build_mode !== 'bundled',
-      )
-      .map((db) => db.name)
-
+    const toDownload = [...selectedDbs]
     if (toDownload.length === 0) return
 
     setIsDownloading(true)
@@ -149,7 +188,7 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
         )
       },
     })
-  }, [dbList, triggerDownload, queryClient])
+  }, [dbList, selectedDbs, triggerDownload, queryClient])
 
   const handleRetry = useCallback(() => {
     setDownloadError(null)
@@ -171,14 +210,32 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
         })
     : false
 
-  const needsDownload = dbList
-    ? dbList.databases.some(
-        (db) =>
-          !db.downloaded &&
-          db.build_mode !== 'manual' &&
-          db.build_mode !== 'bundled',
+  const needsDownload = selectedDbs.size > 0
+
+  const selectedTotalBytes = useMemo(() => {
+    if (!dbList) return 0
+    let total = 0
+    for (const db of dbList.databases) {
+      if (selectedDbs.has(db.name)) total += db.expected_size_bytes
+    }
+    return total
+  }, [dbList, selectedDbs])
+
+  const handleContinue = useCallback(() => {
+    if (dbList) {
+      const skipped = dbList.databases.filter(
+        (db) => isSelectable(db) && !db.required && !selectedDbs.has(db.name),
       )
-    : false
+      if (skipped.length > 0) {
+        const names = skipped.map((db) => db.display_name).join(', ')
+        toast.info(`You skipped ${names}`, {
+          description:
+            'Download later from Settings > Update Manager.',
+        })
+      }
+    }
+    onNext()
+  }, [dbList, selectedDbs, onNext])
 
   // ── Loading state ──────────────────────────────────────────
 
@@ -262,6 +319,9 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
             const isFailed = progress?.status === 'failed'
             const isRunning = progress?.status === 'running'
             const isPending = progress?.status === 'pending'
+            const showCheckbox = isSelectable(db)
+            const isSelected = selectedDbs.has(db.name)
+            const checkboxId = `db-select-${db.name}`
 
             return (
               <div
@@ -274,6 +334,20 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
                 )}
               >
                 <div className="flex items-start gap-3">
+                  {/* Selection checkbox */}
+                  {showCheckbox && (
+                    <input
+                      id={checkboxId}
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleDb(db.name)}
+                      disabled={db.required || isDownloading}
+                      className="mt-1 h-4 w-4 flex-shrink-0 rounded border-border text-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label={`Include ${db.display_name} in download`}
+                      data-testid={`db-checkbox-${db.name}`}
+                    />
+                  )}
+
                   {/* Status icon */}
                   <div className="mt-0.5 flex-shrink-0">
                     {isBundled && (
@@ -332,13 +406,6 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {db.description}
                     </p>
-
-                    {/* Manual build help text */}
-                    {isManual && !isComplete && (
-                      <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                        Run <code className="rounded bg-muted px-1 py-0.5 text-[11px]">scripts/build_vep_bundle.py</code> to build
-                      </p>
-                    )}
 
                     {/* Progress bar */}
                     {(isRunning || isPending) && (
@@ -409,6 +476,19 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
         </div>
       )}
 
+      {/* Running total */}
+      {dbList && needsDownload && (
+        <div
+          className="flex items-center justify-end text-xs text-muted-foreground"
+          data-testid="selected-total"
+        >
+          Total:{' '}
+          <span className="ml-1 font-medium text-foreground">
+            {formatBytes(selectedTotalBytes)} selected
+          </span>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex items-center justify-between pt-2">
         <button
@@ -445,7 +525,7 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
               ) : (
                 <>
                   <Download className="h-4 w-4" />
-                  Download All
+                  Download Selected
                 </>
               )}
             </button>
@@ -462,7 +542,7 @@ export default function DatabasesStep({ onNext, onBack }: DatabasesStepProps) {
           {/* Continue button */}
           <button
             type="button"
-            onClick={onNext}
+            onClick={handleContinue}
             disabled={!allRequiredDownloaded || isDownloading}
             className={cn(
               'rounded-lg px-5 py-2.5 text-sm font-medium transition-colors',

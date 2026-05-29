@@ -1,8 +1,15 @@
-/** Column definitions for the variant table (P1-15a, P2-22). */
+/** Column definitions for the variant table (P1-15a, P2-22).
+ *  Source / Concordance columns for merged samples (AncestryDNA Plan §10.7 / Step 71). */
 
 import { createElement } from "react"
 import { createColumnHelper } from "@tanstack/react-table"
-import type { VariantRow } from "@/types/variants"
+import {
+  CONCORDANCE_LABELS,
+  SOURCE_LABELS,
+  type ConcordanceTag,
+  type SourceTag,
+  type VariantRow,
+} from "@/types/variants"
 
 const col = createColumnHelper<VariantRow>()
 
@@ -192,5 +199,28 @@ export const allColumns = [
     header: "Pos (GRCh38)",
     size: 120,
     cell: (info) => info.getValue()?.toLocaleString() ?? "",
+  }),
+  /** Merged-sample provenance columns (AncestryDNA Plan §10.7 / Step 71).
+   *  Hidden on unmerged samples by the VariantTable visibility wiring;
+   *  shown by default when ``useMergeProvenance`` resolves to 200. */
+  col.accessor("source", {
+    id: "source",
+    header: "Source",
+    size: 80,
+    cell: (info) => {
+      const value = info.getValue() as SourceTag | "" | undefined
+      if (!value) return ""
+      return SOURCE_LABELS[value]
+    },
+  }),
+  col.accessor("concordance", {
+    id: "concordance",
+    header: "Concordance",
+    size: 120,
+    cell: (info) => {
+      const value = info.getValue() as ConcordanceTag | "" | undefined
+      if (!value) return ""
+      return CONCORDANCE_LABELS[value]
+    },
   }),
 ]

@@ -1,0 +1,321 @@
+/** Variant table source / concordance columns + filter chips (Step 71 / Plan §10.7).
+ *
+ *  The chips and columns surface only when the sample's ``merge-provenance``
+ *  row resolves successfully (HTTP 200). Unmerged samples — for which the
+ *  endpoint returns 404 — see the chips and provenance columns suppressed. */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { render, screen, waitFor } from "./test-utils"
+import userEvent from "@testing-library/user-event"
+import VariantTable from "@/components/variant-table/VariantTable"
+import type {
+  ColumnPreset,
+  ConcordanceTag,
+  SourceTag,
+  VariantCount,
+  VariantPage,
+} from "@/types/variants"
+
+const mockFetch = vi.fn()
+
+const PRESETS: ColumnPreset[] = [
+  {
+    name: "Clinical",
+    columns: ["genotype", "gene_symbol", "consequence", "clinvar_significance"],
+    predefined: true,
+  },
+]
+
+function makePage(
+  count: number,
+  hasMore = false,
+  startPos = 1000,
+  source: SourceTag | "" = "S1",
+  concordance: ConcordanceTag | "" = "match",
+): VariantPage {
+  return {
+    items: Array.from({ length: count }, (_, i) => ({
+      rsid: `rs${100 + i}`,
+      chrom: "1",
+      pos: startPos + i * 100,
+      genotype: "AG",
+      ref: "A",
+      alt: "G",
+      zygosity: "het",
+      gene_symbol: "BRCA1",
+      consequence: "missense_variant",
+      clinvar_significance: null,
+      clinvar_review_stars: null,
+      gnomad_af_global: 0.001,
+      rare_flag: true,
+      cadd_phred: 25.5,
+      sift_score: 0.01,
+      sift_pred: "D",
+      polyphen2_hsvar_score: 0.99,
+      polyphen2_hsvar_pred: "D",
+      revel: 0.85,
+      annotation_coverage: 0b111111,
+      evidence_conflict: false,
+      ensemble_pathogenic: false,
+      chrom_grch38: "1",
+      pos_grch38: startPos + i * 100 + 50000,
+      source,
+      concordance,
+      alt_rsid: "",
+    })),
+    next_cursor_chrom: hasMore ? "1" : null,
+    next_cursor_pos: hasMore ? startPos + count * 100 : null,
+    has_more: hasMore,
+    limit: 100,
+  }
+}
+
+const COUNT: VariantCount = { total: 4, filtered: false }
+
+function setupMerged() {
+  mockFetch.mockImplementation(async (url: string) => {
+    if (url.includes("/api/column-presets")) {
+      return { ok: true, json: async () => ({ presets: PRESETS }) }
+    }
+    if (url.includes("/api/samples/") && url.includes("/merge-provenance")) {
+      return {
+        ok: true,
+        json: async () => ({
+          merged_at: "2026-05-01T00:00:00Z",
+          strategy: "flag_only",
+          source_sample_ids: [1, 2],
+          source_file_hashes: ["abc", "def"],
+          concordance_summary: { match: 3, discordant: 1 },
+        }),
+      }
+    }
+    if (url.includes("/api/variants/chromosomes")) {
+      return { ok: true, json: async () => [{ chrom: "1", count: 4 }] }
+    }
+    if (url.includes("/api/variants/count")) {
+      return { ok: true, json: async () => COUNT }
+    }
+    if (url.includes("/api/variants")) {
+      return { ok: true, json: async () => makePage(4) }
+    }
+    return { ok: false, status: 404 }
+  })
+}
+
+function setupUnmerged() {
+  mockFetch.mockImplementation(async (url: string) => {
+    if (url.includes("/api/column-presets")) {
+      return { ok: true, json: async () => ({ presets: PRESETS }) }
+    }
+    if (url.includes("/api/samples/") && url.includes("/merge-provenance")) {
+      return {
+        ok: false,
+        status: 404,
+        clone() {
+          return this
+        },
+        json: async () => ({ detail: "no merge provenance" }),
+        text: async () => "no merge provenance",
+      }
+    }
+    if (url.includes("/api/variants/chromosomes")) {
+      return { ok: true, json: async () => [{ chrom: "1", count: 4 }] }
+    }
+    if (url.includes("/api/variants/count")) {
+      return { ok: true, json: async () => COUNT }
+    }
+    if (url.includes("/api/variants")) {
+      return { ok: true, json: async () => makePage(4, false, 1000, "", "") }
+    }
+    return { ok: false, status: 404 }
+  })
+}
+
+function variantsCalls(): string[] {
+  return mockFetch.mock.calls
+    .map((c) => c[0] as string)
+    .filter(
+      (url) =>
+        url.includes("/api/variants?") &&
+        !url.includes("count") &&
+        !url.includes("chromosomes"),
+    )
+}
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", mockFetch)
+  mockFetch.mockReset()
+  window.history.replaceState({}, "", window.location.pathname)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe("VariantTable source/concordance columns (Step 71)", () => {
+  it("renders Source and Concordance headers when merge-provenance resolves", async () => {
+    setupMerged()
+    render(<VariantTable sampleId={1} />)
+    await waitFor(() => {
+      expect(screen.getByText("rs100")).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(
+        screen.getByRole("columnheader", { name: "Source" }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole("columnheader", { name: "Concordance" }),
+      ).toBeInTheDocument()
+    })
+  })
+
+  it("does not render Source / Concordance for unmerged samples", async () => {
+    setupUnmerged()
+    render(<VariantTable sampleId={1} />)
+    await waitFor(() => {
+      expect(screen.getByText("rs100")).toBeInTheDocument()
+    })
+    expect(
+      screen.queryByRole("columnheader", { name: "Source" }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("columnheader", { name: "Concordance" }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("renders human-readable labels in body cells", async () => {
+    setupMerged()
+    render(<VariantTable sampleId={1} />)
+    await waitFor(() => {
+      // S₁ label per SOURCE_LABELS map
+      expect(screen.getAllByText("S₁").length).toBeGreaterThan(0)
+      expect(screen.getAllByText("Match").length).toBeGreaterThan(0)
+    })
+  })
+})
+
+describe("VariantToolbar source/concordance filter chips (Step 71)", () => {
+  it("shows Source and Concordance dropdowns only when sample is merged", async () => {
+    setupMerged()
+    render(<VariantTable sampleId={1} />)
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /filter by source/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: /filter by concordance/i }),
+      ).toBeInTheDocument()
+    })
+  })
+
+  it("hides Source and Concordance dropdowns for unmerged samples", async () => {
+    setupUnmerged()
+    render(<VariantTable sampleId={1} />)
+    await waitFor(() => {
+      expect(screen.getByText("rs100")).toBeInTheDocument()
+    })
+    expect(
+      screen.queryByRole("button", { name: /filter by source/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /filter by concordance/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("appends source:S2 to the API filter when Source S₂ is selected", async () => {
+    setupMerged()
+    const user = userEvent.setup()
+    render(<VariantTable sampleId={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByText("rs100")).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole("button", { name: /filter by source/i }))
+    await waitFor(() =>
+      expect(screen.getByRole("listbox", { name: "Source values" })).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole("option", { name: "S₂" }))
+
+    await waitFor(() => {
+      const matched = variantsCalls().find(
+        (url) =>
+          url.includes("source%3AS2") || url.includes("source:S2"),
+      )
+      expect(matched).toBeDefined()
+    })
+  })
+
+  it("appends concordance:discordant to the API filter when selected", async () => {
+    setupMerged()
+    const user = userEvent.setup()
+    render(<VariantTable sampleId={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByText("rs100")).toBeInTheDocument()
+    })
+
+    await user.click(
+      screen.getByRole("button", { name: /filter by concordance/i }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole("listbox", { name: "Concordance values" }),
+      ).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole("option", { name: "Discordant" }))
+
+    await waitFor(() => {
+      const matched = variantsCalls().find(
+        (url) =>
+          url.includes("concordance%3Adiscordant") ||
+          url.includes("concordance:discordant"),
+      )
+      expect(matched).toBeDefined()
+    })
+  })
+
+  it("Source and Concordance filters can stack and clear independently", async () => {
+    setupMerged()
+    const user = userEvent.setup()
+    render(<VariantTable sampleId={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByText("rs100")).toBeInTheDocument()
+    })
+
+    // Apply Source = both
+    await user.click(screen.getByRole("button", { name: /filter by source/i }))
+    await waitFor(() =>
+      expect(screen.getByRole("listbox", { name: "Source values" })).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole("option", { name: "Both" }))
+
+    // Apply Concordance = match
+    await user.click(
+      screen.getByRole("button", { name: /filter by concordance/i }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole("listbox", { name: "Concordance values" }),
+      ).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole("option", { name: "Match" }))
+
+    await waitFor(() => {
+      const matched = variantsCalls().find(
+        (url) =>
+          (url.includes("source%3Aboth") || url.includes("source:both")) &&
+          (url.includes("concordance%3Amatch") ||
+            url.includes("concordance:match")),
+      )
+      expect(matched).toBeDefined()
+    })
+
+    // The chip label now says "Both"; clicking the chevron-less label clears it
+    const sourceChip = screen.getByRole("button", {
+      name: /source filter: s₁|source filter: s₂|source filter: both/i,
+    })
+    expect(sourceChip).toBeInTheDocument()
+  })
+})

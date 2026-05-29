@@ -81,12 +81,14 @@ import structlog
 from scipy.optimize import nnls as _scipy_nnls
 
 from backend.analysis.evidence import ANCESTRY_EVIDENCE_LEVEL
+from backend.analysis.zygosity import is_no_call
 from backend.db.tables import (
     annotated_variants,
     findings,
     haplogroup_assignments,
     raw_variants,
 )
+from backend.services.sex_inference import infer_biological_sex
 
 logger = structlog.get_logger(__name__)
 
@@ -1408,7 +1410,7 @@ def _check_node_match(
     snps_present = 0
     for snp in node.defining_snps:
         genotype = genotype_map.get(snp.rsid)
-        if genotype and genotype not in ("--", "00", "II", "DD", "DI", "ID"):
+        if genotype is not None and not is_no_call(genotype):
             # Check if derived allele is present in genotype
             if snp.allele.upper() in genotype.upper():
                 snps_present += 1
@@ -1470,41 +1472,6 @@ def _tree_walk(
 
     # No child matched — current node is the deepest match
     return node, path
-
-
-# ── Sex inference ────────────────────────────────────────────────────
-
-
-def _infer_sex_from_variants(
-    sample_engine: sa.Engine,
-) -> str:
-    """Infer chromosomal sex from Y-chromosome variant calls.
-
-    Checks if the sample has called (non-missing) variants on the
-    Y chromosome. Presence of Y-chromosome genotype calls indicates XY.
-
-    Args:
-        sample_engine: SQLAlchemy engine for the sample database.
-
-    Returns:
-        'XY' if Y-chromosome variants are called, 'XX' otherwise.
-    """
-    with sample_engine.connect() as conn:
-        # Check raw_variants for Y chromosome calls
-        stmt = (
-            sa.select(sa.func.count())
-            .select_from(raw_variants)
-            .where(
-                raw_variants.c.chrom == "Y",
-                raw_variants.c.genotype.notin_(["--", "00", ""]),
-                raw_variants.c.genotype.isnot(None),
-            )
-        )
-        y_count = conn.execute(stmt).scalar() or 0
-
-    sex = "XY" if y_count > 0 else "XX"
-    logger.info("sex_inferred_from_variants", sex=sex, y_variant_count=y_count)
-    return sex
 
 
 # ── Main haplogroup assignment ───────────────────────────────────────
@@ -1589,8 +1556,13 @@ def assign_haplogroups(
         time_ms=mt_result.assignment_time_ms,
     )
 
-    # Y-chromosome assignment (only for XY samples)
-    sex = _infer_sex_from_variants(sample_engine)
+    # Y-chromosome assignment (only for XY samples). The sex-inference
+    # service is the single source of truth (Plan §9.4); "manual_review"
+    # and "unknown" both skip the Y tree-walk — the new algorithm is
+    # strictly more conservative than the legacy ``y_count > 0`` heuristic
+    # on edge cases, and Y haplogroup assignment without a confirmed XY
+    # call would be a spurious finding.
+    sex = infer_biological_sex(sample_engine)
 
     if sex == "XY":
         t0 = time.perf_counter()
@@ -1623,7 +1595,7 @@ def assign_haplogroups(
             time_ms=y_result.assignment_time_ms,
         )
     else:
-        logger.info("y_haplogroup_skipped", reason="sex_inferred_XX")
+        logger.info("y_haplogroup_skipped", reason="sex_inferred", sex=sex)
 
     return results
 

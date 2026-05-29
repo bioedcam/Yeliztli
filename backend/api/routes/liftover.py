@@ -13,9 +13,10 @@ from __future__ import annotations
 import logging
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, samples
 from backend.ingestion.liftover import batch_convert, convert_coordinate
@@ -72,7 +73,11 @@ def convert_single(
     )
 
 
-@router.post("/{sample_id}", response_model=BatchLiftoverStats)
+@router.post(
+    "/{sample_id}",
+    response_model=BatchLiftoverStats,
+    dependencies=[Depends(require_fresh_sample)],
+)
 def batch_liftover_sample(
     sample_id: int,
 ) -> BatchLiftoverStats:

@@ -18,9 +18,10 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, samples
 from backend.disclaimers import (
@@ -198,7 +199,7 @@ def get_cardiovascular_disclaimer() -> CardiovascularDisclaimerResponse:
     )
 
 
-@router.get("/variants")
+@router.get("/variants", dependencies=[Depends(require_fresh_sample)])
 def list_cardiovascular_variants(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CardiovascularVariantsListResponse:
@@ -215,7 +216,7 @@ def list_cardiovascular_variants(
     return CardiovascularVariantsListResponse(items=items, total=len(items))
 
 
-@router.get("/gene/{gene_symbol}")
+@router.get("/gene/{gene_symbol}", dependencies=[Depends(require_fresh_sample)])
 def cardiovascular_gene_detail(
     gene_symbol: str,
     sample_id: int = Query(..., description="Sample ID"),
@@ -230,7 +231,7 @@ def cardiovascular_gene_detail(
     return CardiovascularVariantsListResponse(items=items, total=len(items))
 
 
-@router.get("/fh-status")
+@router.get("/fh-status", dependencies=[Depends(require_fresh_sample)])
 def get_fh_status(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> FHStatusResponse:
@@ -281,7 +282,7 @@ def get_fh_status(
     )
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run_cardiovascular_analysis(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> CardiovascularRunResponse:

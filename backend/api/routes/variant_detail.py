@@ -16,16 +16,21 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.analysis.ancestry import get_ancestry_matched_af_column, get_inferred_ancestry
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import annotated_variants, gene_phenotype, samples
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/variants", tags=["variant-detail"])
+router = APIRouter(
+    prefix="/variants",
+    tags=["variant-detail"],
+    dependencies=[Depends(require_fresh_sample)],
+)
 
 # ── Response models ──────────────────────────────────────────────────
 

@@ -16,7 +16,8 @@ import { Loader2 } from "lucide-react"
 
 import { useVariants, useVariantsCount, useTotalVariantCount, useChromosomeCounts } from "@/api/variants"
 import { useColumnPresets } from "@/api/columnPresets"
-import type { VariantRow } from "@/types/variants"
+import { useMergeProvenance } from "@/api/samples"
+import type { ConcordanceTag, SourceTag, VariantRow } from "@/types/variants"
 import { allColumns } from "./columns"
 import VariantToolbar from "./VariantToolbar"
 import ChromosomeNav from "./ChromosomeNav"
@@ -37,20 +38,30 @@ interface VariantTableProps {
 /** GRCh38 liftover column IDs (P4-20). */
 const GRCH38_COLUMNS = ["chrom_grch38", "pos_grch38"]
 
+/** Merged-sample provenance column IDs (AncestryDNA Plan §10.7 / Step 71).
+ *  Hidden on unmerged samples regardless of preset; shown by default when
+ *  ``useMergeProvenance`` resolves to a row (i.e. sample is merged). */
+const MERGE_PROV_COLUMNS = ["source", "concordance"]
+
 /** Convert a preset's column list to TanStack Table VisibilityState.
- *  GRCh38 columns are controlled separately via the liftover toggle (P4-20). */
+ *  GRCh38 columns are controlled separately via the liftover toggle (P4-20).
+ *  Source / Concordance columns are controlled by merged-sample status
+ *  (AncestryDNA Plan §10.7 / Step 71). */
 function presetToVisibility(
   presetColumns: string[] | null,
   allColumnIds: string[],
   showGRCh38: boolean,
+  isMergedSample: boolean,
 ): VisibilityState {
   if (!presetColumns) {
-    // All visible — but still respect GRCh38 toggle
+    // All visible — but still respect GRCh38 + merge-provenance toggles
     const visibility: VisibilityState = {}
     for (const colId of allColumnIds) {
       if (ALWAYS_VISIBLE.has(colId)) continue
       if (GRCH38_COLUMNS.includes(colId)) {
         visibility[colId] = showGRCh38
+      } else if (MERGE_PROV_COLUMNS.includes(colId)) {
+        visibility[colId] = isMergedSample
       } else {
         visibility[colId] = true
       }
@@ -62,6 +73,11 @@ function presetToVisibility(
     if (ALWAYS_VISIBLE.has(colId)) continue
     if (GRCH38_COLUMNS.includes(colId)) {
       visibility[colId] = showGRCh38
+    } else if (MERGE_PROV_COLUMNS.includes(colId)) {
+      // Source / Concordance visibility tracks merged-sample status, not
+      // the active preset — presets predate Phase 3 and would silently
+      // hide them otherwise.
+      visibility[colId] = isMergedSample
     } else {
       visibility[colId] = presetColumns.includes(colId)
     }
@@ -77,10 +93,20 @@ export default function VariantTable({ sampleId }: VariantTableProps) {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
     chrom_grch38: false,
     pos_grch38: false,
+    source: false,
+    concordance: false,
   })
   const [startChrom, setStartChrom] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<string | undefined>(undefined)
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  // AncestryDNA Plan §10.7 / Step 71: per-row merge-provenance filter chips.
+  const [sourceFilter, setSourceFilter] = useState<SourceTag | null>(null)
+  const [concordanceFilter, setConcordanceFilter] = useState<ConcordanceTag | null>(null)
+
+  // Detect merged-sample status. The hook returns 404 for unmerged samples,
+  // which we treat as "not merged" without surfacing the error to the user.
+  const { data: provenance, error: provenanceError } = useMergeProvenance(sampleId)
+  const isMergedSample = !!provenance && !provenanceError
 
   // Variant detail side panel state (P2-21)
   const [selectedRsid, setSelectedRsid] = useState<string | null>(null)
@@ -108,18 +134,46 @@ export default function VariantTable({ sampleId }: VariantTableProps) {
     const match = presets.find((p) => p.name.toLowerCase() === activePreset.toLowerCase())
     if (match) {
       setActivePreset(match.name)
-      setColumnVisibility(presetToVisibility(match.columns, allColumnIds, showGRCh38))
+      setColumnVisibility(
+        presetToVisibility(match.columns, allColumnIds, showGRCh38, isMergedSample),
+      )
     } else {
       // Invalid preset in URL — reset
       setActivePreset(null)
     }
     initialPresetApplied.current = true
-  }, [presets, activePreset, allColumnIds, showGRCh38])
+  }, [presets, activePreset, allColumnIds, showGRCh38, isMergedSample])
+
+  // Reveal Source / Concordance columns once merge-provenance resolves
+  // (AncestryDNA Plan §10.7 / Step 71). Skipped while a preset is active
+  // since the preset path already calls presetToVisibility with the
+  // current isMergedSample value.
+  useEffect(() => {
+    setColumnVisibility((prev) => {
+      if (prev.source === isMergedSample && prev.concordance === isMergedSample) {
+        return prev
+      }
+      return { ...prev, source: isMergedSample, concordance: isMergedSample }
+    })
+  }, [isMergedSample])
+
+  // Clear merge-provenance filter chips when the active sample is not merged
+  // (AncestryDNA Plan §10.7 / Step 71). The chips are hidden for unmerged
+  // samples, so a stale source/concordance value would silently over-filter
+  // the server query with no way to clear it from the UI.
+  useEffect(() => {
+    if (!isMergedSample) {
+      setSourceFilter(null)
+      setConcordanceFilter(null)
+    }
+  }, [isMergedSample, sampleId])
 
   const handlePresetChange = useCallback(
     (presetName: string | null, columns: string[] | null) => {
       setActivePreset(presetName)
-      setColumnVisibility(presetToVisibility(columns, allColumnIds, showGRCh38))
+      setColumnVisibility(
+        presetToVisibility(columns, allColumnIds, showGRCh38, isMergedSample),
+      )
 
       // Update URL param
       const url = new URL(window.location.href)
@@ -130,7 +184,7 @@ export default function VariantTable({ sampleId }: VariantTableProps) {
       }
       window.history.replaceState({}, "", url.toString())
     },
-    [allColumnIds, showGRCh38],
+    [allColumnIds, showGRCh38, isMergedSample],
   )
 
   // GRCh38 liftover toggle (P4-20): show/hide GRCh38 columns independently of presets
@@ -146,13 +200,16 @@ export default function VariantTable({ sampleId }: VariantTableProps) {
     })
   }, [])
 
-  // Server-side filter string (set by quick-apply suggestions in P1-15e, P2-22 conflicts toggle).
+  // Server-side filter string (set by quick-apply suggestions in P1-15e, P2-22
+  // conflicts toggle, Step 71 merged-sample source/concordance chips).
   const filter = useMemo(() => {
     const parts: string[] = []
     if (activeFilter) parts.push(activeFilter)
     if (showConflictsOnly) parts.push("evidence_conflict:1")
+    if (sourceFilter) parts.push(`source:${sourceFilter}`)
+    if (concordanceFilter) parts.push(`concordance:${concordanceFilter}`)
     return parts.length > 0 ? parts.join(",") : undefined
-  }, [activeFilter, showConflictsOnly])
+  }, [activeFilter, showConflictsOnly, sourceFilter, concordanceFilter])
 
   const {
     data,
@@ -255,11 +312,14 @@ export default function VariantTable({ sampleId }: VariantTableProps) {
   // When showUnannotated is off (default), annotated count = 0 but total > 0.
   const isPreAnnotation = useMemo(() => {
     if (showUnannotated || searchQuery || activeFilter || showConflictsOnly) return false
+    // Merge-provenance filter chips also narrow the server query — a
+    // filtered-empty result must not surface the pre-annotation message.
+    if (sourceFilter || concordanceFilter) return false
     if (totalVariants == null || totalVariants === 0) return false
     // countData is filtered by annotation_coverage:notnull — if 0, no annotated variants
     if (countData && countData.total === 0) return true
     return false
-  }, [showUnannotated, searchQuery, activeFilter, showConflictsOnly, totalVariants, countData])
+  }, [showUnannotated, searchQuery, activeFilter, showConflictsOnly, sourceFilter, concordanceFilter, totalVariants, countData])
 
   // Empty states (P1-15e)
   if (sampleId == null) {
@@ -299,6 +359,11 @@ export default function VariantTable({ sampleId }: VariantTableProps) {
         onTagFilter={setActiveTag}
         showGRCh38={showGRCh38}
         onToggleGRCh38={handleToggleGRCh38}
+        isMergedSample={isMergedSample}
+        sourceFilter={sourceFilter}
+        onSourceFilter={setSourceFilter}
+        concordanceFilter={concordanceFilter}
+        onConcordanceFilter={setConcordanceFilter}
       />
 
       <div className="flex flex-1 overflow-hidden">

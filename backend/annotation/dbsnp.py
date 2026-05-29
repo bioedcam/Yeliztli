@@ -44,7 +44,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from backend.db.tables import (
     annotated_variants,
-    database_versions,
     dbsnp_merges,
     raw_variants,
 )
@@ -358,36 +357,97 @@ def record_dbsnp_version(
     checksum: str | None = None,
 ) -> None:
     """Insert or update the dbSNP version in the database_versions table."""
-    with engine.begin() as conn:
-        existing = conn.execute(
-            sa.select(database_versions.c.db_name).where(database_versions.c.db_name == "dbsnp")
-        ).first()
+    from backend.db.database_registry import _record_db_version
 
-        now = datetime.now(UTC)
+    _record_db_version(
+        engine,
+        db_name="dbsnp",
+        version=version,
+        file_size_bytes=file_size_bytes,
+        sha256=checksum,
+        file_path=file_path,
+    )
 
-        if existing:
-            conn.execute(
-                database_versions.update()
-                .where(database_versions.c.db_name == "dbsnp")
-                .values(
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
-        else:
-            conn.execute(
-                database_versions.insert().values(
-                    db_name="dbsnp",
-                    version=version,
-                    file_path=file_path,
-                    file_size_bytes=file_size_bytes,
-                    downloaded_at=now,
-                    checksum_sha256=checksum,
-                )
-            )
+
+def check_dbsnp_update(
+    reference_engine: sa.Engine,
+    settings: object | None = None,
+    *,
+    timeout: float = 30.0,
+):
+    """Check whether the dbSNP RsMergeArch pinned in the manifest is newer than installed.
+
+    Uses ``pipeline_pins["dbsnp"]`` from ``bundles/manifest.json`` as the
+    authoritative source for the latest URL, then performs an HTTP HEAD on
+    the pinned URL. NCBI publishes the RsMergeArch.bcp.gz file without a
+    static release tag, so the remote version is derived from the response's
+    ``Last-Modified`` header (formatted YYYYMMDD to match
+    :func:`download_and_load_rsmerge`'s recorded value). The ``Content-Length``
+    response header populates the download-size estimate used by the
+    bandwidth-window check. Returns ``None`` when the manifest pin is
+    missing/unreachable, the HEAD call fails, ``Last-Modified`` is absent,
+    or the recorded version is the same as or newer than the remote.
+
+    Args:
+        reference_engine: Reference DB engine for ``database_versions`` lookup.
+        settings: Accepted for dispatch-signature parity with other
+            ``check_*_update`` functions; unused.
+        timeout: HTTP timeout in seconds for both the manifest fetch and HEAD.
+
+    Returns:
+        ``VersionInfo`` when the remote ``Last-Modified`` date is newer than
+        the recorded version, otherwise ``None``.
+    """
+    del settings  # unused; kept for dispatch-signature parity
+    from email.utils import parsedate_to_datetime
+
+    from backend.db.manifest import get_pipeline_pin
+    from backend.db.update_manager import VersionInfo, get_current_version
+
+    pin = get_pipeline_pin("dbsnp", timeout=timeout)
+    if pin is None or not pin.url:
+        return None
+
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        ) as client:
+            resp = client.head(pin.url)
+            resp.raise_for_status()
+            last_modified = resp.headers.get("Last-Modified", "")
+            content_length = resp.headers.get("Content-Length")
+    except Exception as exc:
+        logger.warning("dbsnp_update_check_failed", error=str(exc))
+        return None
+
+    if not last_modified:
+        return None
+
+    try:
+        remote_version = parsedate_to_datetime(last_modified).strftime("%Y%m%d")
+    except (TypeError, ValueError) as exc:
+        logger.warning("dbsnp_update_check_bad_last_modified", error=str(exc))
+        return None
+
+    current = get_current_version(reference_engine, "dbsnp")
+    if current is not None and current >= remote_version:
+        return None
+
+    download_size = 0
+    if content_length:
+        try:
+            download_size = int(content_length)
+        except ValueError:
+            download_size = 0
+
+    return VersionInfo(
+        db_name="dbsnp",
+        latest_version=remote_version,
+        download_url=pin.url,
+        download_size_bytes=download_size,
+        release_date=remote_version,
+    )
 
 
 def download_rsmerge_arch(
@@ -396,6 +456,7 @@ def download_rsmerge_arch(
     url: str = RSMERGE_URL,
     progress_callback: Callable[[int, int | None], None] | None = None,
     timeout: float = 600.0,
+    meta: dict | None = None,
 ) -> Path:
     """Download the dbSNP RsMergeArch file from NCBI FTP.
 
@@ -406,6 +467,10 @@ def download_rsmerge_arch(
         url: Override URL (useful for testing).
         progress_callback: Called with (bytes_downloaded, total_bytes).
         timeout: HTTP timeout in seconds.
+        meta: Optional mutable dict populated with response metadata. When
+            the server sends a ``Last-Modified`` header, ``meta["version"]``
+            is set to the parsed ``YYYYMMDD`` string so callers can record the
+            same version that :func:`check_dbsnp_update` compares against.
 
     Returns:
         Path to the downloaded .bcp.gz file.
@@ -428,6 +493,18 @@ def download_rsmerge_arch(
                 content_length = response.headers.get("Content-Length")
                 if content_length:
                     total_bytes = int(content_length)
+
+                if meta is not None:
+                    last_modified = response.headers.get("Last-Modified", "")
+                    if last_modified:
+                        from email.utils import parsedate_to_datetime
+
+                        try:
+                            meta["version"] = parsedate_to_datetime(last_modified).strftime(
+                                "%Y%m%d"
+                            )
+                        except (TypeError, ValueError) as exc:
+                            logger.warning("dbsnp_download_bad_last_modified", error=str(exc))
 
                 with open(tmp_path, "wb") as f:
                     for chunk in response.iter_bytes(chunk_size=65536):
@@ -466,11 +543,13 @@ def download_and_load_rsmerge(
     Returns:
         LoadStats with merge counts.
     """
+    meta: dict = {}
     path = download_rsmerge_arch(
         dest_dir,
         url=url,
         progress_callback=download_progress,
         timeout=timeout,
+        meta=meta,
     )
 
     sha256 = _compute_sha256(path)
@@ -479,7 +558,11 @@ def download_and_load_rsmerge(
     stats = load_rsmerge_from_iter(row_iter, engine)
     stats.sha256 = sha256
 
-    version = datetime.now(UTC).strftime("%Y%m%d")
+    # Persist the Last-Modified-derived YYYYMMDD so it matches the value
+    # check_dbsnp_update compares against; fall back to the install date when
+    # the server did not provide a usable Last-Modified header.
+    version = meta.get("version") or datetime.now(UTC).strftime("%Y%m%d")
+    stats.file_date = version
     record_dbsnp_version(
         engine,
         version=version,

@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   AcceptDisclaimerResult,
+  BundleGatePayload,
+  BundleVersionMismatchPayload,
   CredentialsData,
   DatabaseListResult,
   DetectExistingResult,
@@ -15,6 +17,64 @@ import type {
   StorageInfoResult,
   TriggerDownloadResult,
 } from '@/types/setup'
+
+/**
+ * Error raised when `/api/ingest` returns HTTP 409 with the §5.4 bundle-gate
+ * payload (AncestryDNA upload + installed VEP bundle < v2.0.0). Carries the
+ * structured payload so the Upload step can render its one-click update CTA.
+ */
+export class BundleGateError extends Error {
+  readonly status = 409
+  readonly payload: BundleGatePayload
+
+  constructor(payload: BundleGatePayload) {
+    super('bundle_version_too_old')
+    this.name = 'BundleGateError'
+    this.payload = payload
+  }
+}
+
+function isBundleGatePayload(value: unknown): value is BundleGatePayload {
+  if (!value || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return (
+    obj.error === 'bundle_version_too_old' &&
+    typeof obj.installed_version === 'string' &&
+    typeof obj.required_version === 'string' &&
+    obj.vendor === 'ancestrydna' &&
+    typeof obj.update_url === 'string'
+  )
+}
+
+/**
+ * Error raised when `/api/setup/import-backup` returns HTTP 409 with the
+ * §7.6 mismatch payload. Carries enough context for the wizard's
+ * RestoreStep banner to render both versions.
+ */
+export class BundleVersionMismatchError extends Error {
+  readonly status = 409
+  readonly payload: BundleVersionMismatchPayload
+
+  constructor(payload: BundleVersionMismatchPayload) {
+    super('bundle_version_mismatch')
+    this.name = 'BundleVersionMismatchError'
+    this.payload = payload
+  }
+}
+
+function isBundleVersionMismatchPayload(
+  value: unknown,
+): value is BundleVersionMismatchPayload {
+  if (!value || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return (
+    obj.error === 'bundle_version_mismatch' &&
+    typeof obj.installed_version === 'string' &&
+    typeof obj.backup_version === 'string' &&
+    (obj.direction === 'backup_below_installed' ||
+      obj.direction === 'backup_above_installed')
+  )
+}
 
 const SETUP_STATUS_KEY = ['setup', 'status'] as const
 const DISCLAIMER_KEY = ['setup', 'disclaimer'] as const
@@ -81,7 +141,14 @@ async function postImportBackup(file: File): Promise<ImportBackupResult> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    const detail = body?.detail || `Import failed: ${res.status}`
+    if (res.status === 409 && isBundleVersionMismatchPayload(body?.detail)) {
+      throw new BundleVersionMismatchError(
+        body.detail as BundleVersionMismatchPayload,
+      )
+    }
+    const detail =
+      (typeof body?.detail === 'string' ? body.detail : null) ||
+      `Import failed: ${res.status}`
     throw new Error(detail)
   }
   return res.json()
@@ -244,7 +311,12 @@ async function postIngestFile(file: File): Promise<IngestResult> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    const detail = body?.detail || `Upload failed: ${res.status}`
+    if (res.status === 409 && isBundleGatePayload(body?.detail)) {
+      throw new BundleGateError(body.detail as BundleGatePayload)
+    }
+    const detail =
+      (typeof body?.detail === 'string' ? body.detail : null) ||
+      `Upload failed: ${res.status}`
     throw new Error(detail)
   }
   return res.json()

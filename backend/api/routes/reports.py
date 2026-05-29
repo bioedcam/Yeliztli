@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
+from backend.api.dependencies import require_fresh_sample
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -60,6 +62,7 @@ async def generate_report(request: ReportRequest) -> Response:
 
     Returns the PDF file as a downloadable response.
     """
+    require_fresh_sample(request.sample_id)
     from backend.reports.generator import generate_report_pdf
 
     try:
@@ -88,6 +91,7 @@ async def preview_report(request: ReportRequest) -> HTMLResponse:
     Useful for the report builder UI to show a live preview before
     the user commits to PDF generation.
     """
+    require_fresh_sample(request.sample_id)
     from backend.reports.generator import render_report_html
 
     try:
@@ -112,6 +116,7 @@ async def generate_variant_card(request: VariantCardRequest) -> Response:
     Returns a one-page PDF summarising a single finding with all
     clinical metadata, evidence stars, and embedded SVG visualisation.
     """
+    require_fresh_sample(request.sample_id)
     from backend.reports.variant_card import generate_variant_card_pdf
 
     try:
@@ -135,6 +140,7 @@ async def generate_variant_card(request: VariantCardRequest) -> Response:
 @router.post("/variant-card/png")
 async def generate_variant_card_as_png(request: VariantCardRequest) -> Response:
     """Generate a single-variant evidence card as PNG image."""
+    require_fresh_sample(request.sample_id)
     from backend.reports.variant_card import generate_variant_card_png
 
     try:
@@ -158,6 +164,7 @@ async def generate_variant_card_as_png(request: VariantCardRequest) -> Response:
 @router.post("/variant-card/preview", response_class=HTMLResponse)
 async def preview_variant_card(request: VariantCardRequest) -> HTMLResponse:
     """Generate an HTML preview of the variant evidence card."""
+    require_fresh_sample(request.sample_id)
     from backend.reports.variant_card import render_variant_card_html
 
     try:

@@ -13,11 +13,13 @@ from functools import lru_cache
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import findings, haplogroup_assignments, samples
+from backend.services.lai_coverage_gate import is_degraded_for_sample, is_degraded_globally
 
 logger = structlog.get_logger(__name__)
 
@@ -115,28 +117,81 @@ class HaplogroupRunResponse(BaseModel):
 
 
 class LAIStatusResponse(BaseModel):
-    """LAI bundle and Java availability status."""
+    """LAI bundle and Java availability status.
+
+    ``degraded_coverage`` is the Step-23 soft-gate flag (Plan §6.7): True
+    when the installed ``lai_bundle`` is pre-v2.0.0 *and* the install
+    holds at least one AncestryDNA-sourced sample. Powers the dashboard
+    `<AppUpdateBanner>` advisory message.
+    """
 
     bundle_downloaded: bool
     java_available: bool
     lai_available: bool
     message: str
+    degraded_coverage: bool = False
 
 
 class LAITriggerResponse(BaseModel):
-    """Response from triggering LAI analysis."""
+    """Response from triggering LAI analysis.
+
+    Carries the Step-23 ``degraded_coverage`` advisory flag (Plan §6.7)
+    so the LAI Findings page can render a per-sample banner during the
+    run. Always ``False`` on 23andMe-only samples.
+    """
 
     job_id: str
     message: str
+    degraded_coverage: bool = False
+
+
+class LAICoverageSourceTelemetry(BaseModel):
+    """Per-source LAI rsID hit / drop counts (Plan §6.6, §6.7).
+
+    Unmerged samples emit a single bucket keyed by vendor
+    (e.g. ``"ancestrydna"`` / ``"23andme"``). Merged samples emit the
+    three uppercase buckets ``S1`` / ``S2`` / ``both`` matching
+    ``raw_variants.source``.
+    """
+
+    hits: int = 0
+    drops: int = 0
+
+
+class LAICoverageTelemetry(BaseModel):
+    """LAI coverage telemetry surfaced to ``AncestryView`` (Plan §6.7).
+
+    Step 24's `AncestryView` reads this payload to render
+    "X of Y rsIDs mapped to bundle (Z% dropout)" — and a three-row
+    source-breakdown table for merged samples. ``drop_rate_warning``
+    drives the per-sample reduced-coverage toast (Plan §6.6 threshold
+    of 15%).
+    """
+
+    per_source: dict[str, LAICoverageSourceTelemetry] = {}
+    total_hits: int = 0
+    total_drops: int = 0
+    drop_rate: float = 0.0
+    drop_rate_warning: bool = False
 
 
 class LAIResultResponse(BaseModel):
-    """LAI analysis results."""
+    """LAI analysis results.
+
+    Carries the Step-23 ``degraded_coverage`` advisory flag (Plan §6.7)
+    when the run was produced against a pre-v2.0.0 bundle for an
+    AncestryDNA-sourced sample. The Step-24 ``coverage_telemetry`` field
+    surfaces the per-source rsID hit/drop counts emitted by the runner
+    (Plan §6.6, §6.7) so the LAI Findings page can show the dropout
+    summary and merged-sample breakdown table.
+    """
 
     global_ancestry: dict
     chromosome_painting: dict
     metadata: dict
     created_at: str
+    degraded_coverage: bool = False
+    coverage_telemetry: LAICoverageTelemetry | None = None
 
 
 class LAIProgressResponse(BaseModel):
@@ -147,6 +202,7 @@ class LAIProgressResponse(BaseModel):
     progress_pct: float
     message: str
     error: str | None = None
+    degraded_coverage: bool = False
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -176,7 +232,7 @@ def _get_sample_engine(sample_id: int) -> sa.Engine:
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 
-@router.get("/findings")
+@router.get("/findings", dependencies=[Depends(require_fresh_sample)])
 def get_ancestry_findings(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> AncestryFindingResponse | None:
@@ -263,7 +319,7 @@ def get_ancestry_findings(
     )
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run_ancestry(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> AncestryRunResponse:
@@ -288,7 +344,7 @@ def run_ancestry(
     )
 
 
-@router.get("/pca-coordinates")
+@router.get("/pca-coordinates", dependencies=[Depends(require_fresh_sample)])
 def get_pca_coordinates_endpoint(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> PCACoordinatesResponse | None:
@@ -387,7 +443,7 @@ def _build_haplogroup_assignment_response(
     )
 
 
-@router.get("/haplogroups")
+@router.get("/haplogroups", dependencies=[Depends(require_fresh_sample)])
 def get_haplogroup_assignments(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> HaplogroupResponse:
@@ -425,7 +481,7 @@ def get_haplogroup_assignments(
     return HaplogroupResponse(assignments=assignments)
 
 
-@router.post("/haplogroups/run")
+@router.post("/haplogroups/run", dependencies=[Depends(require_fresh_sample)])
 def run_haplogroup(
     sample_id: int = Query(..., description="Sample ID"),
 ) -> HaplogroupRunResponse:
@@ -517,10 +573,11 @@ def get_lai_status() -> LAIStatusResponse:
         java_available=java_available,
         lai_available=lai_available,
         message=message,
+        degraded_coverage=is_degraded_globally(),
     )
 
 
-@router.post("/lai/{sample_id}")
+@router.post("/lai/{sample_id}", dependencies=[Depends(require_fresh_sample)])
 def trigger_lai_analysis(sample_id: int) -> LAITriggerResponse:
     """Trigger LAI analysis for a sample.
 
@@ -559,10 +616,59 @@ def trigger_lai_analysis(sample_id: int) -> LAITriggerResponse:
     return LAITriggerResponse(
         job_id=job_id,
         message="LAI analysis started. Poll /lai/progress for updates.",
+        degraded_coverage=is_degraded_for_sample(sample_id),
     )
 
 
-@router.get("/lai/{sample_id}/results")
+def _parse_coverage_telemetry(metadata: dict) -> LAICoverageTelemetry | None:
+    """Lift the runner's per-source telemetry out of ``metadata`` (Plan §6.6).
+
+    The Step-22 runner mirrors ``coverage_telemetry`` into the metadata
+    blob alongside ``drop_rate`` and ``drop_rate_warning``. Older results
+    (pre-Step-22 runs) lack those keys; in that case we return ``None`` so
+    the frontend can skip the section entirely.
+    """
+    raw = metadata.get("coverage_telemetry")
+    if not isinstance(raw, dict) or not raw:
+        return None
+
+    per_source: dict[str, LAICoverageSourceTelemetry] = {}
+    total_hits = 0
+    total_drops = 0
+    for key, counts in raw.items():
+        if not isinstance(counts, dict):
+            continue
+        try:
+            hits = int(counts.get("hits", 0) or 0)
+            drops = int(counts.get("drops", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        per_source[str(key)] = LAICoverageSourceTelemetry(hits=hits, drops=drops)
+        total_hits += hits
+        total_drops += drops
+
+    if not per_source:
+        return None
+
+    raw_drop_rate = metadata.get("drop_rate")
+    if isinstance(raw_drop_rate, int | float):
+        drop_rate = float(raw_drop_rate)
+    else:
+        denom = total_hits + total_drops
+        drop_rate = (total_drops / denom) if denom else 0.0
+
+    drop_rate_warning = bool(metadata.get("drop_rate_warning", drop_rate > 0.15))
+
+    return LAICoverageTelemetry(
+        per_source=per_source,
+        total_hits=total_hits,
+        total_drops=total_drops,
+        drop_rate=round(drop_rate, 4),
+        drop_rate_warning=drop_rate_warning,
+    )
+
+
+@router.get("/lai/{sample_id}/results", dependencies=[Depends(require_fresh_sample)])
 def get_lai_results(sample_id: int) -> LAIResultResponse | None:
     """Get LAI results for a sample.
 
@@ -583,15 +689,18 @@ def get_lai_results(sample_id: int) -> LAIResultResponse | None:
     if row is None:
         return None
 
+    metadata = json.loads(row.metadata_json)
     return LAIResultResponse(
         global_ancestry=json.loads(row.global_ancestry_json),
         chromosome_painting=json.loads(row.chromosome_painting_json),
-        metadata=json.loads(row.metadata_json),
+        metadata=metadata,
         created_at=row.created_at.isoformat() if row.created_at else "",
+        degraded_coverage=is_degraded_for_sample(sample_id),
+        coverage_telemetry=_parse_coverage_telemetry(metadata),
     )
 
 
-@router.get("/lai/{sample_id}/progress")
+@router.get("/lai/{sample_id}/progress", dependencies=[Depends(require_fresh_sample)])
 def get_lai_progress(sample_id: int) -> LAIProgressResponse | None:
     """Get LAI analysis progress for a sample.
 
@@ -620,4 +729,5 @@ def get_lai_progress(sample_id: int) -> LAIProgressResponse | None:
         progress_pct=row.progress_pct or 0.0,
         message=row.message or "",
         error=row.error,
+        degraded_coverage=is_degraded_for_sample(sample_id),
     )

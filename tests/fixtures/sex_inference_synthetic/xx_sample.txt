@@ -1,0 +1,22 @@
+#AncestryDNA raw data download
+#Synthetic fixture for tests/backend/test_validate_sex_thresholds.py — XX case.
+#NEVER copied from a real export; every genotype is hand-fabricated to exercise
+#Plan §9.4 dispositive-XX path (>=1 heterozygous non-PAR chrX call).
+# AncestryDNA array version: V2.0
+rsid	chromosome	position	allele1	allele2
+rs9000001	1	100000	A	G
+rs9000002	1	200000	C	C
+rs9000003	1	300000	T	T
+rs9000101	23	50000000	A	G
+rs9000102	23	60000000	C	T
+rs9000103	23	70000000	A	A
+rs9000104	23	80000000	C	C
+rs9000105	23	90000000	0	0
+rs9000201	25	500000	A	G
+rs9000202	25	2000000	C	T
+rs9000301	24	5000000	0	0
+rs9000302	24	6000000	0	0
+rs9000303	24	7000000	0	0
+rs9000304	24	8000000	0	0
+rs9000305	24	9000000	0	0
+rs9000306	24	10000000	0	0
