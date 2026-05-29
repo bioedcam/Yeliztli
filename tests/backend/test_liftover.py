@@ -5,6 +5,10 @@ T4-19: pyliftover converts rs1801133 GRCh37 position to correct GRCh38 position.
 
 from __future__ import annotations
 
+import pyliftover.liftover
+import pytest
+
+from backend.ingestion import liftover as liftover_module
 from backend.ingestion.liftover import batch_convert, convert_coordinate, reset_liftover
 
 # ── Unit tests: convert_coordinate ────────────────────────────────────
@@ -122,3 +126,43 @@ class TestResetLiftover:
         result2 = convert_coordinate("1", 11856378)
         assert result2 is not None
         assert result1 == result2
+
+
+# ── Offline / no-network regression (CI flake fix) ────────────────────
+
+
+class TestVendoredChainOffline:
+    """The hg19→hg38 chain is vendored in-repo and loaded directly.
+
+    pyliftover's ``LiftOver("hg19", "hg38")`` would download the chain from
+    UCSC on first use, which made CI flaky when that fetch failed. These tests
+    guard that liftover uses the bundled file and never the network.
+    """
+
+    def test_vendored_chain_file_exists(self) -> None:
+        """The chain ships in the package so liftover works offline."""
+        assert liftover_module._CHAIN_PATH.exists(), (
+            f"vendored chain missing at {liftover_module._CHAIN_PATH}"
+        )
+
+    def test_no_network_download(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """convert_coordinate succeeds without pyliftover's UCSC download path.
+
+        ``open_liftover_chain_file`` is only reached by the from_db/to_db web
+        branch of ``LiftOver.__init__``; loading an explicit chain path skips
+        it. Making it raise proves the vendored file is used.
+        """
+
+        def _fail(*args: object, **kwargs: object) -> object:
+            raise AssertionError(
+                "liftover attempted a UCSC chain download instead of using the vendored file"
+            )
+
+        monkeypatch.setattr(pyliftover.liftover, "open_liftover_chain_file", _fail)
+        reset_liftover()
+        try:
+            result = convert_coordinate("1", 11856378)
+            assert result == ("1", 11796321)
+        finally:
+            # Drop the instance loaded under the patch so later tests reinit cleanly.
+            reset_liftover()

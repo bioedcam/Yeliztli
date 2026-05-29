@@ -1,7 +1,13 @@
 """GRCh38 liftover integration (P4-19).
 
 Converts GRCh37 (hg19) genomic coordinates to GRCh38 (hg38) using pyliftover.
-The chain file is automatically downloaded and cached by pyliftover on first use.
+
+The hg19→hg38 chain file is vendored in-repo at ``backend/data/chains/`` and
+loaded directly, so liftover never touches the network. pyliftover's default
+behaviour (``LiftOver("hg19", "hg38")``) would download the chain from UCSC on
+first use, which made CI flaky when that fetch failed; loading the bundled file
+keeps tests offline/deterministic and avoids a first-run download in production.
+A network fetch remains only as a fallback if the vendored file is ever missing.
 
 Lifted coordinates are stored as parallel columns (chrom_grch38, pos_grch38) in
 the annotated_variants table — the primary (chrom, pos) columns remain GRCh37.
@@ -11,28 +17,47 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from pyliftover import LiftOver
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
 
-# Thread-safe singleton for the LiftOver instance (chain file is ~250 KB,
+# Vendored UCSC hg19→hg38 chain (~222 KB). See backend/data/chains/README.md
+# for provenance and refresh instructions.
+_CHAIN_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "chains" / "hg19ToHg38.over.chain.gz"
+)
+
+# Thread-safe singleton for the LiftOver instance (chain file is ~222 KB,
 # loaded once and reused across all liftover calls).
 _lock = threading.Lock()
 _liftover: LiftOver | None = None
 
 
 def _get_liftover() -> LiftOver:
-    """Return (or lazily initialise) the hg19→hg38 LiftOver instance."""
+    """Return (or lazily initialise) the hg19→hg38 LiftOver instance.
+
+    Loads the vendored chain file directly (no network). Falls back to
+    pyliftover's UCSC download only if the bundled file is missing, logging a
+    warning since that reintroduces the network dependency the vendored file
+    exists to remove.
+    """
     global _liftover
     with _lock:
         if _liftover is None:
-            logger.info("liftover_init", extra={"from": "hg19", "to": "hg38"})
-            _liftover = LiftOver("hg19", "hg38")
+            if _CHAIN_PATH.exists():
+                logger.info(
+                    "liftover_init",
+                    extra={"from": "hg19", "to": "hg38", "source": "vendored"},
+                )
+                _liftover = LiftOver(str(_CHAIN_PATH))
+            else:
+                logger.warning(
+                    "liftover_chain_missing_fallback_to_web",
+                    extra={"expected_path": str(_CHAIN_PATH)},
+                )
+                _liftover = LiftOver("hg19", "hg38")
     return _liftover
 
 
