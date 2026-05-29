@@ -100,9 +100,7 @@ class TestAncestryDNAReadPath:
     def test_reads_ancestrydna_file_format(self, ancestrydna_sample_engine):
         assert _read_sample_file_format(ancestrydna_sample_engine) == "ancestrydna_v2.0"
 
-    def test_genotypes_default_source_to_empty_on_pre_phase3_db(
-        self, ancestrydna_sample_engine
-    ):
+    def test_genotypes_default_source_to_empty_on_pre_phase3_db(self, ancestrydna_sample_engine):
         genotypes = _read_sample_genotypes(ancestrydna_sample_engine)
         assert len(genotypes) == len(_ANCESTRYDNA_ROWS)
         assert all(gt["source"] == "" for gt in genotypes)
@@ -112,9 +110,7 @@ class TestAncestryDNAReadPath:
 class TestAncestryDNARunnerTelemetry:
     """End-to-end: AncestryDNA sample DB → single-key telemetry."""
 
-    def test_non_zero_autosomal_variant_count(
-        self, runner, ancestrydna_sample_engine, tmp_path
-    ):
+    def test_non_zero_autosomal_variant_count(self, runner, ancestrydna_sample_engine, tmp_path):
         genotypes = _read_sample_genotypes(ancestrydna_sample_engine)
         filtered = runner._filter_genotypes(genotypes)
         with patch.object(LAIRunner, "_write_single_vcf", lambda *a, **k: None):
@@ -126,13 +122,11 @@ class TestAncestryDNARunnerTelemetry:
         assert set(vcf_paths.keys()) <= autosomal_chroms
         # The runner already drops Y/MT/X + no-calls + indels in _filter_genotypes
         # and rs_chrx_mapped via the autosomal post-lookup check.
-        assert all(s["chrom"] in autosomal_chroms for s in [
-            {"chrom": chrom} for chrom in vcf_paths
-        ])
+        assert all(
+            s["chrom"] in autosomal_chroms for s in [{"chrom": chrom} for chrom in vcf_paths]
+        )
 
-    def test_single_key_ancestrydna_telemetry(
-        self, runner, ancestrydna_sample_engine, tmp_path
-    ):
+    def test_single_key_ancestrydna_telemetry(self, runner, ancestrydna_sample_engine, tmp_path):
         file_format = _read_sample_file_format(ancestrydna_sample_engine)
         genotypes = _read_sample_genotypes(ancestrydna_sample_engine)
         filtered = runner._filter_genotypes(genotypes)

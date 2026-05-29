@@ -79,9 +79,7 @@ class TestLoadCatalogRsids:
     def test_mixed_column_counts_raises(self, tmp_path: Path) -> None:
         catalog = tmp_path / "catalog_mixed.tsv"
         catalog.write_text("rs1\t1\t100\nrs2\n")
-        with pytest.raises(
-            ValueError, match=r"row column count 1 != header column count 3"
-        ):
+        with pytest.raises(ValueError, match=r"row column count 1 != header column count 3"):
             _load_catalog_rsids(catalog)
 
     # Case: rs-only filter — kgp*/i*/VG* IDs excluded from the set.
@@ -105,40 +103,22 @@ class TestCoverageReportCatalogFormats:
 
     # Case 2 (the auto-detect lock-in): same rsids in a 3-column TSV must
     # produce IDENTICAL numbers to the 1-column case.
-    def test_three_column_catalog_identical_to_one_column(
-        self, tmp_path: Path
-    ) -> None:
+    def test_three_column_catalog_identical_to_one_column(self, tmp_path: Path) -> None:
         one_col = tmp_path / "catalog_1col.txt"
         one_col.write_text("rs1\nrs2\nrs3\nrs4\nrs5\n")
         three_col = tmp_path / "catalog_3col.tsv"
-        three_col.write_text(
-            "rs1\t1\t100\n"
-            "rs2\t1\t200\n"
-            "rs3\t2\t300\n"
-            "rs4\t3\t400\n"
-            "rs5\tX\t500\n"
-        )
+        three_col.write_text("rs1\t1\t100\nrs2\t1\t200\nrs3\t2\t300\nrs4\t3\t400\nrs5\tX\t500\n")
         report_1 = coverage_report(_VEP_ROWS, one_col)
         report_3 = coverage_report(_VEP_ROWS, three_col)
         assert report_3["catalog_size"] == report_1["catalog_size"] == 5
         assert report_3["catalog_covered"] == report_1["catalog_covered"] == 2
-        assert (
-            report_3["coverage_percent"]
-            == report_1["coverage_percent"]
-            == 40.0
-        )
+        assert report_3["coverage_percent"] == report_1["coverage_percent"] == 40.0
 
     # Case 5 via the public entry point: non-rs IDs do not inflate the
     # denominator (catalog_size), so coverage_percent is unaffected by them.
     def test_non_rs_ids_excluded_from_denominator(self, tmp_path: Path) -> None:
         catalog = tmp_path / "catalog_nonrs.tsv"
-        catalog.write_text(
-            "rs1\t1\t100\n"
-            "rs2\t1\t200\n"
-            "kgp99\t2\t300\n"
-            "i777\t3\t400\n"
-            "VG12\t4\t500\n"
-        )
+        catalog.write_text("rs1\t1\t100\nrs2\t1\t200\nkgp99\t2\t300\ni777\t3\t400\nVG12\t4\t500\n")
         report = coverage_report(_VEP_ROWS, catalog)
         # Denominator is the 2 rs-prefix entries only, not 5.
         assert report["catalog_size"] == 2

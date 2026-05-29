@@ -66,9 +66,7 @@ class TestParsedVariant:
 
 class TestParseResult:
     def test_minimal_construction(self) -> None:
-        result = ParseResult(
-            vendor=SourceVendor.TWENTYTHREEANDME, version="v5", build="GRCh37"
-        )
+        result = ParseResult(vendor=SourceVendor.TWENTYTHREEANDME, version="v5", build="GRCh37")
         assert result.vendor is SourceVendor.TWENTYTHREEANDME
         assert result.version == "v5"
         assert result.build == "GRCh37"
@@ -101,9 +99,7 @@ class TestParseResult:
     def test_version_is_string(self) -> None:
         # Plan §8.2 / §8.7: `version` is freeform string, not an enum, so the
         # dispatcher can compose `f"{vendor.value}_{version}"` without coercion.
-        result = ParseResult(
-            vendor=SourceVendor.ANCESTRYDNA, version="v2.0", build="GRCh37"
-        )
+        result = ParseResult(vendor=SourceVendor.ANCESTRYDNA, version="v2.0", build="GRCh37")
         assert isinstance(result.version, str)
         assert f"{result.vendor.value}_{result.version}" == "ancestrydna_v2.0"
 

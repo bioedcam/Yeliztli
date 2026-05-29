@@ -807,10 +807,7 @@ merge_provenance = sa.Table(
         "concordance_summary",
         sa.Text,
         nullable=False,
-        comment=(
-            "JSON {match, filled_nocall, discordant, unique_S1, unique_S2, "
-            "collapsed_rsid}"
-        ),
+        comment=("JSON {match, filled_nocall, discordant, unique_S1, unique_S2, collapsed_rsid}"),
     ),
     sa.CheckConstraint("id = 1", name="single_row_merge_provenance"),
 )

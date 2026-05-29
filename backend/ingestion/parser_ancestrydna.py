@@ -134,9 +134,7 @@ def _canonical_genotype(a1: str, a2: str) -> str:
 def _validate_line(parts: list[str], line_num: int) -> ParsedVariant:
     """Validate a single tab-split data line and return a ``ParsedVariant``."""
     if len(parts) != 5:
-        raise MalformedDataError(
-            f"Line {line_num}: expected 5 columns, got {len(parts)}"
-        )
+        raise MalformedDataError(f"Line {line_num}: expected 5 columns, got {len(parts)}")
 
     rsid, chrom_raw, pos_raw, a1, a2 = (p.strip() for p in parts)
 
@@ -148,9 +146,7 @@ def _validate_line(parts: list[str], line_num: int) -> ParsedVariant:
     try:
         pos = int(pos_raw)
     except ValueError:
-        raise MalformedDataError(
-            f"Line {line_num}: non-numeric position {pos_raw!r}"
-        ) from None
+        raise MalformedDataError(f"Line {line_num}: non-numeric position {pos_raw!r}") from None
     if pos < 0:
         raise MalformedDataError(f"Line {line_num}: negative position {pos}")
 

@@ -349,9 +349,7 @@ def _make_empty_sqlite(path: Path) -> None:
 
 def _read_annotation_state(sample_db: Path) -> list[tuple[str, str]]:
     with sqlite3.connect(str(sample_db)) as conn:
-        return conn.execute(
-            "SELECT key, value FROM annotation_state ORDER BY key"
-        ).fetchall()
+        return conn.execute("SELECT key, value FROM annotation_state ORDER BY key").fetchall()
 
 
 class TestMigration008AnnotationStateBackfill:
@@ -384,8 +382,7 @@ class TestMigration008AnnotationStateBackfill:
                 "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
             conn.execute(
-                "INSERT INTO annotation_state (key, value) "
-                "VALUES ('vep_bundle_version', 'v2.0.0')"
+                "INSERT INTO annotation_state (key, value) VALUES ('vep_bundle_version', 'v2.0.0')"
             )
 
         _upgrade(reference_db, revision="007")
@@ -606,9 +603,7 @@ class TestMigration009Individuals:
         _upgrade(db, revision="009")
         with sqlite3.connect(str(db)) as conn:
             conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute(
-                "INSERT INTO individuals (id, display_name) VALUES (1, 'Ada')"
-            )
+            conn.execute("INSERT INTO individuals (id, display_name) VALUES (1, 'Ada')")
             conn.execute(
                 "INSERT INTO samples (id, name, db_path, individual_id) "
                 "VALUES (1, 's1', '/tmp/s1.db', 1)"
@@ -616,9 +611,7 @@ class TestMigration009Individuals:
             conn.commit()
             conn.execute("DELETE FROM individuals WHERE id = 1")
             conn.commit()
-            row = conn.execute(
-                "SELECT individual_id FROM samples WHERE id = 1"
-            ).fetchone()
+            row = conn.execute("SELECT individual_id FROM samples WHERE id = 1").fetchone()
         assert row == (None,)
 
     def test_existing_samples_get_null_individual_id(self, tmp_path: Path) -> None:
@@ -627,17 +620,14 @@ class TestMigration009Individuals:
         _upgrade(db, revision="008")
         with sqlite3.connect(str(db)) as conn:
             conn.execute(
-                "INSERT INTO samples (id, name, db_path) "
-                "VALUES (42, 'legacy', '/tmp/legacy.db')"
+                "INSERT INTO samples (id, name, db_path) VALUES (42, 'legacy', '/tmp/legacy.db')"
             )
             conn.commit()
 
         _upgrade(db, revision="009")
 
         with sqlite3.connect(str(db)) as conn:
-            row = conn.execute(
-                "SELECT individual_id FROM samples WHERE id = 42"
-            ).fetchone()
+            row = conn.execute("SELECT individual_id FROM samples WHERE id = 42").fetchone()
         assert row == (None,)
 
     def test_downgrade_drops_index_column_and_table(self, tmp_path: Path) -> None:

@@ -133,9 +133,7 @@ class TestRawVariantsProvenanceColumns:
 
         info = _column_info(engine, "raw_variants")
         for col in V8_PROVENANCE_COLUMNS:
-            assert info[col]["nullable"] is False, (
-                f"{col} should be NOT NULL after v8 migration"
-            )
+            assert info[col]["nullable"] is False, f"{col} should be NOT NULL after v8 migration"
 
     def test_explicit_null_into_new_columns_is_rejected(self, tmp_path: Path) -> None:
         engine = _create_v7_sample_db(tmp_path / "sample_001.db")
@@ -200,9 +198,7 @@ class TestMergeProvenanceTable:
             "concordance_summary",
         }
 
-    def test_merge_provenance_check_constraint_enforces_single_row(
-        self, tmp_path: Path
-    ) -> None:
+    def test_merge_provenance_check_constraint_enforces_single_row(self, tmp_path: Path) -> None:
         engine = _create_v7_sample_db(tmp_path / "sample_001.db")
         ensure_sample_schema_current(engine)
 
@@ -381,9 +377,7 @@ class TestIsMergedSampleFactory:
                     )
                 )
 
-    def test_merged_pk_allows_duplicate_rsid_across_coordinates(
-        self, tmp_path: Path
-    ) -> None:
+    def test_merged_pk_allows_duplicate_rsid_across_coordinates(self, tmp_path: Path) -> None:
         """The mirror of the previous test: the same rsid at two different
         coordinates is now legal (it would have collided under the old
         ``rsid`` PK). Locks the swapped-PK semantics from the other side."""

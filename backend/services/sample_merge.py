@@ -211,9 +211,7 @@ class _ConcordanceSummary:
 
 def _read_sample_row(reference_engine: sa.Engine, sample_id: int) -> sa.Row | None:
     with reference_engine.connect() as conn:
-        return conn.execute(
-            sa.select(samples).where(samples.c.id == sample_id)
-        ).fetchone()
+        return conn.execute(sa.select(samples).where(samples.c.id == sample_id)).fetchone()
 
 
 def _latest_annotation_status(reference_engine: sa.Engine, sample_id: int) -> str | None:
@@ -317,9 +315,7 @@ def _vendor_token(file_format: str | None) -> str:
     return file_format.split("_", 1)[0].lower()
 
 
-def _resolve_winner(
-    strategy: MergeStrategy, s1_vendor: str, s2_vendor: str
-) -> str:
+def _resolve_winner(strategy: MergeStrategy, s1_vendor: str, s2_vendor: str) -> str:
     """Return ``'S1'`` or ``'S2'`` for the winning side at a discordant locus.
 
     Returns ``''`` for ``FLAG_ONLY`` — the caller writes the no-call sentinel
@@ -529,9 +525,7 @@ def _compute_file_hash(s1_hash: str, s2_hash: str, strategy: MergeStrategy) -> s
     re-merge after a v8 → v9 bump produces a distinct hash even when the
     same sources + strategy come in.
     """
-    payload = (
-        f"{s1_hash}|{s2_hash}|{strategy.value}|{SAMPLE_SCHEMA_VERSION}"
-    ).encode()
+    payload = (f"{s1_hash}|{s2_hash}|{strategy.value}|{SAMPLE_SCHEMA_VERSION}").encode()
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -551,9 +545,7 @@ class _MergePlan:
     summary: _ConcordanceSummary
 
 
-def _validate_request_shape(
-    source_sample_ids: list[int], strategy: MergeStrategy
-) -> None:
+def _validate_request_shape(source_sample_ids: list[int], strategy: MergeStrategy) -> None:
     """Plan §10.5 step 1 — count / distinctness / strategy enum validation.
 
     Display-name validation is NOT here because :func:`preview_merge` does
@@ -565,9 +557,7 @@ def _validate_request_shape(
             f"source_sample_ids must contain exactly 2 ids; got {len(source_sample_ids)}"
         )
     if source_sample_ids[0] == source_sample_ids[1]:
-        raise InvalidMergeRequestError(
-            "source_sample_ids must reference two distinct samples"
-        )
+        raise InvalidMergeRequestError("source_sample_ids must reference two distinct samples")
     if not isinstance(strategy, MergeStrategy):
         raise InvalidMergeRequestError(f"unknown merge strategy: {strategy!r}")
 
@@ -631,9 +621,7 @@ def _compute_merge_plan(
     this and packages the result as the dry-run response (Plan §10.6).
     """
     _validate_request_shape(source_sample_ids, strategy)
-    s1_row, s2_row = _validate_samples_and_freshness(
-        registry, source_sample_ids, individual_id
-    )
+    s1_row, s2_row = _validate_samples_and_freshness(registry, source_sample_ids, individual_id)
 
     settings = registry.settings
     s1_engine = registry.get_sample_engine(settings.data_dir / s1_row.db_path)
@@ -699,18 +687,14 @@ def preview_merge(
     * :class:`StaleSourceError` for stale-source failures (HTTP 423 with
       the same payload shape declared by Plan §7.5).
     """
-    plan = _compute_merge_plan(
-        registry, source_sample_ids, individual_id, strategy
-    )
+    plan = _compute_merge_plan(registry, source_sample_ids, individual_id, strategy)
     return {
         "concordance_summary": plan.summary.to_dict(),
         "est_duration_seconds": _estimate_duration_seconds(len(plan.rows)),
     }
 
 
-def _rollback_orphaned_merge(
-    registry: DBRegistry, sample_id: int, sample_db_path: Path
-) -> None:
+def _rollback_orphaned_merge(registry: DBRegistry, sample_id: int, sample_db_path: Path) -> None:
     """Undo a partially-materialised merge after a post-insert failure.
 
     The ``samples`` row + ``db_path`` are committed before the per-sample DB
@@ -782,9 +766,7 @@ def merge_samples(
     if not display_name or not display_name.strip():
         raise InvalidMergeRequestError("display_name is required")
 
-    plan = _compute_merge_plan(
-        registry, source_sample_ids, individual_id, strategy
-    )
+    plan = _compute_merge_plan(registry, source_sample_ids, individual_id, strategy)
     s1_id, s2_id = source_sample_ids
     s1_row, s2_row = plan.s1_row, plan.s2_row
     merged_rows, summary = plan.rows, plan.summary

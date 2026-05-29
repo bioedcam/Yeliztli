@@ -55,29 +55,30 @@ CHROM_ORDER: dict[str, int] = {
 # response by accident.
 _MERGE_PROV_FILTER_COLS = frozenset({"source", "concordance"})
 _VALID_SOURCE_VALUES = frozenset({"S1", "S2", "both"})
-_VALID_CONCORDANCE_VALUES = frozenset(
-    {"match", "filled_nocall", "discordant", "unique"}
-)
+_VALID_CONCORDANCE_VALUES = frozenset({"match", "filled_nocall", "discordant", "unique"})
 
 # Columns allowed as filter keys on raw_variants.
 _RAW_FILTER_COLS = frozenset({"chrom", "genotype"}) | _MERGE_PROV_FILTER_COLS
 
 # Columns allowed as filter keys on annotated_variants.
-_ANNOTATED_FILTER_COLS = frozenset(
-    {
-        "chrom",
-        "genotype",
-        "gene_symbol",
-        "consequence",
-        "clinvar_significance",
-        "rare_flag",
-        "ultra_rare_flag",
-        "evidence_conflict",
-        "ensemble_pathogenic",
-        "zygosity",
-        "annotation_coverage",
-    }
-) | _MERGE_PROV_FILTER_COLS
+_ANNOTATED_FILTER_COLS = (
+    frozenset(
+        {
+            "chrom",
+            "genotype",
+            "gene_symbol",
+            "consequence",
+            "clinvar_significance",
+            "rare_flag",
+            "ultra_rare_flag",
+            "evidence_conflict",
+            "ensemble_pathogenic",
+            "zygosity",
+            "annotation_coverage",
+        }
+    )
+    | _MERGE_PROV_FILTER_COLS
+)
 
 # Columns that support special IS NULL / IS NOT NULL filtering.
 # Filter values: "notnull" → IS NOT NULL, "null" → IS NULL.

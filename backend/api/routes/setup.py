@@ -381,10 +381,7 @@ def _read_sample_db_bundle_version(sample_db_path: Path) -> str:
         try:
             with engine.connect() as conn:
                 row = conn.execute(
-                    sa.text(
-                        "SELECT value FROM annotation_state "
-                        "WHERE key = 'vep_bundle_version'"
-                    )
+                    sa.text("SELECT value FROM annotation_state WHERE key = 'vep_bundle_version'")
                 ).fetchone()
         finally:
             engine.dispose()
@@ -563,9 +560,7 @@ async def import_backup(file: UploadFile) -> ImportBackupResponse:
                 # extracted to an isolated tempdir — nothing has been
                 # written to data_dir yet.
                 with tempfile.TemporaryDirectory(prefix="gi_restore_inspect_") as inspect_dir:
-                    sample_versions = _inspect_archive_bundle_versions(
-                        tf, Path(inspect_dir)
-                    )
+                    sample_versions = _inspect_archive_bundle_versions(tf, Path(inspect_dir))
                 installed_raw = _read_installed_vep_bundle_version()
                 mismatch = _bundle_compatibility_payload(installed_raw, sample_versions)
                 if mismatch is not None:

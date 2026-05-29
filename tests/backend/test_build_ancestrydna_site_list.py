@@ -34,9 +34,7 @@ MALFORMED_FIXTURE = FIXTURES / "sample_ancestrydna_malformed.txt"
 
 
 def _load_script_module():
-    spec = importlib.util.spec_from_file_location(
-        "build_ancestrydna_site_list", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("build_ancestrydna_site_list", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -56,9 +54,7 @@ _ADNA_HEADER = (
 
 def _write_adna(path: Path, rows: list[tuple[str, str, int, str, str]]) -> Path:
     """Write a synthetic AncestryDNA v2.0 export from ``(rsid,chrom,pos,a1,a2)``."""
-    body = "".join(
-        f"{rsid}\t{chrom}\t{pos}\t{a1}\t{a2}\n" for rsid, chrom, pos, a1, a2 in rows
-    )
+    body = "".join(f"{rsid}\t{chrom}\t{pos}\t{a1}\t{a2}\n" for rsid, chrom, pos, a1, a2 in rows)
     path.write_text(_ADNA_HEADER + body, encoding="utf-8")
     return path
 

@@ -1267,9 +1267,7 @@ class TestRunVepBundleUpdateSemver:
         path = Path(tempfile.mkstemp(suffix=".db")[1])
         try:
             with sqlite3.connect(str(path)) as conn:
-                conn.execute(
-                    "CREATE TABLE bundle_metadata (key TEXT PRIMARY KEY, value TEXT)"
-                )
+                conn.execute("CREATE TABLE bundle_metadata (key TEXT PRIMARY KEY, value TEXT)")
                 conn.execute(
                     "INSERT INTO bundle_metadata (key, value) VALUES (?, ?)",
                     ("build_date", build_date),
@@ -1313,9 +1311,7 @@ class TestRunVepBundleUpdateSemver:
         return f"http://{host}:{port}/payload", server
 
     @staticmethod
-    def _write_manifest(
-        tmp_path: Path, *, url: str, sha256: str, size: int, version: str
-    ) -> Path:
+    def _write_manifest(tmp_path: Path, *, url: str, sha256: str, size: int, version: str) -> Path:
         """Write a minimal manifest with a single ``vep_bundle`` entry."""
         import json as _json
 
@@ -1359,9 +1355,7 @@ class TestRunVepBundleUpdateSemver:
         engine.dispose()
         return Settings(data_dir=data_dir, wal_mode=False)
 
-    def _patch_bundled_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> Path:
+    def _patch_bundled_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         from backend.db import database_registry as registry_mod
 
         fake_bundled = tmp_path / "bundled"
@@ -1401,11 +1395,13 @@ class TestRunVepBundleUpdateSemver:
 
         ref_engine = sa.create_engine(f"sqlite:///{settings.reference_db_path}")
         try:
-            row = ref_engine.connect().execute(
-                sa.select(database_versions).where(
-                    database_versions.c.db_name == "vep_bundle"
+            row = (
+                ref_engine.connect()
+                .execute(
+                    sa.select(database_versions).where(database_versions.c.db_name == "vep_bundle")
                 )
-            ).fetchone()
+                .fetchone()
+            )
         finally:
             ref_engine.dispose()
         assert row is not None

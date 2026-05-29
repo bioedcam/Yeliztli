@@ -126,9 +126,7 @@ def test_extract_records_version_from_manifest(
 
     assert row is not None
     assert row.version == "v1.1"
-    assert (
-        row.checksum_sha256 == LAI_V1_1_SHA256
-    )
+    assert row.checksum_sha256 == LAI_V1_1_SHA256
     # 22 chroms × 3 files × 4 bytes each
     assert row.file_size_bytes == 22 * 3 * 4
     assert row.downloaded_at is not None
@@ -227,9 +225,7 @@ def test_extract_upserts_existing_row(
     assert len(rows) == 1
     row = rows[0]
     assert row.version == "v1.1"
-    assert (
-        row.checksum_sha256 == LAI_V1_1_SHA256
-    )
+    assert row.checksum_sha256 == LAI_V1_1_SHA256
     assert row.file_size_bytes == 22 * 3 * 4
 
 

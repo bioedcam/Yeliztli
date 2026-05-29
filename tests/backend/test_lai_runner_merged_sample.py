@@ -89,9 +89,7 @@ class TestMergedThreeKeyTelemetry:
         assert telemetry["S2"] == {"hits": 2, "drops": 1}  # rs_s2_off_bundle
         assert telemetry["both"] == {"hits": 2, "drops": 0}
 
-    def test_per_source_counts_sum_to_matched_and_dropped_totals(
-        self, runner, tmp_path
-    ):
+    def test_per_source_counts_sum_to_matched_and_dropped_totals(self, runner, tmp_path):
         filtered = runner._filter_genotypes(_MERGED_GENOTYPES)
         with patch.object(LAIRunner, "_write_single_vcf", lambda *a, **k: None):
             _, total, per_source = runner._write_per_chrom_vcfs(filtered, tmp_path)
@@ -106,9 +104,7 @@ class TestMergedThreeKeyTelemetry:
         # chrX/MT/no-call/indels are filtered upstream and don't reach here.
         assert total_drops == 2
 
-    def test_no_empty_source_bucket_leaks_into_three_key_payload(
-        self, runner, tmp_path
-    ):
+    def test_no_empty_source_bucket_leaks_into_three_key_payload(self, runner, tmp_path):
         filtered = runner._filter_genotypes(_MERGED_GENOTYPES)
         with patch.object(LAIRunner, "_write_single_vcf", lambda *a, **k: None):
             _, _, per_source = runner._write_per_chrom_vcfs(filtered, tmp_path)

@@ -69,13 +69,10 @@ def _make_bundle(
         )
         if create_meta:
             conn.execute("CREATE TABLE bundle_metadata (key TEXT PRIMARY KEY, value TEXT)")
-            conn.execute(
-                "INSERT INTO bundle_metadata (key, value) VALUES ('schema_version', '1')"
-            )
+            conn.execute("INSERT INTO bundle_metadata (key, value) VALUES ('schema_version', '1')")
             if version is not None:
                 conn.execute(
-                    "INSERT INTO bundle_metadata (key, value) "
-                    "VALUES ('bundle_version', ?)",
+                    "INSERT INTO bundle_metadata (key, value) VALUES ('bundle_version', ?)",
                     (version,),
                 )
         conn.commit()
@@ -136,18 +133,14 @@ def test_fixture_produces_expected_tsv_and_report(tmp_path):
 
 
 def test_v2_bundle_is_rejected(tmp_path):
-    bundle = _make_bundle(
-        tmp_path / "v2.db", [("rs1", "1", 100)], version="v2.0.0"
-    )
+    bundle = _make_bundle(tmp_path / "v2.db", [("rs1", "1", 100)], version="v2.0.0")
     with pytest.raises(evr.ExtractError) as excinfo:
         evr.extract_sites(bundle)
     assert "v2.0.0" in str(excinfo.value)
 
 
 def test_v2_bundle_main_exits_nonzero(tmp_path):
-    bundle = _make_bundle(
-        tmp_path / "v2.db", [("rs1", "1", 100)], version="v2.0.0"
-    )
+    bundle = _make_bundle(tmp_path / "v2.db", [("rs1", "1", 100)], version="v2.0.0")
     out = tmp_path / "sites.tsv"
     with pytest.raises(SystemExit) as excinfo:
         evr.main(
@@ -193,9 +186,7 @@ def test_missing_bundle_version_is_rejected(tmp_path):
 
 
 def test_missing_metadata_table_is_rejected(tmp_path):
-    bundle = _make_bundle(
-        tmp_path / "nometa.db", [("rs1", "1", 100)], create_meta=False
-    )
+    bundle = _make_bundle(tmp_path / "nometa.db", [("rs1", "1", 100)], create_meta=False)
     with pytest.raises(evr.ExtractError):
         evr.extract_sites(bundle)
 
@@ -212,9 +203,7 @@ def test_empty_annotations_raises(tmp_path):
 
 def test_only_null_rsids_raises(tmp_path):
     # Rows exist but every rsID is NULL/empty → nothing extractable.
-    bundle = _make_bundle(
-        tmp_path / "nulls.db", [(None, "1", 100), ("", "2", 200)]
-    )
+    bundle = _make_bundle(tmp_path / "nulls.db", [(None, "1", 100), ("", "2", 200)])
     with pytest.raises(evr.ExtractError):
         evr.extract_sites(bundle)
 
@@ -312,16 +301,12 @@ def test_check_floors_reports_each_failure():
 def test_check_floors_default_constants():
     assert evr.DEFAULT_MIN_ROWS == 600_000
     assert evr.DEFAULT_MIN_MT == 30
-    assert evr.REQUIRED_CHROMS == frozenset(
-        [str(i) for i in range(1, 23)] + ["X", "Y", "MT"]
-    )
+    assert evr.REQUIRED_CHROMS == frozenset([str(i) for i in range(1, 23)] + ["X", "Y", "MT"])
 
 
 def test_main_exits_nonzero_below_floor_but_writes_outputs(tmp_path):
     # A 2-site v1.0 bundle clears the structural checks but trips the 600k floor.
-    bundle = _make_bundle(
-        tmp_path / "tiny.db", [("rs1", "1", 100), ("rs2", "2", 200)]
-    )
+    bundle = _make_bundle(tmp_path / "tiny.db", [("rs1", "1", 100), ("rs2", "2", 200)])
     out = tmp_path / "sites.tsv"
     report_json = tmp_path / "report.json"
     with pytest.raises(SystemExit) as excinfo:

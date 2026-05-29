@@ -230,9 +230,7 @@ async def list_sample_merged_children(sample_id: int) -> list[MergedChildRespons
     """
     registry = get_registry()
     with registry.reference_engine.connect() as conn:
-        row = conn.execute(
-            sa.select(samples.c.id).where(samples.c.id == sample_id)
-        ).fetchone()
+        row = conn.execute(sa.select(samples.c.id).where(samples.c.id == sample_id)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"Sample {sample_id} not found.")
     children = list_merged_children(registry, sample_id)
@@ -332,9 +330,7 @@ async def get_merge_provenance(sample_id: int) -> MergeProvenanceResponse:
             sa.select(samples.c.id).where(samples.c.id == sample_id)
         ).fetchone()
     if sample_row is None:
-        raise HTTPException(
-            status_code=404, detail=f"Sample {sample_id} not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Sample {sample_id} not found.")
 
     prov_row = _read_merge_provenance(registry, sample_id)
     if prov_row is None:
@@ -393,14 +389,10 @@ async def get_concordance_report(
     registry = get_registry()
     with registry.reference_engine.connect() as conn:
         sample_row = conn.execute(
-            sa.select(samples.c.id, samples.c.db_path).where(
-                samples.c.id == sample_id
-            )
+            sa.select(samples.c.id, samples.c.db_path).where(samples.c.id == sample_id)
         ).fetchone()
     if sample_row is None:
-        raise HTTPException(
-            status_code=404, detail=f"Sample {sample_id} not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Sample {sample_id} not found.")
 
     prov_row = _read_merge_provenance(registry, sample_id)
     if prov_row is None:
@@ -428,9 +420,7 @@ async def get_concordance_report(
     discordant_filter = raw_variants.c.concordance == "discordant"
     with engine.connect() as conn:
         total_discordant = conn.execute(
-            sa.select(sa.func.count())
-            .select_from(raw_variants)
-            .where(discordant_filter)
+            sa.select(sa.func.count()).select_from(raw_variants).where(discordant_filter)
         ).scalar_one()
 
         # LEFT JOIN so loci absent from annotated_variants still appear (gene
@@ -547,14 +537,10 @@ async def list_migrate_from_sources(merged_id: int) -> MigrateFromSourcesRespons
     registry = get_registry()
     with registry.reference_engine.connect() as conn:
         merged_row = conn.execute(
-            sa.select(samples.c.id, samples.c.db_path).where(
-                samples.c.id == merged_id
-            )
+            sa.select(samples.c.id, samples.c.db_path).where(samples.c.id == merged_id)
         ).fetchone()
     if merged_row is None:
-        raise HTTPException(
-            status_code=404, detail=f"Sample {merged_id} not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Sample {merged_id} not found.")
 
     prov_row = _read_merge_provenance(registry, merged_id)
     if prov_row is None:
@@ -583,10 +569,7 @@ async def list_migrate_from_sources(merged_id: int) -> MigrateFromSourcesRespons
     # the per-candidate lookups are pure dict access.
     with merged_engine.connect() as conn:
         merged_rsids: set[str] = {
-            row.rsid
-            for row in conn.execute(
-                sa.select(raw_variants.c.rsid)
-            ).fetchall()
+            row.rsid for row in conn.execute(sa.select(raw_variants.c.rsid)).fetchall()
         }
         merged_coord_to_rsid: dict[tuple[str, int], str] = {
             (row.chrom, int(row.pos)): row.rsid
@@ -646,8 +629,7 @@ async def list_migrate_from_sources(merged_id: int) -> MigrateFromSourcesRespons
                         watched_variants.c.notes,
                         raw_variants.c.chrom,
                         raw_variants.c.pos,
-                    )
-                    .select_from(
+                    ).select_from(
                         watched_variants.outerjoin(
                             raw_variants,
                             watched_variants.c.rsid == raw_variants.c.rsid,

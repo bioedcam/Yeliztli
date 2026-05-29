@@ -113,11 +113,7 @@ def _create_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update()
-            .where(samples.c.id == sample_id)
-            .values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-{sample_id}",
@@ -153,9 +149,7 @@ def _seed_installed_vep_bundle(registry: DBRegistry, version: str = "v2.0.0") ->
 
     with registry.reference_engine.begin() as conn:
         conn.execute(
-            sa.delete(database_versions).where(
-                database_versions.c.db_name == "vep_bundle"
-            )
+            sa.delete(database_versions).where(database_versions.c.db_name == "vep_bundle")
         )
         conn.execute(
             database_versions.insert().values(
@@ -209,9 +203,7 @@ def _read_merge_rows(registry: DBRegistry, sample_id: int) -> list[sa.Row]:
     with engine.connect() as conn:
         return list(
             conn.execute(
-                sa.select(raw_variants).order_by(
-                    raw_variants.c.chrom, raw_variants.c.pos
-                )
+                sa.select(raw_variants).order_by(raw_variants.c.chrom, raw_variants.c.pos)
             )
         )
 

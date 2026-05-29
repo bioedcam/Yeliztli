@@ -39,9 +39,7 @@ class TestParseCoverageTelemetry:
         result = _parse_coverage_telemetry(metadata)
         assert result is not None
         assert set(result.per_source.keys()) == {"ancestrydna"}
-        assert result.per_source["ancestrydna"] == LAICoverageSourceTelemetry(
-            hits=480, drops=20
-        )
+        assert result.per_source["ancestrydna"] == LAICoverageSourceTelemetry(hits=480, drops=20)
         assert result.total_hits == 480
         assert result.total_drops == 20
         assert result.drop_rate == pytest.approx(0.04)

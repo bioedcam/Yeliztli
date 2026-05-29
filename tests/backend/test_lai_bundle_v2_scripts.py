@@ -137,25 +137,25 @@ class TestEnvShDefaults:
 
     def test_default_workdir_is_v2(self) -> None:
         text = (SCRIPTS_DIR / "env.sh").read_text()
-        assert 'WORKDIR:=$HOME/lai_bundle_v2' in text
+        assert "WORKDIR:=$HOME/lai_bundle_v2" in text
 
     def test_default_bundle_version_is_v2(self) -> None:
         text = (SCRIPTS_DIR / "env.sh").read_text()
-        assert 'LAI_BUNDLE_VERSION:=v2.0.0' in text
+        assert "LAI_BUNDLE_VERSION:=v2.0.0" in text
 
     def test_union_catalog_required_input(self) -> None:
         # UNION_CATALOG_TSV must default to empty and be checked by
         # 02_prepare_sites.sh via require_file (Plan §6.4 phase 2).
         env_text = (SCRIPTS_DIR / "env.sh").read_text()
         phase2_text = (SCRIPTS_DIR / "02_prepare_sites.sh").read_text()
-        assert 'UNION_CATALOG_TSV:=' in env_text
+        assert "UNION_CATALOG_TSV:=" in env_text
         assert 'require_file "$UNION_CATALOG_TSV"' in phase2_text
 
     def test_admixture_seed_is_locked(self) -> None:
         # Plan §6.3 step 4: re-running with the same seed reproduces labels
         # bit-for-bit. The seed default is part of the build contract.
         text = (SCRIPTS_DIR / "env.sh").read_text()
-        assert 'ADMIXTURE_SEED:=42' in text
+        assert "ADMIXTURE_SEED:=42" in text
 
 
 class TestShellSyntax:
@@ -169,7 +169,9 @@ class TestShellSyntax:
         path = SCRIPTS_DIR / name
         result = subprocess.run(
             ["bash", "-n", str(path)],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert result.returncode == 0, f"{name} has shell-syntax errors:\n{result.stderr}"
 

@@ -138,9 +138,7 @@ def _read_sample_file_format(engine: sa.Engine) -> str:
         return ""
     with engine.connect() as conn:
         row = conn.execute(
-            sa.select(sample_metadata_table.c.file_format).where(
-                sample_metadata_table.c.id == 1
-            )
+            sa.select(sample_metadata_table.c.file_format).where(sample_metadata_table.c.id == 1)
         ).fetchone()
     if row is None or row.file_format is None:
         return ""

@@ -181,9 +181,7 @@ class TestVendorDerivationLocksSplitContract:
             ("23andMe_v5", "23andme"),
         ],
     )
-    def test_build_coverage_telemetry_derives_vendor(
-        self, file_format, expected_vendor
-    ):
+    def test_build_coverage_telemetry_derives_vendor(self, file_format, expected_vendor):
         per_source = {"": {"hits": 5, "drops": 1}}
         telemetry = LAIRunner._build_coverage_telemetry(per_source, file_format)
         assert set(telemetry.keys()) == {expected_vendor}

@@ -133,23 +133,15 @@ def _noop_annotation_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     import backend.tasks.huey_tasks as huey_tasks
 
-    monkeypatch.setattr(
-        huey_tasks, "create_annotation_job", lambda _sid: "noop-job"
-    )
-    monkeypatch.setattr(
-        huey_tasks, "run_annotation_task", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(huey_tasks, "create_annotation_job", lambda _sid: "noop-job")
+    monkeypatch.setattr(huey_tasks, "run_annotation_task", lambda *_a, **_k: None)
 
 
-def _seed_installed_vep_bundle(
-    reference_engine: sa.Engine, version: str = "v2.0.0"
-) -> None:
+def _seed_installed_vep_bundle(reference_engine: sa.Engine, version: str = "v2.0.0") -> None:
     """Seed ``database_versions['vep_bundle']`` so staleness can compare."""
     with reference_engine.begin() as conn:
         conn.execute(
-            sa.delete(database_versions).where(
-                database_versions.c.db_name == "vep_bundle"
-            )
+            sa.delete(database_versions).where(database_versions.c.db_name == "vep_bundle")
         )
         conn.execute(
             database_versions.insert().values(
@@ -193,9 +185,7 @@ def _seed_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update().where(samples.c.id == sample_id).values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-src-{sample_id}",
@@ -308,9 +298,7 @@ def preview_client(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
 def _snapshot_samples_row_count(registry) -> int:
     with registry.reference_engine.connect() as conn:
-        return conn.execute(
-            sa.select(sa.func.count()).select_from(samples)
-        ).scalar() or 0
+        return conn.execute(sa.select(sa.func.count()).select_from(samples)).scalar() or 0
 
 
 def _snapshot_per_sample_db_files(registry) -> list[Path]:
@@ -372,9 +360,7 @@ class TestHappyPath:
         assert post_count == pre_count
         assert post_files == pre_files
 
-    def test_includes_collapsed_rsid_in_summary(
-        self, preview_client: TestClient
-    ) -> None:
+    def test_includes_collapsed_rsid_in_summary(self, preview_client: TestClient) -> None:
         """Plan §15.1 (i) explicit callout: ``collapsed_rsid`` is reported.
 
         The seven-locus fixture's ``rs700_s1`` / ``rs700_s2`` pair lands at
@@ -398,9 +384,7 @@ class TestHappyPath:
         assert "collapsed_rsid" in summary
         assert summary["collapsed_rsid"] == 1
 
-    def test_all_three_strategies_return_same_summary(
-        self, preview_client: TestClient
-    ) -> None:
+    def test_all_three_strategies_return_same_summary(self, preview_client: TestClient) -> None:
         """Strategy only affects discordant-locus *resolution*, not bucket counts.
 
         Plan §10.2 step 3 / §10.3: the strategy decides which call wins at
@@ -472,9 +456,7 @@ class TestStaleSource:
         )
         assert resp.status_code == 423, resp.text
 
-    def test_stale_payload_has_plan_7_5_shape(
-        self, preview_client: TestClient
-    ) -> None:
+    def test_stale_payload_has_plan_7_5_shape(self, preview_client: TestClient) -> None:
         """Plan §15.1 (ii): payload carries the structured detail dict.
 
         The dict mirrors ``backend.api.dependencies.require_fresh_sample``'s
@@ -498,9 +480,7 @@ class TestStaleSource:
         assert "Re-annotate" in detail["message"]
         assert detail["reannotate_url"] == "/api/annotation/{sample_id}"
 
-    def test_stale_source_writes_no_artefacts(
-        self, preview_client: TestClient
-    ) -> None:
+    def test_stale_source_writes_no_artefacts(self, preview_client: TestClient) -> None:
         """Stale-source 423 must short-circuit before any side-effect.
 
         Locked as a separate test (not folded into the happy-path
@@ -601,9 +581,7 @@ class TestInvalidStrategy:
         body = resp.json()
         # Pydantic's detail is a list of error dicts; the rejected value
         # is on the offending loc.
-        assert any(
-            err.get("loc", [])[-1] == "strategy" for err in body["detail"]
-        ), body
+        assert any(err.get("loc", [])[-1] == "strategy" for err in body["detail"]), body
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -627,8 +605,7 @@ class TestSingleSource:
         # Pydantic's loc points at ``source_sample_ids``; the error type
         # is the closed-set ``too_short`` from min_length=2.
         assert any(
-            err.get("loc", [])[-1] == "source_sample_ids"
-            and err.get("type", "") == "too_short"
+            err.get("loc", [])[-1] == "source_sample_ids" and err.get("type", "") == "too_short"
             for err in body["detail"]
         ), body
 
@@ -650,8 +627,7 @@ class TestSingleSource:
         assert resp.status_code == 422
         body = resp.json()
         assert any(
-            err.get("loc", [])[-1] == "source_sample_ids"
-            and err.get("type", "") == "too_long"
+            err.get("loc", [])[-1] == "source_sample_ids" and err.get("type", "") == "too_long"
             for err in body["detail"]
         ), body
 
@@ -748,9 +724,7 @@ class TestMissingAnnotationStateFallback:
     installed bundle's major is > v1.
     """
 
-    def _delete_annotation_state(
-        self, preview_client: TestClient, sample_id: int
-    ) -> None:
+    def _delete_annotation_state(self, preview_client: TestClient, sample_id: int) -> None:
         """Drop the ``annotation_state`` row that ``_seed_source_sample`` wrote.
 
         Mimics a backup-restored pre-Phase-0 sample whose per-sample DB
@@ -766,16 +740,15 @@ class TestMissingAnnotationStateFallback:
         engine = registry.get_sample_engine(registry.settings.data_dir / row.db_path)
         with engine.begin() as conn:
             conn.execute(
-                sa.delete(annotation_state).where(
-                    annotation_state.c.key == "vep_bundle_version"
-                )
+                sa.delete(annotation_state).where(annotation_state.c.key == "vep_bundle_version")
             )
 
     def test_missing_state_routes_through_stale_source_path(
         self, preview_client: TestClient
     ) -> None:
         self._delete_annotation_state(
-            preview_client, preview_client.s1_id  # type: ignore[attr-defined]
+            preview_client,
+            preview_client.s1_id,  # type: ignore[attr-defined]
         )
         resp = preview_client.post(
             f"/api/individuals/{preview_client.individual_id}/merge/preview",  # type: ignore[attr-defined]
@@ -794,12 +767,11 @@ class TestMissingAnnotationStateFallback:
         assert preview_client.s1_id in detail["stale_sample_ids"]  # type: ignore[attr-defined]
         assert detail["reannotate_url"] == "/api/annotation/{sample_id}"
 
-    def test_missing_state_writes_no_artefacts(
-        self, preview_client: TestClient
-    ) -> None:
+    def test_missing_state_writes_no_artefacts(self, preview_client: TestClient) -> None:
         registry = preview_client.registry  # type: ignore[attr-defined]
         self._delete_annotation_state(
-            preview_client, preview_client.s2_id  # type: ignore[attr-defined]
+            preview_client,
+            preview_client.s2_id,  # type: ignore[attr-defined]
         )
         pre_count = _snapshot_samples_row_count(registry)
         pre_files = _snapshot_per_sample_db_files(registry)

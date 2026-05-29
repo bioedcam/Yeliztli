@@ -175,11 +175,7 @@ def _create_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update()
-            .where(samples.c.id == sample_id)
-            .values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-{sample_id}",

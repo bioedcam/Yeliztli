@@ -63,10 +63,7 @@ class TestDetectVersion:
 
     def test_no_signal_returns_unknown(self) -> None:
         assert detect_version([], has_uncommented_5col_header=True) == "unknown"
-        assert (
-            detect_version(["#AncestryDNA"], has_uncommented_5col_header=False)
-            == "unknown"
-        )
+        assert detect_version(["#AncestryDNA"], has_uncommented_5col_header=False) == "unknown"
 
 
 # --------------------------------------------------------------------------- #
@@ -310,12 +307,7 @@ def test_crlf_line_endings(tmp_path: Path) -> None:
 def test_trailing_blank_lines_tolerated() -> None:
     """Plan §8.6 #5 — trailing blank lines do not break the parse."""
     stream = io.StringIO(
-        _MIN_HEAD
-        + "rs1\t1\t100\tA\tG\n"
-        + "\n"
-        + "\n"
-        + "rs2\t1\t200\tC\tT\n"
-        + "\n"
+        _MIN_HEAD + "rs1\t1\t100\tA\tG\n" + "\n" + "\n" + "rs2\t1\t200\tC\tT\n" + "\n"
     )
     result = parse_ancestrydna(stream)
     assert len(result.variants) == 2

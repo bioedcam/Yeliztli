@@ -49,16 +49,13 @@ def test_no_source_tree_imports_or_path_references():
         *SEARCH_ROOTS,
         ":(exclude)tests/backend/test_scripts_lai_runner_removed.py",
     ]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=REPO_ROOT, check=False
-    )
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT, check=False)
     # `git grep` exits 1 on zero matches, 0 on at least one match, 128 on error.
     if result.returncode == 128:
         pytest.skip(f"git grep unavailable: {result.stderr.strip()}")
     assert result.returncode == 1, (
         "Found references to the deleted scripts/lai_runner.py — clean these "
-        "up before re-asserting the step-22a removal invariant:\n"
-        + result.stdout
+        "up before re-asserting the step-22a removal invariant:\n" + result.stdout
     )
     assert result.stdout == ""
 
@@ -85,8 +82,15 @@ def test_no_untracked_references_in_source_trees():
             ):
                 continue
             binary_suffixes = {
-                ".pyc", ".pyo", ".so", ".db", ".sqlite",
-                ".png", ".jpg", ".gz", ".zip",
+                ".pyc",
+                ".pyo",
+                ".so",
+                ".db",
+                ".sqlite",
+                ".png",
+                ".jpg",
+                ".gz",
+                ".zip",
             }
             if path.suffix in binary_suffixes:
                 continue

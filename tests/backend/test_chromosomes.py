@@ -70,9 +70,7 @@ def test_par_divergence_between_vendors() -> None:
     "canonical",
     [str(n) for n in range(1, 23)] + ["X", "Y", "MT"],
 )
-def test_canonical_values_pass_through_unchanged(
-    vendor: SourceVendor, canonical: str
-) -> None:
+def test_canonical_values_pass_through_unchanged(vendor: SourceVendor, canonical: str) -> None:
     assert chromosomes.normalize_for(vendor, canonical) == canonical
 
 
@@ -85,14 +83,14 @@ def test_canonical_values_pass_through_unchanged(
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        (" 23 ", "X"),       # surrounding whitespace
-        ("\t24\t", "Y"),     # tab whitespace
-        ("x", "X"),          # lowercase letter chromosome
-        ("y", "Y"),          # lowercase letter chromosome
-        ("mt", "MT"),        # lowercase MT
-        ("Mt", "MT"),        # mixed-case MT
-        ("  X", "X"),        # leading whitespace
-        ("Y  ", "Y"),        # trailing whitespace
+        (" 23 ", "X"),  # surrounding whitespace
+        ("\t24\t", "Y"),  # tab whitespace
+        ("x", "X"),  # lowercase letter chromosome
+        ("y", "Y"),  # lowercase letter chromosome
+        ("mt", "MT"),  # lowercase MT
+        ("Mt", "MT"),  # mixed-case MT
+        ("  X", "X"),  # leading whitespace
+        ("Y  ", "Y"),  # trailing whitespace
     ],
 )
 def test_strip_and_uppercase(vendor: SourceVendor, raw: str, expected: str) -> None:
@@ -108,20 +106,20 @@ def test_strip_and_uppercase(vendor: SourceVendor, raw: str, expected: str) -> N
 @pytest.mark.parametrize(
     "raw",
     [
-        "27",         # out of range
-        "0",          # below valid range
-        "-1",         # negative
-        "100",        # multi-digit out of range
-        "",           # empty string
-        "   ",        # whitespace only
-        "Z",          # unknown letter
-        "chr1",       # the "chr" prefix is not accepted
+        "27",  # out of range
+        "0",  # below valid range
+        "-1",  # negative
+        "100",  # multi-digit out of range
+        "",  # empty string
+        "   ",  # whitespace only
+        "Z",  # unknown letter
+        "chr1",  # the "chr" prefix is not accepted
         "chrX",
-        "1.0",        # decimal
-        "1a",         # alphanumeric mix
-        "*",          # special char
-        "?",          # special char
-        "\x00",       # null byte
+        "1.0",  # decimal
+        "1a",  # alphanumeric mix
+        "*",  # special char
+        "?",  # special char
+        "\x00",  # null byte
     ],
 )
 def test_invalid_inputs_raise(vendor: SourceVendor, raw: str) -> None:

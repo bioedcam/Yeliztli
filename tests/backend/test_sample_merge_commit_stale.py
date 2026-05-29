@@ -94,9 +94,7 @@ S2_VARIANTS = [
 # ── Fixture helpers (parallel to test_sample_merge_preview.py) ────────
 
 
-def _seed_installed_vep_bundle(
-    reference_engine: sa.Engine, version: str = "v2.0.0"
-) -> None:
+def _seed_installed_vep_bundle(reference_engine: sa.Engine, version: str = "v2.0.0") -> None:
     """Seed ``database_versions['vep_bundle']`` so staleness can compare.
 
     The installed bundle is v2.0.0; sources marked at v1.0.0 below are
@@ -104,9 +102,7 @@ def _seed_installed_vep_bundle(
     """
     with reference_engine.begin() as conn:
         conn.execute(
-            sa.delete(database_versions).where(
-                database_versions.c.db_name == "vep_bundle"
-            )
+            sa.delete(database_versions).where(database_versions.c.db_name == "vep_bundle")
         )
         conn.execute(
             database_versions.insert().values(
@@ -151,9 +147,7 @@ def _seed_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update().where(samples.c.id == sample_id).values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-src-{sample_id}",
@@ -206,12 +200,8 @@ def _stub_huey_and_record_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         calls.append(sample_id)
         return f"job-merged-{sample_id}"
 
-    monkeypatch.setattr(
-        huey_tasks, "create_annotation_job", _stub_create_annotation_job
-    )
-    monkeypatch.setattr(
-        huey_tasks, "run_annotation_task", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(huey_tasks, "create_annotation_job", _stub_create_annotation_job)
+    monkeypatch.setattr(huey_tasks, "run_annotation_task", lambda *_a, **_k: None)
     return calls
 
 
@@ -297,9 +287,7 @@ def stale_merge_client(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
 def _snapshot_samples_row_count(registry) -> int:
     with registry.reference_engine.connect() as conn:
-        return conn.execute(
-            sa.select(sa.func.count()).select_from(samples)
-        ).scalar() or 0
+        return conn.execute(sa.select(sa.func.count()).select_from(samples)).scalar() or 0
 
 
 def _snapshot_per_sample_db_files(registry) -> list[Path]:
@@ -308,9 +296,7 @@ def _snapshot_per_sample_db_files(registry) -> list[Path]:
 
 def _snapshot_jobs_row_count(registry) -> int:
     with registry.reference_engine.connect() as conn:
-        return conn.execute(
-            sa.select(sa.func.count()).select_from(jobs)
-        ).scalar() or 0
+        return conn.execute(sa.select(sa.func.count()).select_from(jobs)).scalar() or 0
 
 
 # ── Mutator helpers ────────────────────────────────────────────────────
@@ -352,9 +338,7 @@ def _delete_annotation_state(client: TestClient, sample_id: int) -> None:
     engine = registry.get_sample_engine(registry.settings.data_dir / row.db_path)
     with engine.begin() as conn:
         conn.execute(
-            sa.delete(annotation_state).where(
-                annotation_state.c.key == "vep_bundle_version"
-            )
+            sa.delete(annotation_state).where(annotation_state.c.key == "vep_bundle_version")
         )
 
 
@@ -396,9 +380,7 @@ class TestStaleSourceSingleSide:
         resp = _post_merge(stale_merge_client)
         assert resp.status_code == 423, resp.text
 
-    def test_s1_stale_payload_names_only_s1(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_s1_stale_payload_names_only_s1(self, stale_merge_client: TestClient) -> None:
         """Plan §15.1 MRG-08e: payload names the stale source sample.
 
         The stale list contains exactly s1 — s2 is fresh and must not
@@ -412,9 +394,7 @@ class TestStaleSourceSingleSide:
         assert detail["stale_sample_ids"] == [stale_merge_client.s1_id]  # type: ignore[attr-defined]
         assert stale_merge_client.s2_id not in detail["stale_sample_ids"]  # type: ignore[attr-defined]
 
-    def test_s2_stale_payload_names_only_s2(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_s2_stale_payload_names_only_s2(self, stale_merge_client: TestClient) -> None:
         _mark_sample_stale(stale_merge_client, stale_merge_client.s2_id)  # type: ignore[attr-defined]
         resp = _post_merge(stale_merge_client)
         assert resp.status_code == 423
@@ -439,9 +419,7 @@ class TestStaleSourceBothSides:
     half-recovered state that re-fails the gate after the user clicks.
     """
 
-    def test_both_stale_returns_423_with_both_ids(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_both_stale_returns_423_with_both_ids(self, stale_merge_client: TestClient) -> None:
         _mark_sample_stale(stale_merge_client, stale_merge_client.s1_id)  # type: ignore[attr-defined]
         _mark_sample_stale(stale_merge_client, stale_merge_client.s2_id)  # type: ignore[attr-defined]
         resp = _post_merge(stale_merge_client)
@@ -466,9 +444,7 @@ class TestStalePayloadShape:
     renders a single banner for either route, so the keys must match.
     """
 
-    def test_payload_carries_full_plan_7_5_keys(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_payload_carries_full_plan_7_5_keys(self, stale_merge_client: TestClient) -> None:
         _mark_sample_stale(stale_merge_client, stale_merge_client.s1_id)  # type: ignore[attr-defined]
         resp = _post_merge(stale_merge_client)
         assert resp.status_code == 423
@@ -508,9 +484,7 @@ class TestStaleSourceWritesNoArtefacts:
         assert resp.status_code == 423
         assert _snapshot_samples_row_count(registry) == pre_count
 
-    def test_no_new_per_sample_db_file(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_no_new_per_sample_db_file(self, stale_merge_client: TestClient) -> None:
         registry = stale_merge_client.registry  # type: ignore[attr-defined]
         pre_files = _snapshot_per_sample_db_files(registry)
         _mark_sample_stale(stale_merge_client, stale_merge_client.s2_id)  # type: ignore[attr-defined]
@@ -561,11 +535,10 @@ class TestMissingAnnotationStateFallback:
     preview file's already covers separately.
     """
 
-    def test_missing_state_routes_through_stale_path(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_missing_state_routes_through_stale_path(self, stale_merge_client: TestClient) -> None:
         _delete_annotation_state(
-            stale_merge_client, stale_merge_client.s1_id  # type: ignore[attr-defined]
+            stale_merge_client,
+            stale_merge_client.s1_id,  # type: ignore[attr-defined]
         )
         resp = _post_merge(stale_merge_client)
         assert resp.status_code == 423, resp.text
@@ -574,16 +547,15 @@ class TestMissingAnnotationStateFallback:
         assert stale_merge_client.s1_id in detail["stale_sample_ids"]  # type: ignore[attr-defined]
         assert detail["reannotate_url"] == "/api/annotation/{sample_id}"
 
-    def test_missing_state_writes_no_artefacts(
-        self, stale_merge_client: TestClient
-    ) -> None:
+    def test_missing_state_writes_no_artefacts(self, stale_merge_client: TestClient) -> None:
         registry = stale_merge_client.registry  # type: ignore[attr-defined]
         pre_samples = _snapshot_samples_row_count(registry)
         pre_files = _snapshot_per_sample_db_files(registry)
         pre_jobs = _snapshot_jobs_row_count(registry)
 
         _delete_annotation_state(
-            stale_merge_client, stale_merge_client.s2_id  # type: ignore[attr-defined]
+            stale_merge_client,
+            stale_merge_client.s2_id,  # type: ignore[attr-defined]
         )
         resp = _post_merge(stale_merge_client)
         assert resp.status_code == 423

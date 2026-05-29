@@ -128,9 +128,7 @@ _SAMPLES_GATED_PATHS = frozenset(
 )
 
 
-_REPO_MANIFEST = (
-    Path(__file__).resolve().parents[2] / "bundles" / "manifest.json"
-)
+_REPO_MANIFEST = Path(__file__).resolve().parents[2] / "bundles" / "manifest.json"
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -209,9 +207,7 @@ def _make_sample_db(
                     )
         else:
             with engine.begin() as conn:
-                conn.execute(
-                    sa.text("CREATE TABLE _placeholder (id INTEGER)")
-                )
+                conn.execute(sa.text("CREATE TABLE _placeholder (id INTEGER)"))
     finally:
         engine.dispose()
 
@@ -265,9 +261,7 @@ class TestRequireFreshSample:
         # Manifest fixture exposes the published URL.
         assert detail["update_url"]
 
-    def test_missing_annotation_state_treated_as_v1(
-        self, manifest_env, gate_env
-    ):
+    def test_missing_annotation_state_treated_as_v1(self, manifest_env, gate_env):
         # Plan §7.4 missing-state fallback — no annotation_state table
         # ⇒ v1.0.0 ⇒ gate fires against v2.0.0 installed.
         _seed_installed_bundle(gate_env["settings"], "v2.0.0")
@@ -282,9 +276,7 @@ class TestRequireFreshSample:
         assert exc.value.status_code == 423
         assert exc.value.detail["installed_version"] == "v1.0.0"
 
-    def test_required_version_falls_back_to_db_row(
-        self, monkeypatch, gate_env
-    ):
+    def test_required_version_falls_back_to_db_row(self, monkeypatch, gate_env):
         # When the manifest is unreachable, the payload still reports the
         # installed bundle's version (read from database_versions).
         monkeypatch.setattr(
@@ -302,9 +294,7 @@ class TestRequireFreshSample:
 # ── Drift guard ────────────────────────────────────────────────────────
 
 
-_ROUTES_DIR = (
-    Path(__file__).resolve().parents[2] / "backend" / "api" / "routes"
-)
+_ROUTES_DIR = Path(__file__).resolve().parents[2] / "backend" / "api" / "routes"
 
 
 def _iter_routers() -> list[tuple[str, APIRouter]]:
@@ -354,9 +344,7 @@ def _route_takes_sample_id(route) -> bool:
     return False
 
 
-def _classify(
-    module: str, method: str, full_path: str
-) -> str | None:
+def _classify(module: str, method: str, full_path: str) -> str | None:
     if module in _FULLY_GATED_MODULES:
         return "gated"
     if module in _FULLY_OPT_OUT_MODULES:
@@ -399,18 +387,14 @@ def test_every_route_module_declared() -> None:
     modules = {p.stem for p in _ROUTES_DIR.glob("*.py") if p.stem != "__init__"}
     declared = _FULLY_GATED_MODULES | _FULLY_OPT_OUT_MODULES | {"samples"}
     missing = modules - declared
-    assert not missing, (
-        f"Route modules not declared in either Plan §7.5 list: {sorted(missing)}."
-    )
+    assert not missing, f"Route modules not declared in either Plan §7.5 list: {sorted(missing)}."
 
 
 @pytest.mark.parametrize(
     "module,method,full_path",
     _collect_sample_id_routes(),
 )
-def test_every_sample_id_route_classified(
-    module: str, method: str, full_path: str
-) -> None:
+def test_every_sample_id_route_classified(module: str, method: str, full_path: str) -> None:
     """Plan §7.5 drift guard.
 
     Every route under ``backend/api/routes/*.py`` that takes a

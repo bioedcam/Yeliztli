@@ -201,9 +201,7 @@ class TestPARPreFilter:
         )
         assert infer_biological_sex(sample_engine) == "unknown"
 
-    def test_par_het_plus_nonpar_hom_yields_candidate_xy(
-        self, sample_engine: sa.Engine
-    ) -> None:
+    def test_par_het_plus_nonpar_hom_yields_candidate_xy(self, sample_engine: sa.Engine) -> None:
         """PAR het is pre-filtered; the non-PAR hom alone makes the sample
         a candidate XY, then confirmed by chrY rate."""
         _seed(
@@ -234,9 +232,7 @@ class TestDispositiveXXShortCircuit:
         )
         assert infer_biological_sex(sample_engine) == "XX"
 
-    def test_chrY_rate_above_confirm_does_not_override(
-        self, sample_engine: sa.Engine
-    ) -> None:
+    def test_chrY_rate_above_confirm_does_not_override(self, sample_engine: sa.Engine) -> None:
         """Defensive: even a confirm-grade chrY rate doesn't beat
         a dispositive non-PAR chrX het."""
         _seed(
@@ -320,9 +316,7 @@ class TestIND09bEdgeCases:
 
     # ── (i) chrM-only ──────────────────────────────────────────────────
 
-    def test_i_chrM_only_multiple_loci_returns_unknown(
-        self, sample_engine: sa.Engine
-    ) -> None:
+    def test_i_chrM_only_multiple_loci_returns_unknown(self, sample_engine: sa.Engine) -> None:
         """Multiple chrM rows + no chrX/chrY rows at all → ``unknown``.
         Strengthens the single-row ``test_unknown_mt_only_data`` case."""
         _seed(
@@ -341,9 +335,7 @@ class TestIND09bEdgeCases:
 
     # ── (ii) PAR-only het, no informative non-PAR chrX ─────────────────
 
-    def test_ii_par1_and_par2_het_only_returns_unknown(
-        self, sample_engine: sa.Engine
-    ) -> None:
+    def test_ii_par1_and_par2_het_only_returns_unknown(self, sample_engine: sa.Engine) -> None:
         """Het PAR1 + Het PAR2 + no non-PAR chrX + no chrY → ``unknown``.
         Both PAR rows fall under the pre-filter so ``x_nonpar_typed`` stays
         zero and neither the dispositive-XX nor candidate-XY branch fires."""
@@ -427,9 +419,7 @@ class TestIND09bEdgeCases:
         )
         assert infer_biological_sex(sample_engine) == "manual_review"
 
-    def test_iii_chrY_rate_just_above_xy_confirm_yields_xy(
-        self, sample_engine: sa.Engine
-    ) -> None:
+    def test_iii_chrY_rate_just_above_xy_confirm_yields_xy(self, sample_engine: sa.Engine) -> None:
         """Defensive boundary mate to the equality case above: 31/100 =
         0.31 — just above ``_THRESHOLD_XY_CONFIRM`` — promotes the
         candidate XY to confirmed ``XY``."""

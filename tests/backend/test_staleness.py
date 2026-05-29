@@ -217,8 +217,6 @@ class TestIsSampleStale:
             result = is_sample_stale(999)
 
         assert result is True
-        events = [
-            e for e in cap_logs if e.get("event") == "annotation_state_missing"
-        ]
+        events = [e for e in cap_logs if e.get("event") == "annotation_state_missing"]
         assert events, "expected annotation_state_missing warning"
         assert events[0].get("reason") == "sample_row_missing"

@@ -50,19 +50,13 @@ def test_detect_vendor_ancestrydna_fixture() -> None:
 
 def test_detect_ancestrydna_via_uncommented_header_only() -> None:
     """An uncommented 5-column header alone identifies AncestryDNA per Plan §8.3."""
-    stream = io.StringIO(
-        "rsid\tchromosome\tposition\tallele1\tallele2\n"
-        "rs1\t1\t12345\tA\tG\n"
-    )
+    stream = io.StringIO("rsid\tchromosome\tposition\tallele1\tallele2\nrs1\t1\t12345\tA\tG\n")
     assert dispatcher.detect_vendor(stream) == SourceVendor.ANCESTRYDNA
 
 
 def test_detect_23andme_via_header_only() -> None:
     """The canonical 4-column 23andMe header alone identifies 23andMe."""
-    stream = io.StringIO(
-        "# rsid\tchromosome\tposition\tgenotype\n"
-        "rs1\t1\t12345\tAT\n"
-    )
+    stream = io.StringIO("# rsid\tchromosome\tposition\tgenotype\nrs1\t1\t12345\tAT\n")
     assert dispatcher.detect_vendor(stream) == SourceVendor.TWENTYTHREEANDME
 
 

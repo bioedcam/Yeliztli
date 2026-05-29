@@ -737,9 +737,7 @@ class TestRunAnnotation:
 def _stamp_bundle_version(reference_engine: sa.Engine, version: str) -> None:
     """Insert a `vep_bundle` row into the reference DB's `database_versions`."""
     with reference_engine.begin() as conn:
-        conn.execute(
-            database_versions.insert().values(db_name="vep_bundle", version=version)
-        )
+        conn.execute(database_versions.insert().values(db_name="vep_bundle", version=version))
 
 
 def _stamp_sample_metadata(sample_engine: sa.Engine, *, file_format: str | None) -> None:
@@ -936,9 +934,7 @@ class TestCoverageStatsSideEffects:
         ref_engine = mock_registry.reference_engine
         with ref_engine.connect() as conn:
             before_rows = conn.execute(
-                sa.select(database_versions).where(
-                    database_versions.c.db_name == "vep_bundle"
-                )
+                sa.select(database_versions).where(database_versions.c.db_name == "vep_bundle")
             ).fetchall()
 
         result = run_annotation(sample_with_variants, mock_registry)
@@ -946,9 +942,7 @@ class TestCoverageStatsSideEffects:
 
         with ref_engine.connect() as conn:
             after_rows = conn.execute(
-                sa.select(database_versions).where(
-                    database_versions.c.db_name == "vep_bundle"
-                )
+                sa.select(database_versions).where(database_versions.c.db_name == "vep_bundle")
             ).fetchall()
 
         # Same row count, same version string, same downloaded_at timestamp —

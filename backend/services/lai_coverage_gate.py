@@ -65,9 +65,7 @@ def is_lai_coverage_degraded(
     lai_bundle_version: str | None,
 ) -> bool:
     """Pure predicate combining the file-format and bundle-version gates."""
-    return file_format_has_ancestrydna(file_format) and lai_bundle_below_v2(
-        lai_bundle_version
-    )
+    return file_format_has_ancestrydna(file_format) and lai_bundle_below_v2(lai_bundle_version)
 
 
 def _read_installed_lai_version() -> str | None:

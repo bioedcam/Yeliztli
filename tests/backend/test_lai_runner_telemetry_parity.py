@@ -102,8 +102,7 @@ class TestByteIdenticalWriteSurface:
         def fake_write(self, chrom, sites, vcf_path):
             # Capture chrom + the exact site-dict tuples written
             site_tuples = tuple(
-                (s["chrom"], s["pos"], s["rsid"], s["allele1"], s["allele2"])
-                for s in sites
+                (s["chrom"], s["pos"], s["rsid"], s["allele1"], s["allele2"]) for s in sites
             )
             calls.append((chrom, str(vcf_path), site_tuples))
 
@@ -112,14 +111,10 @@ class TestByteIdenticalWriteSurface:
             runner._write_per_chrom_vcfs(filtered, tmp_path)
         return calls
 
-    def test_no_source_field_vs_empty_source_produce_identical_writes(
-        self, runner, tmp_path
-    ):
+    def test_no_source_field_vs_empty_source_produce_identical_writes(self, runner, tmp_path):
         baseline_dir = tmp_path / "baseline"
         baseline_dir.mkdir()
-        baseline_calls = self._capture_write_calls(
-            runner, _BASE_23ANDME_GENOTYPES, baseline_dir
-        )
+        baseline_calls = self._capture_write_calls(runner, _BASE_23ANDME_GENOTYPES, baseline_dir)
 
         threaded_dir = tmp_path / "threaded"
         threaded_dir.mkdir()

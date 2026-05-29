@@ -747,9 +747,7 @@ class TestMergePreviewRoute:
     step 75; that's why this class only covers the routing surface here.
     """
 
-    def test_nonexistent_individual_returns_404(
-        self, individuals_client: TestClient
-    ) -> None:
+    def test_nonexistent_individual_returns_404(self, individuals_client: TestClient) -> None:
         sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
         sample2_id = individuals_client.sample2_id  # type: ignore[attr-defined]
         resp = individuals_client.post(
@@ -762,12 +760,8 @@ class TestMergePreviewRoute:
         assert resp.status_code == 404
         assert "9999" in resp.json()["detail"]
 
-    def test_invalid_strategy_returns_422(
-        self, individuals_client: TestClient
-    ) -> None:
-        ind = individuals_client.post(
-            "/api/individuals", json={"display_name": "Owner"}
-        ).json()
+    def test_invalid_strategy_returns_422(self, individuals_client: TestClient) -> None:
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Owner"}).json()
         sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
         sample2_id = individuals_client.sample2_id  # type: ignore[attr-defined]
         resp = individuals_client.post(
@@ -780,12 +774,8 @@ class TestMergePreviewRoute:
         # Pydantic Literal rejects the unknown value before the service runs.
         assert resp.status_code == 422
 
-    def test_wrong_source_count_returns_422(
-        self, individuals_client: TestClient
-    ) -> None:
-        ind = individuals_client.post(
-            "/api/individuals", json={"display_name": "Owner"}
-        ).json()
+    def test_wrong_source_count_returns_422(self, individuals_client: TestClient) -> None:
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Owner"}).json()
         sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
         resp = individuals_client.post(
             f"/api/individuals/{ind['id']}/merge/preview",
@@ -803,9 +793,7 @@ class TestMergePreviewRoute:
         # The fixture's two seeded samples are unlinked (individual_id is
         # NULL). Asking to preview-merge them against a freshly-created
         # individual surfaces the §10.5 step-1 membership failure as 422.
-        ind = individuals_client.post(
-            "/api/individuals", json={"display_name": "Owner"}
-        ).json()
+        ind = individuals_client.post("/api/individuals", json={"display_name": "Owner"}).json()
         sample1_id = individuals_client.sample1_id  # type: ignore[attr-defined]
         sample2_id = individuals_client.sample2_id  # type: ignore[attr-defined]
         resp = individuals_client.post(

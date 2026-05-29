@@ -127,11 +127,7 @@ def _create_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update()
-            .where(samples.c.id == sample_id)
-            .values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-{sample_id}",
@@ -168,9 +164,7 @@ def _seed_installed_vep_bundle(registry: DBRegistry, version: str = "v2.0.0") ->
 
     with registry.reference_engine.begin() as conn:
         conn.execute(
-            sa.delete(database_versions).where(
-                database_versions.c.db_name == "vep_bundle"
-            )
+            sa.delete(database_versions).where(database_versions.c.db_name == "vep_bundle")
         )
         conn.execute(
             database_versions.insert().values(
@@ -200,9 +194,7 @@ def _read_merge_rows(registry: DBRegistry, sample_id: int) -> list[sa.Row]:
     with engine.connect() as conn:
         return list(
             conn.execute(
-                sa.select(raw_variants).order_by(
-                    raw_variants.c.chrom, raw_variants.c.pos
-                )
+                sa.select(raw_variants).order_by(raw_variants.c.chrom, raw_variants.c.pos)
             )
         )
 
@@ -213,9 +205,7 @@ def _read_merge_provenance(registry: DBRegistry, sample_id: int) -> sa.Row:
             sa.select(samples.c.db_path).where(samples.c.id == sample_id)
         ).fetchone()
     assert row is not None
-    engine = registry.get_sample_engine(
-        registry.settings.data_dir / row.db_path
-    )
+    engine = registry.get_sample_engine(registry.settings.data_dir / row.db_path)
     with engine.connect() as conn:
         prov = conn.execute(sa.select(merge_provenance)).fetchone()
     assert prov is not None
@@ -441,9 +431,7 @@ class TestHappyPath:
             display_name="Jane Doe (merged)",
         )
         with registry.reference_engine.connect() as conn:
-            row = conn.execute(
-                sa.select(samples).where(samples.c.id == new_id)
-            ).fetchone()
+            row = conn.execute(sa.select(samples).where(samples.c.id == new_id)).fetchone()
         assert row is not None
         assert row.individual_id == individual_id
         assert row.file_format == "merged_v1"
@@ -510,9 +498,7 @@ class TestFileHashRecipe:
     def test_compute_file_hash_includes_schema_version(self) -> None:
         # Recreates the SHA-256 payload contract so a future bump trips the
         # test before it silently produces colliding hashes across versions.
-        expected = hashlib.sha256(
-            f"a|b|flag_only|{SAMPLE_SCHEMA_VERSION}".encode()
-        ).hexdigest()
+        expected = hashlib.sha256(f"a|b|flag_only|{SAMPLE_SCHEMA_VERSION}".encode()).hexdigest()
         assert _compute_file_hash("a", "b", MergeStrategy.FLAG_ONLY) == expected
 
 
@@ -871,8 +857,7 @@ class TestAnnotationEnqueue:
         assert row is not None
         assert (merge_registry.settings.data_dir / row.db_path).exists()
         assert any(
-            "merge_annotation_enqueue_failed" in record.message
-            for record in caplog.records
+            "merge_annotation_enqueue_failed" in record.message for record in caplog.records
         )
 
 
@@ -925,12 +910,8 @@ class TestPreviewMerge:
         # sample DB files BEFORE the dry-run so we can assert nothing new
         # lands during preview (the contract Plan §10.6 declares).
         with merge_registry.reference_engine.connect() as conn:
-            pre_count = conn.execute(
-                sa.select(sa.func.count()).select_from(samples)
-            ).scalar()
-        pre_db_files = sorted(
-            (merge_registry.settings.data_dir / "samples").glob("sample_*.db")
-        )
+            pre_count = conn.execute(sa.select(sa.func.count()).select_from(samples)).scalar()
+        pre_db_files = sorted((merge_registry.settings.data_dir / "samples").glob("sample_*.db"))
 
         result = preview_merge(
             merge_registry,
@@ -954,13 +935,9 @@ class TestPreviewMerge:
 
         # No samples row added; no per-sample DB file created.
         with merge_registry.reference_engine.connect() as conn:
-            post_count = conn.execute(
-                sa.select(sa.func.count()).select_from(samples)
-            ).scalar()
+            post_count = conn.execute(sa.select(sa.func.count()).select_from(samples)).scalar()
         assert post_count == pre_count
-        post_db_files = sorted(
-            (merge_registry.settings.data_dir / "samples").glob("sample_*.db")
-        )
+        post_db_files = sorted((merge_registry.settings.data_dir / "samples").glob("sample_*.db"))
         assert post_db_files == pre_db_files
 
     def test_preview_propagates_invalid_request(
@@ -1230,9 +1207,7 @@ class TestDualUploadFixtureMergeSemantics:
             strategy=strategy,
             display_name=f"Dual Upload ({strategy.value})",
         )
-        rows_by_coord = {
-            (r.chrom, int(r.pos)): r for r in _read_merge_rows(registry, new_id)
-        }
+        rows_by_coord = {(r.chrom, int(r.pos)): r for r in _read_merge_rows(registry, new_id)}
         # Every locus the gold JSON declares must materialise as exactly one
         # merged row at its coordinate (Plan §10.4 (a) — `(chrom, pos)` PK on
         # merged-sample raw_variants → one row per locus regardless of
@@ -1247,8 +1222,7 @@ class TestDualUploadFixtureMergeSemantics:
             coord = (str(locus["chrom"]), int(locus["pos"]))
             row = rows_by_coord.get(coord)
             assert row is not None, (
-                f"strategy={strategy.value} locus={coord}: missing from "
-                "merged raw_variants"
+                f"strategy={strategy.value} locus={coord}: missing from merged raw_variants"
             )
 
             concordance = locus["concordance"]
@@ -1262,9 +1236,7 @@ class TestDualUploadFixtureMergeSemantics:
                     f"strategy={strategy.value} locus={coord}: "
                     f"genotype={row.genotype!r} expected {outcome['genotype']!r}"
                 )
-                assert row.discordant_alt_genotype == outcome[
-                    "discordant_alt_genotype"
-                ], (
+                assert row.discordant_alt_genotype == outcome["discordant_alt_genotype"], (
                     f"strategy={strategy.value} locus={coord}: "
                     f"discordant_alt_genotype={row.discordant_alt_genotype!r} "
                     f"expected {outcome['discordant_alt_genotype']!r}"
@@ -1336,9 +1308,7 @@ class TestDualUploadFixtureMergeSemantics:
             strategy=MergeStrategy.FLAG_ONLY,
             display_name="Dual Upload (flag_only)",
         )
-        rows_by_coord = {
-            (r.chrom, int(r.pos)): r for r in _read_merge_rows(registry, new_id)
-        }
+        rows_by_coord = {(r.chrom, int(r.pos)): r for r in _read_merge_rows(registry, new_id)}
         for locus in gold["loci"]:
             if locus["concordance"] != "discordant":
                 continue
@@ -1381,18 +1351,14 @@ class TestDualUploadFixtureMergeSemantics:
             strategy=strategy,
             display_name=f"Dual Upload ({strategy.value})",
         )
-        rows_by_coord = {
-            (r.chrom, int(r.pos)): r for r in _read_merge_rows(registry, new_id)
-        }
+        rows_by_coord = {(r.chrom, int(r.pos)): r for r in _read_merge_rows(registry, new_id)}
         for locus in gold["loci"]:
             if locus["concordance"] != "discordant":
                 continue
             coord = (str(locus["chrom"]), int(locus["pos"]))
             row = rows_by_coord[coord]
             outcome = locus["strategy_outcomes"][strategy.value]
-            assert row.discordant_alt_genotype == outcome[
-                "discordant_alt_genotype"
-            ]
+            assert row.discordant_alt_genotype == outcome["discordant_alt_genotype"]
             assert row.discordant_alt_genotype.startswith(f"{loser_side}=")
             # Paired encoding never appears under prefer_* strategies.
             assert ";" not in row.discordant_alt_genotype
@@ -1450,9 +1416,7 @@ class TestAlleleOrderNormalization:
             s1_vendor="23andme",
             s2_vendor="ancestrydna",
         )
-        assert summary.match == 1, (
-            "Plan §10.2 step 3 bullet 1: AG == GA must be concordant match"
-        )
+        assert summary.match == 1, "Plan §10.2 step 3 bullet 1: AG == GA must be concordant match"
         assert summary.discordant == 0
         assert rows[0].concordance == "match"
 
@@ -1729,9 +1693,7 @@ class TestReMergeHashInvariants:
         assert first_hash == second_hash
         # Sanity: same inputs to the recipe must produce the same hash
         # the unit-level _compute_file_hash test locked.
-        assert first_hash == _compute_file_hash(
-            "hash_s1", "hash_s2", MergeStrategy.FLAG_ONLY
-        )
+        assert first_hash == _compute_file_hash("hash_s1", "hash_s2", MergeStrategy.FLAG_ONLY)
 
         # Provenance traceability — both per-sample DBs carry identical
         # merge_provenance rows.

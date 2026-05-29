@@ -191,9 +191,7 @@ def _seed_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update().where(samples.c.id == sample_id).values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-src-{sample_id}",
@@ -229,9 +227,7 @@ def _seed_source_sample(
 def _seed_installed_vep_bundle(reference_engine, version: str = "v2.0.0") -> None:
     with reference_engine.begin() as conn:
         conn.execute(
-            sa.delete(database_versions).where(
-                database_versions.c.db_name == "vep_bundle"
-            )
+            sa.delete(database_versions).where(database_versions.c.db_name == "vep_bundle")
         )
         conn.execute(
             database_versions.insert().values(
@@ -452,9 +448,7 @@ class TestMergeCommitRoute:
 class TestMergeProvenanceRoute:
     """Plan §10.6 merge-provenance read route."""
 
-    def _commit_merge(
-        self, merge_client: TestClient, strategy: str = "flag_only"
-    ) -> int:
+    def _commit_merge(self, merge_client: TestClient, strategy: str = "flag_only") -> int:
         resp = merge_client.post(
             f"/api/individuals/{merge_client.individual_id}/merge",  # type: ignore[attr-defined]
             json={
@@ -508,9 +502,7 @@ class TestMergeProvenanceRoute:
         assert resp.status_code == 404
         assert "no merge provenance" in resp.json()["detail"]
 
-    def test_nonexistent_sample_blocked_by_stale_gate(
-        self, merge_client: TestClient
-    ) -> None:
+    def test_nonexistent_sample_blocked_by_stale_gate(self, merge_client: TestClient) -> None:
         # ``Depends(require_fresh_sample)`` runs before the handler, and the
         # staleness service treats a missing ``samples`` row as v1.0.0 (the
         # Plan §7.4 missing-state fallback). The gated route therefore
@@ -576,9 +568,7 @@ class TestConcordanceReportRoute:
     def test_explicit_limit_and_offset_paginate(self, merge_client: TestClient) -> None:
         merged_id = self._commit_merge(merge_client)
         # offset past the only discordant row → empty page, total still 1.
-        resp = merge_client.get(
-            f"/api/samples/{merged_id}/concordance-report?limit=10&offset=10"
-        )
+        resp = merge_client.get(f"/api/samples/{merged_id}/concordance-report?limit=10&offset=10")
         assert resp.status_code == 200
         body = resp.json()
         assert body["limit"] == 10
@@ -588,23 +578,17 @@ class TestConcordanceReportRoute:
 
     def test_limit_above_max_returns_422(self, merge_client: TestClient) -> None:
         merged_id = self._commit_merge(merge_client)
-        resp = merge_client.get(
-            f"/api/samples/{merged_id}/concordance-report?limit=501"
-        )
+        resp = merge_client.get(f"/api/samples/{merged_id}/concordance-report?limit=501")
         assert resp.status_code == 422
 
     def test_limit_below_min_returns_422(self, merge_client: TestClient) -> None:
         merged_id = self._commit_merge(merge_client)
-        resp = merge_client.get(
-            f"/api/samples/{merged_id}/concordance-report?limit=0"
-        )
+        resp = merge_client.get(f"/api/samples/{merged_id}/concordance-report?limit=0")
         assert resp.status_code == 422
 
     def test_negative_offset_returns_422(self, merge_client: TestClient) -> None:
         merged_id = self._commit_merge(merge_client)
-        resp = merge_client.get(
-            f"/api/samples/{merged_id}/concordance-report?offset=-1"
-        )
+        resp = merge_client.get(f"/api/samples/{merged_id}/concordance-report?offset=-1")
         assert resp.status_code == 422
 
     def test_unmerged_sample_returns_404(self, merge_client: TestClient) -> None:
@@ -613,9 +597,7 @@ class TestConcordanceReportRoute:
         )
         assert resp.status_code == 404
 
-    def test_nonexistent_sample_blocked_by_stale_gate(
-        self, merge_client: TestClient
-    ) -> None:
+    def test_nonexistent_sample_blocked_by_stale_gate(self, merge_client: TestClient) -> None:
         # See ``TestMergeProvenanceRoute.test_nonexistent_sample_blocked_by_stale_gate``
         # for the rationale — the gate answers 423 before the handler runs.
         resp = merge_client.get("/api/samples/9999/concordance-report")
@@ -682,9 +664,7 @@ class TestReadRoutesGated:
                 )
         return merged_id
 
-    def test_merge_provenance_blocks_stale_sample_with_423(
-        self, merge_client: TestClient
-    ) -> None:
+    def test_merge_provenance_blocks_stale_sample_with_423(self, merge_client: TestClient) -> None:
         merged_id = self._commit_and_mark_stale(merge_client)
         resp = merge_client.get(f"/api/samples/{merged_id}/merge-provenance")
         assert resp.status_code == 423

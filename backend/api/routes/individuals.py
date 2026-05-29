@@ -220,9 +220,7 @@ def _aggregate_findings_count(linked: list[sa.Row]) -> int:
         try:
             with sample_engine.connect() as sample_conn:
                 result = sample_conn.execute(
-                    sa.select(findings_table.c.rsid).where(
-                        findings_table.c.evidence_level >= 3
-                    )
+                    sa.select(findings_table.c.rsid).where(findings_table.c.evidence_level >= 3)
                 ).fetchall()
         except sa.exc.OperationalError:
             # findings table may not exist on a freshly-created sample DB
@@ -251,9 +249,7 @@ def _linked_sample_payload(row: sa.Row) -> LinkedSample:
 
 
 def _require_individual(conn: sa.Connection, individual_id: int) -> sa.Row:
-    row = conn.execute(
-        sa.select(individuals).where(individuals.c.id == individual_id)
-    ).fetchone()
+    row = conn.execute(sa.select(individuals).where(individuals.c.id == individual_id)).fetchone()
     if row is None:
         raise HTTPException(
             status_code=404,
@@ -329,9 +325,7 @@ def create_individual(body: IndividualCreate) -> IndividualDetail:
     with registry.reference_engine.begin() as conn:
         result = conn.execute(individuals.insert().values(**insert_values))
         new_id = result.inserted_primary_key[0]
-        row = conn.execute(
-            sa.select(individuals).where(individuals.c.id == new_id)
-        ).fetchone()
+        row = conn.execute(sa.select(individuals).where(individuals.c.id == new_id)).fetchone()
         linked = _linked_sample_rows(conn, new_id)
     return IndividualDetail(
         id=row.id,
@@ -401,9 +395,7 @@ def update_individual(individual_id: int, body: IndividualUpdate) -> IndividualD
     with registry.reference_engine.begin() as conn:
         _require_individual(conn, individual_id)
         conn.execute(
-            individuals.update()
-            .where(individuals.c.id == individual_id)
-            .values(**update_values)
+            individuals.update().where(individuals.c.id == individual_id).values(**update_values)
         )
         row = conn.execute(
             sa.select(individuals).where(individuals.c.id == individual_id)
@@ -458,14 +450,9 @@ def link_sample(individual_id: int, body: LinkSampleRequest) -> IndividualDetail
         _require_individual(conn, individual_id)
         sample_row = _require_sample(conn, body.sample_id)
 
-        if (
-            sample_row.individual_id is not None
-            and sample_row.individual_id != individual_id
-        ):
+        if sample_row.individual_id is not None and sample_row.individual_id != individual_id:
             existing = conn.execute(
-                sa.select(individuals).where(
-                    individuals.c.id == sample_row.individual_id
-                )
+                sa.select(individuals).where(individuals.c.id == sample_row.individual_id)
             ).fetchone()
             existing_display = existing.display_name if existing else ""
             raise HTTPException(
@@ -525,10 +512,7 @@ def unlink_sample(individual_id: int, body: LinkSampleRequest) -> IndividualDeta
         _require_individual(conn, individual_id)
         sample_row = _require_sample(conn, body.sample_id)
 
-        if (
-            sample_row.individual_id is not None
-            and sample_row.individual_id != individual_id
-        ):
+        if sample_row.individual_id is not None and sample_row.individual_id != individual_id:
             raise HTTPException(
                 status_code=422,
                 detail=(
@@ -570,9 +554,7 @@ def unlink_sample(individual_id: int, body: LinkSampleRequest) -> IndividualDeta
 
 
 @router.post("/{individual_id}/merge/preview")
-def preview_merge_endpoint(
-    individual_id: int, body: MergePreviewRequest
-) -> MergePreviewResponse:
+def preview_merge_endpoint(individual_id: int, body: MergePreviewRequest) -> MergePreviewResponse:
     """Dry-run the §10.2 / §10.3 merge semantics and return the wizard payload.
 
     Validation surface is identical to ``POST /api/individuals/{id}/merge``
@@ -632,9 +614,7 @@ def _latest_annotation_job_id(conn: sa.Connection, sample_id: int) -> str:
 
 
 @router.post("/{individual_id}/merge", status_code=201)
-def commit_merge_endpoint(
-    individual_id: int, body: MergeCommitRequest
-) -> MergeCommitResponse:
+def commit_merge_endpoint(individual_id: int, body: MergeCommitRequest) -> MergeCommitResponse:
     """Materialise the merged sample DB and enqueue annotation (Plan §10.6).
 
     Body: ``{source_sample_ids: [a, b], strategy, display_name}``.

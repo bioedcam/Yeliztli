@@ -202,9 +202,7 @@ def _seed_vep_bundle(engine: sa.Engine) -> None:
             )
         )
         conn.execute(sa.text("CREATE INDEX idx_vep_rsid ON vep_annotations(rsid)"))
-        conn.execute(
-            sa.text("CREATE INDEX idx_vep_chrom_pos ON vep_annotations(chrom, pos)")
-        )
+        conn.execute(sa.text("CREATE INDEX idx_vep_chrom_pos ON vep_annotations(chrom, pos)"))
         with open(VEP_SEED_CSV, encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 conn.execute(
@@ -260,9 +258,7 @@ def reference_engine() -> sa.Engine:
     engine = _new_engine()
     reference_metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.execute(
-            database_versions.insert().values(db_name="vep_bundle", version="v2.0.0")
-        )
+        conn.execute(database_versions.insert().values(db_name="vep_bundle", version="v2.0.0"))
     return engine
 
 
@@ -418,9 +414,7 @@ class TestMergedSampleTelemetryShape:
         result = run_annotation(merged_sample_engine, registry)
         stats = result.coverage_stats
 
-        rollup_rsid = sum(
-            s["vep_bundle_rsid_hits"] for s in stats["by_source"].values()
-        )
+        rollup_rsid = sum(s["vep_bundle_rsid_hits"] for s in stats["by_source"].values())
         rollup_coord = sum(
             s["vep_bundle_coord_fallback_hits"] for s in stats["by_source"].values()
         )
@@ -479,9 +473,7 @@ class TestMergedSampleTelemetryShape:
         assert row is not None
         summary = json.loads(row.concordance_summary)
 
-        suffix_tokens = {
-            key.split("_", 1)[1] for key in summary if key.startswith("unique_")
-        }
+        suffix_tokens = {key.split("_", 1)[1] for key in summary if key.startswith("unique_")}
         assert suffix_tokens == {"S1", "S2"}
 
         result = run_annotation(merged_sample_engine, registry)
@@ -571,7 +563,6 @@ class TestUnmergedSampleShapeRegression:
         # exercises the merged branch; this one locks the unmerged branch).
         assert per_source["vep_bundle_rsid_hits"] == stats["vep_bundle_rsid_hits"]
         assert (
-            per_source["vep_bundle_coord_fallback_hits"]
-            == stats["vep_bundle_coord_fallback_hits"]
+            per_source["vep_bundle_coord_fallback_hits"] == stats["vep_bundle_coord_fallback_hits"]
         )
         assert per_source["vep_misses"] == stats["vep_misses"]

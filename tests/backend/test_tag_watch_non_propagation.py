@@ -118,11 +118,7 @@ def _create_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update()
-            .where(samples.c.id == sample_id)
-            .values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-{sample_id}",
@@ -158,9 +154,7 @@ def _seed_installed_vep_bundle(registry: DBRegistry, version: str = "v2.0.0") ->
 
     with registry.reference_engine.begin() as conn:
         conn.execute(
-            sa.delete(database_versions).where(
-                database_versions.c.db_name == "vep_bundle"
-            )
+            sa.delete(database_versions).where(database_versions.c.db_name == "vep_bundle")
         )
         conn.execute(
             database_versions.insert().values(
@@ -189,9 +183,7 @@ def _sample_engine(registry: DBRegistry, sample_id: int) -> sa.Engine:
 
 def _tag_id_for_name(engine: sa.Engine, tag_name: str) -> int:
     with engine.connect() as conn:
-        row = conn.execute(
-            sa.select(tags.c.id).where(tags.c.name == tag_name)
-        ).fetchone()
+        row = conn.execute(sa.select(tags.c.id).where(tags.c.name == tag_name)).fetchone()
     assert row is not None, f"predefined tag {tag_name!r} not seeded"
     return int(row.id)
 
@@ -423,9 +415,7 @@ class TestRsidCollapseNonPropagation:
                 sa.select(
                     raw_variants.c.rsid,
                     raw_variants.c.alt_rsid,
-                ).where(
-                    (raw_variants.c.chrom == "3") & (raw_variants.c.pos == 700)
-                )
+                ).where((raw_variants.c.chrom == "3") & (raw_variants.c.pos == 700))
             ).fetchone()
         assert collapsed is not None
         assert collapsed.rsid == "rs700_s1"
@@ -465,9 +455,7 @@ class TestRsidCollapseNonPropagation:
         # rs700_s1 IS present in merged raw_variants (it won the collapse).
         with merged_engine.connect() as conn:
             present = conn.execute(
-                sa.select(raw_variants.c.rsid).where(
-                    raw_variants.c.rsid == "rs700_s1"
-                )
+                sa.select(raw_variants.c.rsid).where(raw_variants.c.rsid == "rs700_s1")
             ).fetchone()
         assert present is not None
 

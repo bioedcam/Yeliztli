@@ -500,13 +500,11 @@ def download_rsmerge_arch(
                         from email.utils import parsedate_to_datetime
 
                         try:
-                            meta["version"] = parsedate_to_datetime(
-                                last_modified
-                            ).strftime("%Y%m%d")
-                        except (TypeError, ValueError) as exc:
-                            logger.warning(
-                                "dbsnp_download_bad_last_modified", error=str(exc)
+                            meta["version"] = parsedate_to_datetime(last_modified).strftime(
+                                "%Y%m%d"
                             )
+                        except (TypeError, ValueError) as exc:
+                            logger.warning("dbsnp_download_bad_last_modified", error=str(exc))
 
                 with open(tmp_path, "wb") as f:
                     for chunk in response.iter_bytes(chunk_size=65536):

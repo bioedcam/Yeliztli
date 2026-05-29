@@ -118,9 +118,7 @@ def test_rs_beats_kgp_regardless_of_lex_order(tmp_path):
 def test_per_chrom_assertion_fires_when_chr7_omitted():
     # One site per autosome except chr7, plus chrX. With min_autosome=1 the only
     # autosome below floor is the omitted chr7.
-    union_rows = [
-        (f"rs{i}", str(i), 1000 + i) for i in range(1, 23) if i != 7
-    ] + [("rsX", "X", 1)]
+    union_rows = [(f"rs{i}", str(i), 1000 + i) for i in range(1, 23) if i != 7] + [("rsX", "X", 1)]
     report = buc.build_report(
         union_rows,
         [],
@@ -150,18 +148,31 @@ def test_per_chrom_assertion_fires_when_chr7_omitted():
 
 def test_full_thresholds_pass_clears_small_realistic_report():
     # Sanity: a report meeting every floor produces no hard failures.
-    union_rows = (
-        [(f"rs{i}", str(i), i) for i in range(1, 23)]
-        + [("rsX", "X", 1), ("rsY", "Y", 1), ("rsMT", "MT", 1)]
-    )
+    union_rows = [(f"rs{i}", str(i), i) for i in range(1, 23)] + [
+        ("rsX", "X", 1),
+        ("rsY", "Y", 1),
+        ("rsMT", "MT", 1),
+    ]
     report = buc.build_report(
-        union_rows, union_rows, union_rows, 0,
-        sha256_inputs={}, sha256_output="", git_commit="t", build_date="2026-05-28",
+        union_rows,
+        union_rows,
+        union_rows,
+        0,
+        sha256_inputs={},
+        sha256_output="",
+        git_commit="t",
+        build_date="2026-05-28",
     )
     warnings, hard_failures = buc.check_assertions(
-        report, union_rows,
-        min_union=1, min_intersection=1, min_rs=1, min_autosome=1, min_chrx=1,
-        warn_chry=1, warn_chrmt=1,
+        report,
+        union_rows,
+        min_union=1,
+        min_intersection=1,
+        min_rs=1,
+        min_autosome=1,
+        min_chrx=1,
+        warn_chry=1,
+        warn_chrmt=1,
     )
     assert hard_failures == []
     assert warnings == []

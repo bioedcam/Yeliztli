@@ -217,11 +217,7 @@ def pagination_client(tmp_data_dir: Path):
             )
             merged_id = int(result.inserted_primary_key[0])
             db_path = f"samples/sample_{merged_id}.db"
-            conn.execute(
-                samples.update()
-                .where(samples.c.id == merged_id)
-                .values(db_path=db_path)
-            )
+            conn.execute(samples.update().where(samples.c.id == merged_id).values(db_path=db_path))
 
         sample_db_path = registry.settings.data_dir / db_path
         sample_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,9 +227,7 @@ def pagination_client(tmp_data_dir: Path):
         # on first access, which would otherwise auto-create the regular
         # rsid-PK raw_variants and our ``create_sample_tables`` call would
         # collide with the existing table.
-        engine = sa.create_engine(
-            f"sqlite:///{sample_db_path}", future=True
-        )
+        engine = sa.create_engine(f"sqlite:///{sample_db_path}", future=True)
         create_sample_tables(engine, is_merged_sample=True)
         with engine.begin() as conn:
             conn.execute(raw_variants.insert(), _DISCORDANT_ROWS)
@@ -246,9 +240,7 @@ def pagination_client(tmp_data_dir: Path):
                     merged_at=now,
                     strategy="flag_only",
                     source_sample_ids=json.dumps([101, 202]),
-                    source_file_hashes=json.dumps(
-                        ["hash_s1_pagination", "hash_s2_pagination"]
-                    ),
+                    source_file_hashes=json.dumps(["hash_s1_pagination", "hash_s2_pagination"]),
                     concordance_summary=json.dumps(_CONCORDANCE_SUMMARY),
                 )
             )
@@ -300,9 +292,7 @@ class TestDefaultLimit:
 
 
 class TestMaxLimitCap:
-    def test_limit_at_max_returns_every_available_row(
-        self, pagination_client: TestClient
-    ) -> None:
+    def test_limit_at_max_returns_every_available_row(self, pagination_client: TestClient) -> None:
         """``limit=500`` is the documented cap and must succeed. With 60
         discordant rows seeded the response carries all 60 in one page.
         """
@@ -340,14 +330,10 @@ class TestOrdering:
             f"/api/samples/{pagination_client.merged_id}/concordance-report?limit=500"  # type: ignore[attr-defined]
         )
         assert resp.status_code == 200, resp.text
-        got = [
-            (row["chrom"], row["pos"]) for row in resp.json()["discordant_loci"]
-        ]
+        got = [(row["chrom"], row["pos"]) for row in resp.json()["discordant_loci"]]
         assert got == _expected_ordered_keys()
 
-    def test_ordering_holds_for_a_mid_window_offset(
-        self, pagination_client: TestClient
-    ) -> None:
+    def test_ordering_holds_for_a_mid_window_offset(self, pagination_client: TestClient) -> None:
         """The ORDER BY must apply BEFORE LIMIT/OFFSET, so the second
         page is a contiguous ascending slice of the canonical sequence —
         not a locally-sorted slice of an arbitrary subset.
@@ -388,9 +374,7 @@ class TestOffsetPastTotal:
 
 
 class TestTotalDiscordant:
-    def test_total_excludes_non_discordant_rows(
-        self, pagination_client: TestClient
-    ) -> None:
+    def test_total_excludes_non_discordant_rows(self, pagination_client: TestClient) -> None:
         """The non-discordant seed rows (``match`` / ``filled_nocall`` /
         ``unique``) must NOT be counted in ``total_discordant``. Locks
         that the route filters on ``concordance='discordant'`` rather
@@ -445,6 +429,5 @@ class TestAnnotatedVariantsJoin:
         # page (i.e. not all rows fell accidentally into one bucket).
         assert annotated_seen == len(_ANNOTATION_ROWS)
         assert (
-            unannotated_seen
-            == pagination_client.discordant_total - annotated_seen  # type: ignore[attr-defined]
+            unannotated_seen == pagination_client.discordant_total - annotated_seen  # type: ignore[attr-defined]
         )

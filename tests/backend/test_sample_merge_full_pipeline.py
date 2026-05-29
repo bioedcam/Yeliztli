@@ -266,18 +266,14 @@ _SEED_CPIC_ALLELES: tuple[dict, ...] = (
     {
         "gene": "CYP2D6",
         "allele_name": "*2",
-        "defining_variants": json.dumps(
-            [{"rsid": "rs16947", "ref": "C", "alt": "T"}]
-        ),
+        "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "C", "alt": "T"}]),
         "function": "Normal function",
         "activity_score": 1.0,
     },
     {
         "gene": "CYP2D6",
         "allele_name": "*4",
-        "defining_variants": json.dumps(
-            [{"rsid": "rs3892097", "ref": "C", "alt": "T"}]
-        ),
+        "defining_variants": json.dumps([{"rsid": "rs3892097", "ref": "C", "alt": "T"}]),
         "function": "No function",
         "activity_score": 0.0,
     },
@@ -339,11 +335,7 @@ def merge_registry(tmp_data_dir: Path):
             )
         )
         conn.execute(sa.text("CREATE INDEX idx_vep_rsid ON vep_annotations(rsid)"))
-        conn.execute(
-            sa.text(
-                "CREATE INDEX idx_vep_chrom_pos ON vep_annotations(chrom, pos)"
-            )
-        )
+        conn.execute(sa.text("CREATE INDEX idx_vep_chrom_pos ON vep_annotations(chrom, pos)"))
         for row in _VEP_SEED:
             conn.execute(
                 sa.text(
@@ -405,9 +397,7 @@ def _create_source_sample(
         )
         sample_id = int(result.inserted_primary_key[0])
         db_path = f"samples/sample_{sample_id}.db"
-        conn.execute(
-            samples.update().where(samples.c.id == sample_id).values(db_path=db_path)
-        )
+        conn.execute(samples.update().where(samples.c.id == sample_id).values(db_path=db_path))
         conn.execute(
             jobs.insert().values(
                 job_id=f"job-{sample_id}",
@@ -560,9 +550,7 @@ class TestMergedSampleFullPipeline:
         s1_genos = _fetch_sample_genotypes(
             list(all_defining_rsids), _source_engine(registry, s1_id)
         )
-        s1_call = call_star_alleles_for_gene(
-            "CYP2D6", alleles, s1_genos, reference_engine
-        )
+        s1_call = call_star_alleles_for_gene("CYP2D6", alleles, s1_genos, reference_engine)
         assert "rs16947" in s1_call.missing_rsids
         assert "rs3892097" not in s1_call.missing_rsids
 
@@ -570,20 +558,14 @@ class TestMergedSampleFullPipeline:
         s2_genos = _fetch_sample_genotypes(
             list(all_defining_rsids), _source_engine(registry, s2_id)
         )
-        s2_call = call_star_alleles_for_gene(
-            "CYP2D6", alleles, s2_genos, reference_engine
-        )
+        s2_call = call_star_alleles_for_gene("CYP2D6", alleles, s2_genos, reference_engine)
         assert "rs3892097" in s2_call.missing_rsids
         assert "rs16947" not in s2_call.missing_rsids
 
         # Merged sample: both defining rsids covered → missing_rsids is a
         # strict subset of *both* sources' missing sets (here, empty).
-        merged_genos = _fetch_sample_genotypes(
-            list(all_defining_rsids), merged_engine
-        )
-        merged_call = call_star_alleles_for_gene(
-            "CYP2D6", alleles, merged_genos, reference_engine
-        )
+        merged_genos = _fetch_sample_genotypes(list(all_defining_rsids), merged_engine)
+        merged_call = call_star_alleles_for_gene("CYP2D6", alleles, merged_genos, reference_engine)
         assert merged_call.missing_rsids == set()
         assert merged_call.missing_rsids < s1_call.missing_rsids
         assert merged_call.missing_rsids < s2_call.missing_rsids

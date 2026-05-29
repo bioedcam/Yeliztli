@@ -122,9 +122,7 @@ def _build_archive(sample_paths: list[Path], include_config: bool = True) -> byt
     return buf.getvalue()
 
 
-def _post_import(
-    tc: TestClient, archive_bytes: bytes, filename: str = "backup.tar.gz"
-):
+def _post_import(tc: TestClient, archive_bytes: bytes, filename: str = "backup.tar.gz"):
     return tc.post(
         "/api/setup/import-backup",
         files={
@@ -237,10 +235,7 @@ class TestRestoreBundleVersionGate:
         try:
             with engine.connect() as conn:
                 row = conn.execute(
-                    sa.text(
-                        "SELECT value FROM annotation_state "
-                        "WHERE key = 'vep_bundle_version'"
-                    )
+                    sa.text("SELECT value FROM annotation_state WHERE key = 'vep_bundle_version'")
                 ).fetchone()
         finally:
             engine.dispose()
@@ -248,9 +243,7 @@ class TestRestoreBundleVersionGate:
         assert row is not None
         assert row[0] == "v2.0.0"
 
-    def test_pre_phase0_backup_against_installed_v1_succeeds_and_backfills(
-        self, restore_env
-    ):
+    def test_pre_phase0_backup_against_installed_v1_succeeds_and_backfills(self, restore_env):
         """Pre-Phase-0 backup (no ``annotation_state``) + installed v1.0.0 →
         falls back to v1.0.0, restore succeeds, post-restore upgrade adds the
         table and seeds the bundle-version row.
@@ -284,10 +277,7 @@ class TestRestoreBundleVersionGate:
             assert "annotation_state" in inspector.get_table_names()
             with engine.connect() as conn:
                 row = conn.execute(
-                    sa.text(
-                        "SELECT value FROM annotation_state "
-                        "WHERE key = 'vep_bundle_version'"
-                    )
+                    sa.text("SELECT value FROM annotation_state WHERE key = 'vep_bundle_version'")
                 ).fetchone()
         finally:
             engine.dispose()
@@ -372,10 +362,7 @@ class TestRestoreBundleVersionGate:
         try:
             with engine.connect() as conn:
                 rows = conn.execute(
-                    sa.text(
-                        "SELECT value FROM annotation_state "
-                        "WHERE key = 'vep_bundle_version'"
-                    )
+                    sa.text("SELECT value FROM annotation_state WHERE key = 'vep_bundle_version'")
                 ).fetchall()
         finally:
             engine.dispose()

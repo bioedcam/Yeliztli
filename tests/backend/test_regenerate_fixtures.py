@@ -196,8 +196,7 @@ class TestRegenerateFixtures:
         _run_script(tmp_path)
         with sqlite3.connect(str(tmp_path / "mini_vep_bundle.db")) as conn:
             bundle_rsids: set[str] = {
-                row[0]
-                for row in conn.execute("SELECT rsid FROM vep_annotations").fetchall()
+                row[0] for row in conn.execute("SELECT rsid FROM vep_annotations").fetchall()
             }
 
         missing = non_kgp_rsids - bundle_rsids
@@ -224,10 +223,7 @@ class TestRegenerateFixtures:
         _run_script(tmp_path)
         with sqlite3.connect(str(tmp_path / "mini_vep_bundle.db")) as conn:
             tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                )
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             assert "bundle_metadata" in tables
 
@@ -350,8 +346,7 @@ class TestSyntheticAncestryDNAFixture:
 
     def test_template_fixture_exists(self) -> None:
         assert _TEMPLATE_PATH.is_file(), (
-            f"23andMe template missing — required by --vendor=ancestrydna mode: "
-            f"{_TEMPLATE_PATH}"
+            f"23andMe template missing — required by --vendor=ancestrydna mode: {_TEMPLATE_PATH}"
         )
 
     def test_dry_run_does_not_write_output(self, tmp_path: Path) -> None:
@@ -365,9 +360,7 @@ class TestSyntheticAncestryDNAFixture:
         # Size proxies "full-size synthetic" — the template is ~5,000 rows.
         assert output.stat().st_size > 50_000
 
-    def test_header_carries_synthetic_marker_and_vendor_signature(
-        self, tmp_path: Path
-    ) -> None:
+    def test_header_carries_synthetic_marker_and_vendor_signature(self, tmp_path: Path) -> None:
         _run_vendor_script(tmp_path)
         text = (tmp_path / "synthetic_eur_ancestrydna.txt").read_text()
         head = text.splitlines()[:12]

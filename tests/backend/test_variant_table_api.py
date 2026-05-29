@@ -962,9 +962,7 @@ class TestMergeProvenanceColumns:
     endpoint via LEFT-JOIN against raw_variants when the table is
     annotated_variants. Filters validate against the closed enum sets."""
 
-    def test_list_surfaces_source_concordance_on_merged_sample(
-        self, client_with_merged_sample
-    ):
+    def test_list_surfaces_source_concordance_on_merged_sample(self, client_with_merged_sample):
         client, sid = client_with_merged_sample
         response = client.get(f"/api/variants?sample_id={sid}&limit=50")
         assert response.status_code == 200
@@ -1002,17 +1000,13 @@ class TestMergeProvenanceColumns:
 
     def test_filter_by_concordance_discordant(self, client_with_merged_sample):
         client, sid = client_with_merged_sample
-        response = client.get(
-            f"/api/variants?sample_id={sid}&filter=concordance:discordant"
-        )
+        response = client.get(f"/api/variants?sample_id={sid}&filter=concordance:discordant")
         rsids = [i["rsid"] for i in response.json()["items"]]
         assert rsids == ["rs102"]
 
     def test_filter_combined_source_and_concordance(self, client_with_merged_sample):
         client, sid = client_with_merged_sample
-        response = client.get(
-            f"/api/variants?sample_id={sid}&filter=source:S1,concordance:unique"
-        )
+        response = client.get(f"/api/variants?sample_id={sid}&filter=source:S1,concordance:unique")
         rsids = [i["rsid"] for i in response.json()["items"]]
         assert rsids == ["rs200"]
 
@@ -1023,29 +1017,21 @@ class TestMergeProvenanceColumns:
         response = client.get(f"/api/variants?sample_id={sid}&filter=source:bogus")
         assert len(response.json()["items"]) == 4
 
-    def test_invalid_concordance_value_silently_dropped(
-        self, client_with_merged_sample
-    ):
+    def test_invalid_concordance_value_silently_dropped(self, client_with_merged_sample):
         client, sid = client_with_merged_sample
-        response = client.get(
-            f"/api/variants?sample_id={sid}&filter=concordance:not_a_bucket"
-        )
+        response = client.get(f"/api/variants?sample_id={sid}&filter=concordance:not_a_bucket")
         assert len(response.json()["items"]) == 4
 
     def test_count_filter_by_source(self, client_with_merged_sample):
         client, sid = client_with_merged_sample
-        response = client.get(
-            f"/api/variants/count?sample_id={sid}&filter=source:S1"
-        )
+        response = client.get(f"/api/variants/count?sample_id={sid}&filter=source:S1")
         data = response.json()
         assert data["total"] == 2
         assert data["filtered"] is True
 
     def test_count_filter_by_concordance(self, client_with_merged_sample):
         client, sid = client_with_merged_sample
-        response = client.get(
-            f"/api/variants/count?sample_id={sid}&filter=concordance:match"
-        )
+        response = client.get(f"/api/variants/count?sample_id={sid}&filter=concordance:match")
         data = response.json()
         assert data["total"] == 1
         assert data["filtered"] is True

@@ -460,9 +460,7 @@ class TestAnnotationStateGate:
         assert state.get("vep_bundle_version") == "v1.0.0"
         assert "annotation_bundle_coverage_json" in state
 
-    def test_raise_from_run_all_analyses_leaves_gate_up(
-        self, annotation_env: dict
-    ) -> None:
+    def test_raise_from_run_all_analyses_leaves_gate_up(self, annotation_env: dict) -> None:
         """A raise from run_all_analyses bypasses the upsert (gate stays up)."""
         from backend.db.connection import get_registry
 

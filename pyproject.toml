@@ -43,7 +43,10 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
-    "ruff",
+    # Pinned: ruff's formatter output can change across releases; an exact pin
+    # keeps `ruff format --check` deterministic between local and CI (bump
+    # intentionally + reformat the tree in the same PR).
+    "ruff==0.15.15",
     "mypy",
     "pyyaml",
     "pandas",

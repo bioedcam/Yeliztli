@@ -58,9 +58,7 @@ class DeleteCascadeResult:
     deleted_merged_children: list[MergedChild]
 
 
-def list_merged_children(
-    registry: DBRegistry, sample_id: int
-) -> list[MergedChild]:
+def list_merged_children(registry: DBRegistry, sample_id: int) -> list[MergedChild]:
     """Return every merged sample that lists ``sample_id`` in its sources.
 
     Empty list when the sample has never been merged. A merged child whose
@@ -93,9 +91,7 @@ def list_merged_children(
         try:
             engine = registry.get_sample_engine(merged_db_path)
             with engine.connect() as conn:
-                prov_row = conn.execute(
-                    sa.select(merge_provenance.c.source_sample_ids)
-                ).fetchone()
+                prov_row = conn.execute(sa.select(merge_provenance.c.source_sample_ids)).fetchone()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "merged_provenance_read_failed",
@@ -150,9 +146,7 @@ def _delete_sample_files(registry: DBRegistry, db_path: str | None) -> None:
     Path(f"{sample_db_path}-shm").unlink(missing_ok=True)
 
 
-def delete_sample_with_cascade(
-    registry: DBRegistry, sample_id: int
-) -> DeleteCascadeResult | None:
+def delete_sample_with_cascade(registry: DBRegistry, sample_id: int) -> DeleteCascadeResult | None:
     """Delete ``sample_id`` and every merged child that referenced it.
 
     Returns ``None`` when ``sample_id`` does not exist (caller surfaces 404).
@@ -193,9 +187,7 @@ def delete_sample_with_cascade(
         extra={
             "deleted_sample_id": int(row.id),
             "deleted_sample_name": str(row.name),
-            "deleted_merged_children": [
-                {"id": c.id, "name": c.name} for c in children
-            ],
+            "deleted_merged_children": [{"id": c.id, "name": c.name} for c in children],
         },
     )
     return DeleteCascadeResult(
