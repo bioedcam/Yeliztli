@@ -159,7 +159,7 @@ jobs:
           ls -la "$HOME/.genomeinsight/" || true
           if [ -d "$HOME/.genomeinsight/lai_bundle" ]; then
             echo "lai_bundle entries:"
-            ls "$HOME/.genomeinsight/lai_bundle/" | head
+            find "$HOME/.genomeinsight/lai_bundle/" -maxdepth 1 -printf '%f\n' | head
           fi
 
       - name: Run slow-tier pytest

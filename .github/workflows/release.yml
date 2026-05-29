@@ -172,11 +172,12 @@ jobs:
 
       - name: Verify health endpoint (quick start/stop)
         run: |
-          cleanup() { kill $SERVER_PID 2>/dev/null || true; }
+          # shellcheck disable=SC2329  # invoked indirectly via the EXIT trap
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
           trap cleanup EXIT
           uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
           SERVER_PID=$!
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8000/api/health; then
               echo "Health check passed"
               exit 0
@@ -207,7 +208,7 @@ jobs:
 
       - name: Health check
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8000/api/health; then
               echo "Docker health check passed"
               exit 0
