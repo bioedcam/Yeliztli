@@ -1,8 +1,9 @@
 """Tests for ``scripts/generate_vep_input.py``.
 
-Covers both the dispatcher-backed vendor parse path (23andMe today,
-AncestryDNA once step 27 lands the dispatcher) and the ``--rsid-catalog``
-mode that emits a sites-only VCF from a bare rsid+chrom+pos TSV.
+Covers the dispatcher-backed vendor parse path (23andMe today, AncestryDNA
+once step 27 lands the dispatcher), the ``--rsid-catalog`` mode that emits a
+sites-only VCF, and the ``--rsid-list`` mode that emits a bare rs* ID list
+(for ``vep --format id``) — all from a bare rsid+chrom+pos TSV.
 """
 
 from __future__ import annotations
@@ -267,3 +268,119 @@ def test_cli_rsid_catalog_round_trip(tmp_path: Path) -> None:
         "1\t100\trs1\tN\t.\t.\tPASS\t.",
         "2\t200\trs2\tN\t.\t.\tPASS\t.",
     ]
+
+
+# ---------------------------------------------------------------------------
+# --rsid-list mode (for VEP --format id)
+# ---------------------------------------------------------------------------
+
+
+def test_rsid_list_mode_filters_dedupes_and_sorts(tmp_path: Path) -> None:
+    module = _load_script_module()
+
+    # rs* (incl. a duplicate rsID at a 2nd position), i* internal, coordinate-style,
+    # and kgp* proxy — only the unique rs* IDs survive, lexicographically sorted.
+    catalog_path = tmp_path / "union_catalog.tsv"
+    catalog_path.write_text(
+        "# header\n"
+        "rs10\t1\t100\n"
+        "rs2\t1\t150\n"
+        "rs10\tX\t9000\n"  # duplicate rsID at another position -> deduped
+        "i5000123\t2\t200\n"  # 23andMe internal -> skipped
+        "1:762320C>T\t1\t762320\n"  # coordinate-style chip ID -> skipped
+        "kgp123\t3\t300\n",  # AncestryDNA proxy -> skipped
+        encoding="utf-8",
+    )
+
+    output_path = tmp_path / "rsids.txt"
+    stats = module.generate_rsid_list(catalog_path, output_path)
+
+    assert stats == {"total_catalog_rows": 6, "rs_written": 2, "non_rs_skipped": 4}
+    # lexicographic sort: "rs10" < "rs2" ('1' < '2'); deduped to one "rs10".
+    assert output_path.read_text(encoding="utf-8") == "rs10\nrs2\n"
+
+
+def test_cli_rsid_list_round_trip(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog.tsv"
+    catalog_path.write_text("rs5\t1\t100\ni999\t2\t200\nrs3\t2\t300\n", encoding="utf-8")
+    output_path = tmp_path / "rsids.txt"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--rsid-list",
+            str(catalog_path),
+            "-o",
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.returncode == 0
+    assert output_path.read_text(encoding="utf-8") == "rs3\nrs5\n"
+
+
+def test_cli_rsid_list_and_catalog_are_mutually_exclusive(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog.tsv"
+    catalog_path.write_text("rs1\t1\t100\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--rsid-list",
+            "--rsid-catalog",
+            str(catalog_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "mutually exclusive" in result.stderr
+
+
+def test_rsid_list_empty_catalog(tmp_path: Path) -> None:
+    module = _load_script_module()
+    catalog_path = tmp_path / "empty.tsv"
+    catalog_path.write_text("# only a comment\n\n", encoding="utf-8")
+    output_path = tmp_path / "rsids.txt"
+
+    stats = module.generate_rsid_list(catalog_path, output_path)
+
+    assert stats == {"total_catalog_rows": 0, "rs_written": 0, "non_rs_skipped": 0}
+    assert output_path.read_text(encoding="utf-8") == ""  # no trailing newline
+
+
+def test_rsid_list_all_non_rs_catalog(tmp_path: Path) -> None:
+    module = _load_script_module()
+    catalog_path = tmp_path / "non_rs.tsv"
+    catalog_path.write_text(
+        "i5000123\t1\t100\nkgp99\t2\t200\nVG12\t3\t300\n1:762320C>T\t1\t762320\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "rsids.txt"
+
+    stats = module.generate_rsid_list(catalog_path, output_path)
+
+    assert stats == {"total_catalog_rows": 4, "rs_written": 0, "non_rs_skipped": 4}
+    assert output_path.read_text(encoding="utf-8") == ""
+
+
+def test_cli_rsid_list_stdout_keeps_stats_off_stdout(tmp_path: Path) -> None:
+    # stdout (no -o) must carry ONLY the rsID list; --stats summary goes to stderr.
+    catalog_path = tmp_path / "catalog.tsv"
+    catalog_path.write_text("rs5\t1\t100\ni999\t2\t200\nrs3\t2\t300\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--rsid-list", "--stats", str(catalog_path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout == "rs3\nrs5\n"  # pure rsID list, no stats pollution
+    assert "Mode:     rsid-list" in result.stderr

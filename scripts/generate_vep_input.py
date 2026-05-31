@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a VEP-ready sites-only VCF.
 
-Two modes:
+Three modes:
 
 * **Genotype mode (default)** — parses a vendor raw-data file (23andMe v3/v4/v5
   or AncestryDNA v2.0) via ``backend.ingestion.dispatcher.parse`` when present
@@ -9,20 +9,34 @@ Two modes:
   ``REF=observed``, ``ALT='.'``; heterozygous calls emit the first allele as
   REF and the second as ALT. No-calls and indel codes are skipped.
 
-* **Catalog mode (``--rsid-catalog``)** — consumes a bare
-  ``rsid<TAB>chrom<TAB>pos`` TSV (the union catalog produced by the bundle
-  rebuild) and emits a sites-only VCF with ``REF=N``, ``ALT='.'`` for each
-  row. The output feeds an offline VEP run that resolves alleles via rsid
-  lookup against the Ensembl cache.
+* **rsID-list mode (``--rsid-list``)** — consumes the union catalog
+  (``rsid<TAB>chrom<TAB>pos`` TSV) and emits a deduped, sorted list of ``rs*``
+  IDs, one per line — the input for ``vep --format id``, which resolves each
+  rsID and annotates *all* of its alleles independent of any donor's genotype.
+  **⚠️ ``--format id`` requires a live Ensembl Variation database
+  (``--database``); it does NOT work with ``--offline``/``--cache`` (VEP aborts
+  with "Cannot use ID format in offline mode").** For a fully-offline rebuild,
+  resolve these rsIDs to ``REF/ALT`` from a dbSNP GRCh37 VCF and run
+  ``vep --offline --cache`` on the resulting coordinate VCF — see the Phase B
+  build-plan for the tradeoff. Only ``rs*`` IDs are emitted (the same filter as
+  ``build_vep_bundle._load_catalog_rsids``, so the emitted set stays in lockstep
+  with the coverage-gate denominator); non-``rs*`` markers have no dbSNP entry
+  and rely on the runtime coordinate-fallback.
 
-Output is sites-only (no FORMAT/SAMPLE columns) since VEP only needs CHROM,
-POS, ID, REF, ALT.
+* **Catalog mode (``--rsid-catalog``)** — consumes the same catalog and emits a
+  sites-only VCF with ``REF=N``, ``ALT='.'`` per row. NOTE: standard ``vep
+  --vcf`` cannot allele-annotate ``ALT='.'`` records — use ``--rsid-list`` +
+  ``vep --format id`` for the rebuild. This mode is retained for callers that
+  post-process the coordinate VCF themselves.
+
+Output of the VCF modes is sites-only (no FORMAT/SAMPLE columns) since VEP only
+needs CHROM, POS, ID, REF, ALT.
 
 Usage::
 
     python scripts/generate_vep_input.py input.txt -o vep_input.vcf
     python scripts/generate_vep_input.py input.txt -o vep_input.vcf.gz
-    python scripts/generate_vep_input.py input.txt --stats > vep_input.vcf
+    python scripts/generate_vep_input.py --rsid-list union_sites.tsv -o vep_rsids.txt
     python scripts/generate_vep_input.py --rsid-catalog catalog.tsv -o vep_input.vcf
 """
 
@@ -278,6 +292,69 @@ def generate_catalog_vcf(
 
 
 # ---------------------------------------------------------------------------
+# rsid-list mode (for VEP --format id)
+# ---------------------------------------------------------------------------
+
+
+def generate_rsid_list(
+    input_path: Path,
+    output_path: Path | None = None,
+    *,
+    print_stats: bool = False,
+) -> dict:
+    """Emit a bare rsID list (one ``rs*`` ID per line) from a site catalog.
+
+    Reads the same ``rsid<TAB>chrom<TAB>pos`` catalog as ``--rsid-catalog`` but
+    writes the **rsID list** that ``vep --format id`` consumes: VEP looks up each
+    dbSNP rsID in the offline cache and annotates *all* of its alleles, so the
+    rebuilt bundle covers every user regardless of genotype. This is what a
+    ``REF=N`` / ``ALT='.'`` coordinate VCF (``--rsid-catalog``) cannot do — VEP
+    has no alternate allele to annotate there and drops the record.
+
+    Only ``rs*`` IDs are emitted. Non-``rs*`` catalog markers (``i*`` internal,
+    ``kgp*`` / ``VG*`` proxies, and coordinate-style ``chr:posREF>ALT`` chip IDs)
+    have no dbSNP identifier VEP can resolve; they are intentionally skipped and
+    rely on the runtime coordinate-fallback in ``backend/annotation/engine.py``.
+    Output is deduplicated and lexicographically sorted for a byte-stable result.
+    """
+    rsids: set[str] = set()
+    total = 0
+    for rsid, _chrom, _pos in _iter_catalog_rows(input_path):
+        total += 1
+        # rs*-only, the same prefix test as build_vep_bundle._load_catalog_rsids
+        # (the coverage-gate denominator) so this emitted set stays in lockstep
+        # with it — do NOT tighten here alone. Non-rs* markers have no dbSNP
+        # entry VEP can resolve.
+        if rsid.startswith("rs"):
+            rsids.add(rsid)
+
+    ordered = sorted(rsids)
+    stats = {
+        "total_catalog_rows": total,
+        "rs_written": len(ordered),
+        "non_rs_skipped": total - len(ordered),
+    }
+
+    fh, close_fh = _open_output(output_path)
+    try:
+        for rsid in ordered:
+            fh.write(rsid + "\n")
+    finally:
+        if close_fh:
+            fh.close()
+
+    if print_stats:
+        print("Mode:     rsid-list (for VEP --format id)", file=sys.stderr)
+        print(f"Catalog:  {total:,} rows", file=sys.stderr)
+        print(f"rs* IDs:  {len(ordered):,} written", file=sys.stderr)
+        print(f"Skipped:  {stats['non_rs_skipped']:,} non-rs* markers", file=sys.stderr)
+        if output_path:
+            print(f"Output:   {output_path}", file=sys.stderr)
+
+    return stats
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -288,8 +365,7 @@ def main(argv: list[str] | None = None) -> None:
         epilog=(
             "Examples:\n"
             "  %(prog)s data.txt -o vep_input.vcf\n"
-            "  %(prog)s data.txt -o vep_input.vcf.gz\n"
-            "  %(prog)s data.txt --stats > vep_input.vcf\n"
+            "  %(prog)s --rsid-list union_sites.tsv -o vep_rsids.txt\n"
             "  %(prog)s --rsid-catalog union_sites.tsv -o vep_input.vcf\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -320,8 +396,26 @@ def main(argv: list[str] | None = None) -> None:
             "raw-data file."
         ),
     )
+    parser.add_argument(
+        "--rsid-list",
+        dest="rsid_list",
+        action="store_true",
+        help=(
+            "Treat input as an rsid+chrom+pos catalog and emit a bare rsID list "
+            "(one rs* ID per line) for `vep --format id`. Non-rs* markers are "
+            "skipped (they use the runtime coord-fallback). Mutually exclusive "
+            "with --rsid-catalog."
+        ),
+    )
 
     args = parser.parse_args(argv)
+
+    if args.rsid_list and args.rsid_catalog:
+        print(
+            "Error: --rsid-list and --rsid-catalog are mutually exclusive",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if not args.input.is_file():
         print(f"Error: not a regular file: {args.input}", file=sys.stderr)
@@ -332,7 +426,9 @@ def main(argv: list[str] | None = None) -> None:
     print_stats = args.stats or args.output is not None
 
     try:
-        if args.rsid_catalog:
+        if args.rsid_list:
+            generate_rsid_list(args.input, args.output, print_stats=print_stats)
+        elif args.rsid_catalog:
             generate_catalog_vcf(args.input, args.output, print_stats=print_stats)
         else:
             generate_vep_vcf(args.input, args.output, print_stats=print_stats)
