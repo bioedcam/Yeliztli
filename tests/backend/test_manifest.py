@@ -646,6 +646,9 @@ class TestRepoManifest:
         # pins bundles/manifest.json against accidental rollback or drift.
         assert lai.size_bytes == LAI_BUNDLE_SIZE_BYTES
         assert lai.sha256 == LAI_BUNDLE_SHA256
+        # Both v2.0.0 bundles gate on app v0.2.0 (AncestryDNA support); the
+        # Phase E1 smoke (Plan §E1) asserts lai.min_app_version == "0.2.0".
+        assert lai.min_app_version == "0.2.0"
 
 
 # ── committed v2 manifest fixture (Step 18 / Plan §16.1) ──────────────

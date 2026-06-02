@@ -7,7 +7,8 @@
       "build_date": "2026-06-02",
       "url": "https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz",
       "sha256": "96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734",
-      "size_bytes": 1710542766
+      "size_bytes": 1710542766,
+      "min_app_version": "0.2.0"
     },
     "vep_bundle": {
       "version": "v2.0.0",
