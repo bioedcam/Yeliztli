@@ -11,10 +11,10 @@
     },
     "vep_bundle": {
       "version": "v2.0.0",
-      "build_date": "2026-05-18",
+      "build_date": "2026-06-01",
       "url": "https://github.com/bioedcam/GenomeInsight/releases/download/bundle-v2.0.0/vep_bundle.db",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "size_bytes": 600000000,
+      "sha256": "9f645b2c6963e2a83e69c0b1e5bea777cb1bf20566d7c051cfda9b0fef6393bc",
+      "size_bytes": 358752256,
       "min_app_version": "0.2.0"
     },
     "ancestry_pca": {
