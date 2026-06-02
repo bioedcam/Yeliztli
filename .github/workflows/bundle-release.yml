@@ -27,7 +27,11 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # `write` (not `read`) is required so the job's GITHUB_TOKEN can view and
+  # download the release while it is still a *draft* — draft releases are only
+  # visible to tokens with push access. This lets us verify the asset BEFORE a
+  # maintainer flips it public, keeping the gate genuinely pre-publish.
+  contents: write
 
 jobs:
   verify:
@@ -115,19 +119,27 @@ jobs:
             echo "::error::could not derive asset name from manifest URL ($manifest_url)"
             exit 1
           fi
-          # Resolve the asset's authoritative download URL from the release
-          # specified by the input tag, instead of trusting the manifest URL
-          # blindly. A mismatch means the manifest points outside this tag.
-          release_url=$(gh release view "$tag" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --json assets \
-            --jq ".assets[] | select(.name == \"${asset_name}\") | .browser_download_url")
-          if [ -z "$release_url" ]; then
-            echo "::error::asset '${asset_name}' not found in release '$tag'"
+          # Assert the manifest's declared URL points at THIS release tag's
+          # download path. We check the manifest URL string (not the asset's
+          # live download URL) because a *draft* release's live asset URL uses
+          # an `untagged-<hash>` path until publication, whereas the manifest
+          # already declares the eventual public `.../download/<tag>/<asset>`
+          # URL. This keeps the "manifest points at this exact tag+asset" check
+          # while letting verification run before the draft is flipped public.
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${asset_name}"
+          if [ "$manifest_url" != "$expected_url" ]; then
+            echo "::error::manifest URL ($manifest_url) does not point at release '$tag' (expected $expected_url)"
             exit 1
           fi
-          if [ "$release_url" != "$manifest_url" ]; then
-            echo "::error::manifest URL ($manifest_url) does not match release '$tag' asset URL ($release_url)"
+          # Confirm the named asset actually exists in the (possibly draft)
+          # release. `.name` is the gh --json asset field (gh has no
+          # `browser_download_url` field; it normalizes that to `url`).
+          asset_present=$(gh release view "$tag" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json assets \
+            --jq ".assets[] | select(.name == \"${asset_name}\") | .name")
+          if [ "$asset_present" != "$asset_name" ]; then
+            echo "::error::asset '${asset_name}' not found in release '$tag'"
             exit 1
           fi
           gh release download "$tag" \
