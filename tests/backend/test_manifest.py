@@ -23,15 +23,15 @@ from backend.db.manifest import (
     reset_cache,
 )
 
-# The VEP bundle v2.0.0 SHA-256 and exact size are filled in by the
-# cluster-side rebuild that produces vep_bundle.db (see
-# docs/bundle-release-runbook.md §3). Until that asset is published, the
-# manifest carries a sentinel SHA-256 of all zeros and the planned size
-# placeholder. These constants name those placeholders so the test
-# assertions are exact (per CodeRabbit feedback) and the future swap is
-# a single-line update.
-VEP_BUNDLE_SHA256_PLACEHOLDER = "0" * 64
-VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER = 600_000_000
+# The real VEP bundle v2.0.0 SHA-256 and exact size of the published
+# vep_bundle.db (see docs/bundle-release-runbook.md §3). These were filled
+# in by PR-0a (Phase D) once the cluster rebuild produced the asset and the
+# draft release was confirmed reachable; before that the manifest carried a
+# sentinel SHA-256 of all zeros and a planned size. Naming them keeps the
+# test assertions exact (per CodeRabbit feedback) and pins bundles/manifest.json
+# against accidental drift.
+VEP_BUNDLE_SHA256 = "9f645b2c6963e2a83e69c0b1e5bea777cb1bf20566d7c051cfda9b0fef6393bc"
+VEP_BUNDLE_SIZE_BYTES = 358_752_256
 
 SAMPLE_PAYLOAD: dict = {
     "schema_version": 1,
@@ -77,10 +77,10 @@ V2_PAYLOAD: dict = {
         },
         "vep_bundle": {
             "version": "v2.0.0",
-            "build_date": "2026-05-18",
+            "build_date": "2026-06-01",
             "url": "https://github.com/bioedcam/GenomeInsight/releases/download/bundle-v2.0.0/vep_bundle.db",
-            "sha256": VEP_BUNDLE_SHA256_PLACEHOLDER,
-            "size_bytes": VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER,
+            "sha256": VEP_BUNDLE_SHA256,
+            "size_bytes": VEP_BUNDLE_SIZE_BYTES,
             "min_app_version": "0.2.0",
         },
     },
@@ -399,10 +399,10 @@ class TestBundleV2:
         m = fetch_manifest()
         entry = m.bundles["vep_bundle"]
         assert entry.version == "v2.0.0"
-        assert entry.build_date == "2026-05-18"
+        assert entry.build_date == "2026-06-01"
         assert entry.url.endswith("/bundle-v2.0.0/vep_bundle.db")
-        assert entry.sha256 == VEP_BUNDLE_SHA256_PLACEHOLDER
-        assert entry.size_bytes == VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER
+        assert entry.sha256 == VEP_BUNDLE_SHA256
+        assert entry.size_bytes == VEP_BUNDLE_SIZE_BYTES
 
     def test_v2_min_app_version_round_trips(self, tmp_path: Path, monkeypatch):
         """`min_app_version` is parsed from the JSON entry and exposed on the dataclass.
@@ -613,11 +613,10 @@ class TestRepoManifest:
         vep = m.bundles["vep_bundle"]
         assert vep.version == "v2.0.0"
         assert vep.url.endswith("/bundle-v2.0.0/vep_bundle.db")
-        # Exact-equality vs the named placeholder until the cluster rebuild
-        # publishes the real asset; that change updates the constants above
-        # and this assertion stays the same.
-        assert vep.size_bytes == VEP_BUNDLE_SIZE_BYTES_PLACEHOLDER
-        assert vep.sha256 == VEP_BUNDLE_SHA256_PLACEHOLDER
+        # Exact-equality vs the real published asset values (PR-0a, Phase D);
+        # pins bundles/manifest.json against accidental rollback or drift.
+        assert vep.size_bytes == VEP_BUNDLE_SIZE_BYTES
+        assert vep.sha256 == VEP_BUNDLE_SHA256
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["bundles"]["vep_bundle"]["min_app_version"] == "0.2.0"
 
