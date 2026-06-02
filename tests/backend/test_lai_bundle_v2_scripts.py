@@ -318,6 +318,32 @@ class TestPhase06cParallel:
         assert "--cpus-per-task=64" in text
 
 
+class TestPhase07Metadata:
+    """07_write_metadata pulls the validation metrics into the bundle metadata.json.
+    Two prior bugs left it incomplete: it read the wrong accuracy field (so
+    accuracy_per_window_mean was null), and counted gnomix .pkl files (which the
+    npz/json re-export no longer ships, so window_count was 0). Lock in the fixes.
+    """
+
+    def test_reads_correct_accuracy_field(self) -> None:
+        text = (SCRIPTS_DIR / "07_write_metadata.py").read_text()
+        assert "mean_val_accuracy" in text  # the field 06e actually writes
+        assert "overall_accuracy" not in text  # the wrong field that returned null
+
+    def test_window_count_from_npz_not_pkl(self) -> None:
+        text = (SCRIPTS_DIR / "07_write_metadata.py").read_text()
+        # window_count must sum W from the re-exported metadata.npz, not glob *.pkl
+        assert "metadata.npz" in text
+        assert 'glob("gnomix_models/*/*.pkl")' not in text
+
+    def test_assemble_cp_is_force(self) -> None:
+        # Phase 07 re-run must overwrite the read-only files copied from read-only
+        # sources on a prior run; plain cp fails "Permission denied" on re-run.
+        text = (SCRIPTS_DIR / "07_assemble_bundle.sh").read_text()
+        assert "cp -f " in text
+        assert re.search(r'\bcp "\$', text) is None  # every cp is forced
+
+
 class TestGnomixPandasAppendShim:
     """gnomix's src/laidataset.py calls the pandas<2 ``DataFrame.append`` (removed
     in pandas 2.0) in the small-population ``include_all`` path (fires for tiny

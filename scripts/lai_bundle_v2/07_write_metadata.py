@@ -13,6 +13,8 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
+import numpy as np
+
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -48,17 +50,23 @@ def main() -> int:
     site_map = bundle / "liftover" / "array_site_mapping.tsv"
     site_count = sum(1 for _ in site_map.open()) if site_map.exists() else None
 
-    # Window count: total .pkl files across gnomix_models/ (proxy; the real
-    # count is recorded by Gnomix in its own config.yaml — copied into the
-    # per-chrom subdirs).
-    window_count = sum(1 for _ in bundle.glob("gnomix_models/*/*.pkl"))
+    # Window count: total LAI windows across the genome = sum of each chrom
+    # model's W, stored in the re-exported gnomix_models/<chr>/metadata.npz.
+    # (The bundle ships the dependency-free npz/json model, not gnomix .pkl, so
+    # the old `*.pkl` proxy counted nothing.)
+    window_count = 0
+    for meta_npz in sorted(bundle.glob("gnomix_models/*/metadata.npz")):
+        try:
+            window_count += int(np.load(meta_npz, allow_pickle=False)["W"])
+        except (OSError, KeyError, ValueError):
+            pass
 
     # Validation metrics — pulled from Phase 6 reports if present.
     accuracy = phasing = None
     lai_report = args.validation_dir / "lai_accuracy_report.json"
     phase_report = args.validation_dir / "phasing_accuracy_report.json"
     if lai_report.exists():
-        accuracy = json.loads(lai_report.read_text()).get("overall_accuracy")
+        accuracy = json.loads(lai_report.read_text()).get("mean_val_accuracy")
     if phase_report.exists():
         phasing = json.loads(phase_report.read_text()).get("mean_switch_error_rate")
 
