@@ -33,6 +33,15 @@ from backend.db.manifest import (
 VEP_BUNDLE_SHA256 = "9f645b2c6963e2a83e69c0b1e5bea777cb1bf20566d7c051cfda9b0fef6393bc"
 VEP_BUNDLE_SIZE_BYTES = 358_752_256
 
+# The real LAI bundle v2.0.0 SHA-256 and exact size of the published
+# genomeinsight_lai_bundle_v2.0.0.tar.gz. Filled in by PR-0c (Phase D, Step 32)
+# once the cluster rebuild produced the tarball and the draft release was
+# confirmed reachable; before that the manifest carried the v1.1 asset values.
+# Pins bundles/manifest.json against accidental rollback/drift and must
+# byte-match DATABASES["lai_bundle"].sha256 (Plan §9 Done criterion #4).
+LAI_BUNDLE_SHA256 = "96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734"
+LAI_BUNDLE_SIZE_BYTES = 1_710_542_766
+
 SAMPLE_PAYLOAD: dict = {
     "schema_version": 1,
     "generated_at": "2026-05-08T00:00:00Z",
@@ -619,6 +628,24 @@ class TestRepoManifest:
         assert vep.sha256 == VEP_BUNDLE_SHA256
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["bundles"]["vep_bundle"]["min_app_version"] == "0.2.0"
+
+    def test_repo_manifest_lai_bundle_is_v2_0_0(self, monkeypatch):
+        """Pins Step 32's PR-0c manifest update against accidental rollback."""
+        repo_root = Path(__file__).resolve().parents[2]
+        path = repo_root / "bundles" / "manifest.json"
+        if not path.is_file():
+            pytest.skip("bundles/manifest.json not present in this checkout")
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        m = fetch_manifest()
+        lai = m.bundles["lai_bundle"]
+        assert lai.version == "v2.0.0"
+        assert lai.build_date == "2026-06-02"
+        assert lai.url.endswith("/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz")
+        # Exact-equality vs the real published asset values (PR-0c, Phase D);
+        # pins bundles/manifest.json against accidental rollback or drift.
+        assert lai.size_bytes == LAI_BUNDLE_SIZE_BYTES
+        assert lai.sha256 == LAI_BUNDLE_SHA256
 
 
 # ── committed v2 manifest fixture (Step 18 / Plan §16.1) ──────────────

@@ -3,11 +3,11 @@
   "generated_at": "2026-05-18T00:00:00Z",
   "bundles": {
     "lai_bundle": {
-      "version": "v1.1",
-      "build_date": "2026-04-07",
-      "url": "https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v1.1.0/genomeinsight_lai_bundle_v1.1.tar.gz",
-      "sha256": "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e",
-      "size_bytes": 523801111
+      "version": "v2.0.0",
+      "build_date": "2026-06-02",
+      "url": "https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz",
+      "sha256": "96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734",
+      "size_bytes": 1710542766
     },
     "vep_bundle": {
       "version": "v2.0.0",

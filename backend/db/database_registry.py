@@ -347,11 +347,15 @@ DATABASES: dict[str, DatabaseInfo] = {
         display_name="LAI Bundle (Chromosome Painting)",
         description=(
             "Local ancestry inference models for chromosome-level ancestry painting. "
-            "Optional — requires ~500 MB and Java 8+."
+            "Optional — requires ~1.6 GB and Java 8+."
         ),
-        url="https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v1.1.0/genomeinsight_lai_bundle_v1.1.tar.gz",
+        url="https://github.com/bioedcam/GenomeInsight/releases/download/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz",
         filename="lai_bundle.tar.gz",
-        expected_size_bytes=523_801_111,  # ~500 MB
+        # PR-0c (Phase D, Step 32): real v2.0.0 tarball size + SHA-256. The SHA
+        # MUST byte-match bundles.lai_bundle.sha256 (Phase E1 smoke + nightly
+        # cache pin on registry/manifest agreement — Plan §9 Done criterion #4).
+        expected_size_bytes=1_710_542_766,  # ~1.6 GB (v2.0.0 union bundle)
+        sha256="96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734",
         required=False,
         phase=3,
         build_mode="download",

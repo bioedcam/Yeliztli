@@ -21,12 +21,13 @@ from backend.db import manifest as manifest_module
 from backend.db.database_registry import DATABASES, _extract_lai_bundle
 from backend.db.tables import database_versions, reference_metadata
 
-# The canonical LAI v1.1 bundle SHA-256.  Phase 0i (PR-0z) resets the
+# The canonical LAI v1.1 bundle SHA-256.  Phase 0i (PR-0z) reset the
 # registry-side ``DATABASES["lai_bundle"].sha256`` to ``None`` because that
-# leftover value never matched the manifest placeholder; PR-0c restores a real
-# v2.0.0 SHA once the rebuilt tarball is published.  Until then this constant
-# only documents the value the manifest fixtures below carry — it is NOT the
-# registry fallback (see ``test_lai_bundle_registry_sha256_reset_for_phase_0i``).
+# leftover value never matched the manifest placeholder; Phase D/Step 32
+# (PR-0c) then re-set it to the real v2.0.0 SHA (see
+# ``test_lai_bundle_registry_sha256_set_for_phase_d_pr0c``).  This constant only
+# documents the value the v1.1 manifest fixtures below carry — it is NOT the
+# registry SHA.
 LAI_V1_1_SHA256 = "959ed0fd9ebe2ad8fa542776a59ce73072d928c7ce59839ea81d0f1e78a5c18e"
 
 # ──────────────────────────────────────────────────────────────────────
@@ -262,20 +263,34 @@ def test_extract_succeeds_when_reference_db_missing(
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Phase 0i (PR-0z): LAI bundle registry sha256 reset to None
+# Phase D (PR-0c): LAI bundle registry sha256 set to the real v2.0.0 SHA
 # ──────────────────────────────────────────────────────────────────────
 
+# The published LAI bundle v2.0.0 SHA-256 (registry side). Must byte-match
+# bundles.lai_bundle.sha256 — see ``test_lai_bundle_registry_sha_matches_manifest``.
+LAI_V2_0_0_SHA256 = "96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734"
 
-def test_lai_bundle_registry_sha256_reset_for_phase_0i() -> None:
-    """Phase 0i resets ``DATABASES["lai_bundle"].sha256`` to ``None``.
 
-    The previous hardcoded value (``LAI_V1_1_SHA256``) was a leftover from an
-    unpublished build and did not match the manifest placeholder, so it would
-    mask a registry/manifest mismatch.  PR-0c re-sets a real SHA once the
-    v2.0.0 tarball is published; until then the runtime integrity-checks
-    against ``manifest_entry.sha256``.
+def test_lai_bundle_registry_sha256_set_for_phase_d_pr0c() -> None:
+    """Phase D/Step 32 (PR-0c) re-sets ``DATABASES["lai_bundle"].sha256``.
+
+    Phase 0i (PR-0z) had reset it to ``None`` because the old ``LAI_V1_1_SHA256``
+    leftover never matched the manifest placeholder. PR-0c now restores the real
+    v2.0.0 SHA-256 once the ``lai-bundle-v2.0.0`` tarball is published, so the
+    registry and manifest stay byte-locked.
     """
     entry = DATABASES["lai_bundle"]
-    assert entry.sha256 is None
+    assert entry.sha256 == LAI_V2_0_0_SHA256
     assert entry.build_mode == "download"
     assert entry.filename == "lai_bundle.tar.gz"
+
+
+def test_lai_bundle_registry_sha_matches_manifest() -> None:
+    """Plan §9 Done criterion #4: the registry SHA-256 must byte-match the
+    committed ``bundles/manifest.json`` ``lai_bundle.sha256`` exactly."""
+    repo_manifest = Path(__file__).resolve().parents[2] / "bundles" / "manifest.json"
+    if not repo_manifest.is_file():
+        pytest.skip("bundles/manifest.json not present in this checkout")
+    payload = json.loads(repo_manifest.read_text(encoding="utf-8"))
+    manifest_sha = payload["bundles"]["lai_bundle"]["sha256"]
+    assert DATABASES["lai_bundle"].sha256 == manifest_sha

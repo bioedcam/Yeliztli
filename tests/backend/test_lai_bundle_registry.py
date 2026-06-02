@@ -38,11 +38,12 @@ class TestLAIBundleRegistry:
         assert db.name == "lai_bundle"
         assert db.display_name == "LAI Bundle (Chromosome Painting)"
         assert db.filename == "lai_bundle.tar.gz"
-        # Current published asset is v1.1 (523 MB), renamed to the lai-bundle-v1.1.0
-        # release in §0h. Phase D/Step 32 bumps this to the ~750 MB v2.0.0 union
-        # bundle (23andMe v5 ∪ AncestryDNA v2.0, ~840k sites — Plan §6.4) once
-        # lai-bundle-v2.0.0 is actually published.
-        assert db.expected_size_bytes == 523_801_111
+        # Phase D/Step 32 (PR-0c) bumped this from the v1.1 asset (523 MB) to the
+        # published v2.0.0 union bundle (23andMe v5 ∪ AncestryDNA v2.0, 1,941,023
+        # autosomal sites — Plan §6.4). The registry SHA-256 must byte-match
+        # bundles.lai_bundle.sha256 (Plan §9 Done criterion #4).
+        assert db.expected_size_bytes == 1_710_542_766
+        assert db.sha256 == ("96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734")
         assert db.build_mode == "download"
         assert db.target_db == "standalone"
         assert db.phase == 3
@@ -54,11 +55,11 @@ class TestLAIBundleRegistry:
 
     def test_lai_bundle_url_set(self):
         db = DATABASES["lai_bundle"]
-        # Current published asset: lai-bundle-v1.1.0 (renamed from v1.1 in §0h).
-        # Phase D/Step 32 repoints this to the lai-bundle-v2.0.0 release once published.
+        # Phase D/Step 32 (PR-0c) repointed this from lai-bundle-v1.1.0 to the
+        # published lai-bundle-v2.0.0 release asset.
         assert db.url == (
             "https://github.com/bioedcam/GenomeInsight/releases/download/"
-            "lai-bundle-v1.1.0/genomeinsight_lai_bundle_v1.1.tar.gz"
+            "lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz"
         )
 
     def test_get_database_returns_lai_bundle(self):
