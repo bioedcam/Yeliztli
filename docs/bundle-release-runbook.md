@@ -114,8 +114,9 @@ vep \
   --force_overwrite
 ```
 
-Wall-clock on the v2.0.0 catalog (~840k sites) is ~30 minutes on the
-`mondragonlab` cluster nodes; tune `--fork` if running on a beefier host.
+Wall-clock on the v2.0.0 catalog (~2.0M union sites; ~1.94M rs* fed to VEP) is
+~15–30 minutes (measured ~16 min with `--fork 12` on a 24-core host; the offline
+path needs no cluster); tune `--fork` if running on a beefier host.
 Compress the output with `bgzip vep_output.vcf` if you want a smaller
 intermediate; both plain and gzipped VCF are accepted by step 3.4.
 
