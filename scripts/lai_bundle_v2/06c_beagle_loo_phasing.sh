@@ -48,7 +48,13 @@ while IFS=$'\t' read -r child father mother pop; do
       bcftools index -t "$ref_loo"
     fi
 
-    genetic_map="$RAW_DIR/genetic_maps_grch38/plink.chr${chr}.GRCh38.map"
+    # Beagle wants the 4-col plink map whose chrom field matches the panel's
+    # chr-prefixed contigs (gnomAD HGDP+1KG shapeit5 = 'chr22'), i.e. the
+    # chr_in_chrom_field variant 'plink.chrchrN.GRCh38.map' (filename carries a
+    # literal double 'chr'). This is the SAME file the runtime loads from the
+    # shipped bundle (backend/analysis/lai_runner.py: genetic_maps/plink.chrchrN.GRCh38.map).
+    # The old flat path genetic_maps_grch38/plink.chrN.GRCh38.map never existed.
+    genetic_map="$RAW_DIR/genetic_maps_grch38/chr_in_chrom_field/plink.chrchr${chr}.GRCh38.map"
     require_file "$genetic_map"
 
     phase_log "Beagle: ${child} chr${chr}"

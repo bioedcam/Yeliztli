@@ -5,7 +5,10 @@
 # Source: gs://gcp-public-data--gnomad/resources/hgdp_1kg/phased_haplotypes_v2
 # Output: $RAW_DIR/hgdp1kgp_chr{1..22}.filtered.SNV_INDEL.phased.shapeit5.bcf{,.csi}
 #         $RAW_DIR/gnomad_meta_updated.tsv
-#         $RAW_DIR/genetic_maps_grch38/plink.chr{1..22}.GRCh38.map
+#         $RAW_DIR/genetic_maps_grch38/{chr_in_chrom_field,no_chr_in_chrom_field}/plink.chr*.GRCh38.map
+#           (the plink.GRCh38.map.zip unpacks into these two chrom-naming variants;
+#            Beagle/phase 06c + the shipped bundle use chr_in_chrom_field/plink.chrchrN.GRCh38.map)
+#         $RAW_DIR/genetic_maps_gnomix/chr{1..22}.map  (3-col TAB chrom/pos/cM; gnomix phase 05)
 #
 # Plan §6.4 reuses the v1.1 download for v2 unless gnomAD republishes the
 # panel — record any version swap in docs/lai-bundle-release-runbook.md.

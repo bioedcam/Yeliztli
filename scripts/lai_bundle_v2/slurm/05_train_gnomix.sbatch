@@ -1,0 +1,42 @@
+#!/bin/bash
+# Phase 5 (gnomix training) as a per-chromosome SLURM array — one task trains one
+# chromosome, so all ~22 train concurrently instead of sequentially (the rebuild's
+# long pole). Submitted by run_rebuild_slurm.sh with an afterok dependency on prep.
+#
+# Tunables (override on the sbatch command line or via run_rebuild_slurm.sh):
+#   --array=1-22[%N]   chromosomes (N = max concurrent; omit %N to let SLURM pack)
+#   --cpus-per-task    cores per chromosome (also caps gnomix n_cores — see below)
+#   --partition        gpu (one,two = 192c) | compute (zero = 128c)
+#
+#SBATCH --job-name=lai_gnomix
+#SBATCH --partition=gpu
+#SBATCH --array=1-22
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=48:00:00
+#SBATCH --output=lai_gnomix_chr%a_%A.out
+
+set -euo pipefail
+
+# shellcheck source=/dev/null
+source "${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+conda activate "${CONDA_ENV:-lai_bundle}"
+
+SCRIPTS_DIR="${LAI_SCRIPTS_DIR:-$SLURM_SUBMIT_DIR}"
+# env.sh resolves GNOMIX_DIR / GNOMIX_DIR_INSTALL from WORKDIR (inherited via
+# sbatch --export=ALL). It is also sourced again inside 05_train_gnomix.sh.
+# shellcheck source=../env.sh
+source "$SCRIPTS_DIR/env.sh"
+
+chr="$SLURM_ARRAY_TASK_ID"
+ncores="${SLURM_CPUS_PER_TASK:-8}"
+
+# Per-task gnomix config with n_cores pinned to this task's core allocation, so
+# concurrent array tasks don't each grab the whole node (gnomix defaults n_cores
+# to all CPUs it sees). Unique filename per chromosome → no write race.
+cfg="$GNOMIX_DIR/config_slurm_chr${chr}.yaml"
+sed "s/^\([[:space:]]*\)n_cores:.*/\1n_cores: ${ncores}/" \
+  "$GNOMIX_DIR_INSTALL/config.yaml" > "$cfg"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gnomix array task: chr${chr}, ${ncores} cores, config=$cfg"
+CHROMS="$chr" GNOMIX_CONFIG="$cfg" bash "$SCRIPTS_DIR/05_train_gnomix.sh"

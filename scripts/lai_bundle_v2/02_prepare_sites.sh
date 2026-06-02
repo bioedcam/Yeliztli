@@ -15,7 +15,10 @@
 #   $SITES_DIR/array_sites_grch37.tsv      — copy of input columns chr<TAB>pos<TAB>rsid
 #   $SITES_DIR/array_sites_grch37.bed      — BED for liftover (chr-prefixed, 0-based)
 #   $LIFTOVER_DIR/array_sites_grch38.bed   — lifted BED
-#   $LIFTOVER_DIR/array_sites_grch38_regions.bed — bcftools -R regions file
+#   $LIFTOVER_DIR/array_sites_grch38_regions.tsv — bcftools -R regions file
+#       (1-based tab-delimited CHROM/BEG/END; MUST NOT use a .bed suffix, or
+#        bcftools -R parses it as 0-based half-open and every 'pos pos' line
+#        becomes a zero-width interval matching nothing -> 0 variants/chrom)
 #   $LIFTOVER_DIR/rsid_to_grch38.tsv       — runtime liftover lookup
 #   $LIFTOVER_DIR/hg19ToHg38.over.chain.gz — chain file (cached)
 
@@ -66,9 +69,13 @@ mapped=$(wc -l < array_sites_grch38.bed)
 unmapped=$(wc -l < array_sites_grch38.bed.unmap 2>/dev/null || echo 0)
 phase_log "lifted sites: $mapped, unmapped: $unmapped"
 
+# 1-based tab-delimited 'CHROM BEG END' for bcftools -R. The file MUST end in
+# .tsv (NOT .bed): a .bed suffix makes bcftools treat coords as 0-based
+# half-open, turning each 'pos pos' line into a zero-width interval that
+# matches no variants (Phase 03 would emit 0 variants/chrom).
 awk -F'\t' '{print $1"\t"$3"\t"$3}' array_sites_grch38.bed \
   | sort -k1,1V -k2,2n \
-  > array_sites_grch38_regions.bed
+  > array_sites_grch38_regions.tsv
 
 # rsID → GRCh38 (chr, pos) — feeds runtime liftover and the
 # bundle's liftover/array_site_mapping.tsv (Plan §6 phase 7a layout).

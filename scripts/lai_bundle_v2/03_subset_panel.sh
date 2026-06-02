@@ -3,7 +3,7 @@
 #
 # Input:
 #   $RAW_DIR/hgdp1kgp_chr{N}.filtered.SNV_INDEL.phased.shapeit5.bcf (Phase 1)
-#   $LIFTOVER_DIR/array_sites_grch38_regions.bed                    (Phase 2)
+#   $LIFTOVER_DIR/array_sites_grch38_regions.tsv                    (Phase 2)
 #
 # Output:
 #   $PANEL_DIR/ref_panel_chr{N}.vcf.gz{,.tbi}    — per-chrom subset
@@ -21,9 +21,9 @@ PHASE_NAME=03_subset_panel
 source "$SCRIPT_DIR/env.sh"
 
 require bcftools
-require_file "$LIFTOVER_DIR/array_sites_grch38_regions.bed"
+require_file "$LIFTOVER_DIR/array_sites_grch38_regions.tsv"
 
-phase_log "subsetting panel to union site list (regions: $LIFTOVER_DIR/array_sites_grch38_regions.bed)"
+phase_log "subsetting panel to union site list (regions: $LIFTOVER_DIR/array_sites_grch38_regions.tsv)"
 
 : > "$LOG_DIR/subset_counts.log"
 
@@ -40,7 +40,7 @@ for chr in $CHROMS; do
   else
     phase_log "chr${chr}: subsetting"
     bcftools view \
-      -R "$LIFTOVER_DIR/array_sites_grch38_regions.bed" \
+      -R "$LIFTOVER_DIR/array_sites_grch38_regions.tsv" \
       -m2 -M2 \
       -v snps \
       "$bcf_in" \

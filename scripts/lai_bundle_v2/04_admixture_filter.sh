@@ -7,7 +7,7 @@
 #
 # Output:
 #   $ADMIX_DIR/ref_panel_pruned.{bed,bim,fam}  — LD-pruned PLINK files
-#   $ADMIX_DIR/admix_K{7,12,20}.Q              — ancestry proportions
+#   $ADMIX_DIR/admix_K{7,12,20}.K{7,12,20}.s${ADMIXTURE_SEED}.Q — ancestry proportions (fastmixture naming)
 #   $ADMIX_DIR/sample_map.txt                  — sample_id<TAB>population (Gnomix input)
 #   $ADMIX_DIR/single_ancestry_samples.tsv     — filtered table
 #   $ADMIX_DIR/excluded_admixed_samples.tsv    — audit log
@@ -53,7 +53,9 @@ fi
 phase_log "LD-pruned SNP count: $(wc -l < ref_panel_pruned.bim)"
 
 for K in $ADMIXTURE_K_LIST; do
-  if [ -s "admix_K${K}.Q" ]; then
+  # fastmixture writes <out>.K<k>.s<seed>.Q (e.g. admix_K7.K7.s42.Q), NOT
+  # admix_K7.Q — match the real output name or this guard never fires.
+  if [ -s "admix_K${K}.K${K}.s${ADMIXTURE_SEED}.Q" ]; then
     phase_log "fastmixture K=$K already complete, skipping"
     continue
   fi
@@ -68,7 +70,7 @@ done
 
 phase_log "filtering to single-ancestry individuals (>= ${SINGLE_ANCESTRY_THRESHOLD})"
 python "$SCRIPT_DIR/04c_filter_single_ancestry.py" \
-  --q-matrix "$ADMIX_DIR/admix_K7.Q" \
+  --q-matrix "$ADMIX_DIR/admix_K7.K7.s${ADMIXTURE_SEED}.Q" \
   --fam "$ADMIX_DIR/ref_panel_pruned.fam" \
   --meta "$RAW_DIR/gnomad_meta_updated.tsv" \
   --threshold "$SINGLE_ANCESTRY_THRESHOLD" \

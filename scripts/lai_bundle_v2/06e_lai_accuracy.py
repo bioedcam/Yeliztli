@@ -1,94 +1,93 @@
 #!/usr/bin/env python3
-"""LAI accuracy on held-out single-ancestry samples.
+"""LAI accuracy from the gnomix per-chromosome training logs.
 
-For every Gnomix-predicted window of a held-out sample, score whether the
-predicted population matches the sample's true (Phase 4) population label.
+Matches the proven v1.1 method exactly: gnomix prints its held-out per-window
+validation accuracy as `Estimated val accuracy: NN.NN%` to each
+`gnomix_train_chr{N}.log` that Phase 5 produces (via `tee`). v1.1 read the
+>=0.88 mean per-window LAI accuracy gate straight from those logs
+(`grep "val accuracy" gnomix_train_chr*.log` -> mean ~88%, range 85.6-89.8%),
+NOT from a separate inference pass.
 
-Expected upstream:
-  - Beagle-phased held-out sample VCFs (chrN) under --validation-dir
-  - Gnomix inference results placed as lai_<sample>_chr{N}.tsv in --validation-dir
-    (Gnomix runtime invocation lives in backend/analysis/gnomix_inference.py;
-    for cluster validation it's typically driven by 06c-style scripts that
-    reuse the Beagle output.)
+(Earlier this script globbed `lai_<sample>_chr{N}.tsv` gnomix-inference output
+that no phase produces -> it always found 0 files -> accuracy 0.0 -> the gate
+could never pass. Rewritten 2026-06-01 against the v1.1 reference, Step 25.)
 
 Output JSON shape:
 {
-  "per_sample": [{sample, true_pop, n_windows, correct, accuracy}, ...],
-  "overall_accuracy": <float>,
-  "per_population": {pop: {n_windows: int, correct: int, accuracy: float}}
+  "per_chrom": [{"chrom": "1", "val_accuracy": 0.8799, "log": "..."}, ...],
+  "mean_val_accuracy": <float>,
+  "n_chrom": <int>,
+  "missing_chroms": [<str>, ...],
+  "min_chrom": {"chrom": ..., "val_accuracy": ...} | null,
+  "target": <float>,
+  "passes": <bool>
 }
 
-Plan §6.4 phase 6e — logic unchanged from v1.1.
+Plan §6.4 phase 6e.
 """
 from __future__ import annotations
 
 import argparse
 import json
-from collections import defaultdict
+import re
+import shlex
 from pathlib import Path
 
-import pandas as pd
+# gnomix emits e.g. "Estimated val accuracy: 86.88%" (also "...: 85.7%").
+_RE_VAL_ACC = re.compile(r"Estimated val accuracy:\s*([0-9.]+)\s*%")
+
+
+def parse_val_accuracy(log_text: str) -> float | None:
+    """Return the last `Estimated val accuracy: NN.NN%` as a 0-1 fraction, or None.
+
+    The last match wins so a re-run that appends to the same log reflects the
+    final model.
+    """
+    matches = _RE_VAL_ACC.findall(log_text)
+    if not matches:
+        return None
+    return float(matches[-1]) / 100.0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gnomix-dir", required=True, type=Path)
-    parser.add_argument("--validation-dir", required=True, type=Path)
-    parser.add_argument("--single-ancestry", required=True, type=Path,
-                        help="single_ancestry_samples.tsv from Phase 4")
+    parser.add_argument("--log-dir", required=True, type=Path,
+                        help="dir holding gnomix_train_chr{N}.log (Phase 5 output)")
+    parser.add_argument("--chroms", required=True, type=str,
+                        help="space-separated chromosomes, e.g. '1 2 ... 22'")
     parser.add_argument("--out-report", required=True, type=Path)
+    parser.add_argument("--min-accuracy", type=float, default=0.88,
+                        help="mean per-window LAI accuracy gate (Plan §6.4: 0.88)")
     args = parser.parse_args()
 
-    single = pd.read_csv(args.single_ancestry, sep="\t")
-    truth = dict(zip(single["IID"].astype(str), single["genetic_region"]))
-
-    per_sample = []
-    pop_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"n_windows": 0, "correct": 0})
-    total_windows = 0
-    total_correct = 0
-
-    for tsv in sorted(args.validation_dir.glob("lai_*_chr*.tsv")):
-        # lai_<sample>_chr<N>.tsv — Gnomix output, one row per window.
-        stem = tsv.stem  # lai_<sample>_chr<N>
-        sample = stem.split("_chr")[0].removeprefix("lai_")
-        true_pop = truth.get(sample)
-        if true_pop is None:
+    chroms = shlex.split(args.chroms)
+    per_chrom = []
+    missing = []
+    for chrom in chroms:
+        log = args.log_dir / f"gnomix_train_chr{chrom}.log"
+        acc = parse_val_accuracy(log.read_text()) if log.is_file() else None
+        if acc is None:
+            missing.append(chrom)
             continue
-        df = pd.read_csv(tsv, sep="\t")
-        if df.empty:
-            continue
-        windows = len(df) * 2  # diploid
-        hap1_correct = (df.get("hap1_label") == true_pop).sum()
-        hap2_correct = (df.get("hap2_label") == true_pop).sum()
-        correct = int(hap1_correct + hap2_correct)
-        per_sample.append({
-            "sample": sample,
-            "true_pop": true_pop,
-            "n_windows": windows,
-            "correct": correct,
-            "accuracy": correct / windows if windows else 0.0,
-        })
-        pop_stats[true_pop]["n_windows"] += windows
-        pop_stats[true_pop]["correct"] += correct
-        total_windows += windows
-        total_correct += correct
+        per_chrom.append({"chrom": chrom, "val_accuracy": acc, "log": str(log)})
 
-    per_population = {
-        pop: {
-            "n_windows": v["n_windows"],
-            "correct": v["correct"],
-            "accuracy": v["correct"] / v["n_windows"] if v["n_windows"] else 0.0,
-        }
-        for pop, v in pop_stats.items()
-    }
+    accs = [r["val_accuracy"] for r in per_chrom]
+    mean_acc = sum(accs) / len(accs) if accs else 0.0
+    min_chrom = min(per_chrom, key=lambda r: r["val_accuracy"]) if per_chrom else None
     report = {
-        "per_sample": per_sample,
-        "overall_accuracy": total_correct / total_windows if total_windows else 0.0,
-        "per_population": per_population,
+        "per_chrom": per_chrom,
+        "mean_val_accuracy": mean_acc,
+        "n_chrom": len(per_chrom),
+        "missing_chroms": missing,
+        "min_chrom": min_chrom,
+        "target": args.min_accuracy,
+        "passes": bool(accs) and not missing and mean_acc >= args.min_accuracy,
     }
     args.out_report.write_text(json.dumps(report, indent=2))
-    print(f"overall LAI accuracy: {report['overall_accuracy']:.4f}")
-    print("target (v1.1 baseline): >= 0.88 mean per-window")
+    print(f"mean per-window LAI (gnomix val) accuracy: {mean_acc:.4f} over {len(accs)} chrom")
+    if missing:
+        print(f"WARNING: no val accuracy parsed for chrom(s): {' '.join(missing)}")
+    print(f"target (v1.1 baseline): >= {args.min_accuracy}")
     return 0
 
 

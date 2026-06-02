@@ -173,10 +173,42 @@ Phases (Plan §6.4):
 | 07    | `07_assemble_bundle.sh`         | ~30 min                      |
 
 Phases 02 and 03 are the only steps that differ from the v1.1 build — they
-now operate on the union catalog (~840k autosomal sites) instead of the
+now operate on the union catalog (~2.0M sites; ~1.94M autosomal) instead of the
 23andMe v5 catalog (~605k). Phases 04–07 are byte-identical to v1.1
 provided the random seed (`ADMIXTURE_SEED=42`) is unchanged (Plan §6.3
 step 4 — the runbook asserts this before publication).
+
+**Phase 05 runs gnomix in its own conda env.** gnomix needs `sklearn_crfsuite`/
+`xgboost`, which the `lai_bundle` env lacks; `05_train_gnomix.sh` invokes it via
+`conda run -n $GNOMIX_ENV` (default `gnomix`), so the rest of the pipeline stays
+in `lai_bundle`. **Phase 06 needs the 1000G pedigree:** place
+`20130606_g1k.ped` at `~/lai_bundle_v2/06_validation/` (or set `G1K_PED`).
+
+### 6a. SLURM submission (parallel — recommended for the full run)
+
+`run_rebuild_slurm.sh` submits the rebuild as a 3-job SLURM DAG chained by
+`afterok` dependencies, with **phase 05 (gnomix training, the long pole) as a
+per-chromosome job array** so ~22 chromosomes train concurrently instead of
+sequentially:
+
+```bash
+ssh two
+conda activate lai_bundle           # submitter env; jobs re-source conda
+UNION_CATALOG_TSV=~/lai_bundle_v2/00_raw_downloads/union_sites.tsv \
+WORKDIR=~/lai_bundle_v2 \
+G1K_PED=~/lai_bundle_v2/06_validation/20130606_g1k.ped \
+  bash ~/lai_bundle_v2/scripts/run_rebuild_slurm.sh
+#   prep   (02 03 04)  -> job N
+#   gnomix (05 array)  -> job N+1  (after N)
+#   finish (06 07)     -> job N+2  (after N+1)
+# Watch: squeue -j N,N+1,N+2 ; logs under ~/lai_bundle_v2/logs/
+```
+
+Tunables: `SLURM_PARTITION` (`gpu` = one,two/192c [default] | `compute` = zero/128c),
+`GNOMIX_CPUS` (cores per chromosome; also caps gnomix `n_cores`), `GNOMIX_ARRAY`
+(e.g. `1-22%11` to throttle concurrency), `CONDA_SH`, `CONDA_ENV`, `GNOMIX_ENV`.
+The array parallelizes phase 05 from ~4–12 h sequential down to roughly the
+slowest single chromosome (× the number of waves once cores are saturated).
 
 ---
 

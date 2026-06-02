@@ -30,7 +30,11 @@ mkdir -p phasing_panel genetic_maps gnomix_models liftover beagle metadata
 for chr in $CHROMS; do
   cp "$PANEL_DIR/ref_panel_chr${chr}.vcf.gz" phasing_panel/
   cp "$PANEL_DIR/ref_panel_chr${chr}.vcf.gz.tbi" phasing_panel/
-  cp "$RAW_DIR/genetic_maps_grch38/plink.chr${chr}.GRCh38.map" genetic_maps/ || true
+  # Ship the chr_in_chrom_field plink map the runtime loads as
+  # genetic_maps/plink.chrchrN.GRCh38.map (backend/analysis/lai_runner.py).
+  # No `|| true`: a missing source must fail loudly, not silently ship an empty
+  # genetic_maps/ dir (the old flat path genetic_maps_grch38/plink.chrN... did exactly that).
+  cp "$RAW_DIR/genetic_maps_grch38/chr_in_chrom_field/plink.chrchr${chr}.GRCh38.map" genetic_maps/
   mkdir -p "gnomix_models/chr${chr}"
   cp -r "$GNOMIX_DIR/output_chr${chr}/." "gnomix_models/chr${chr}/"
 done

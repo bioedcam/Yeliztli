@@ -19,13 +19,22 @@ require python
 require bcftools
 require java
 require_file "$BEAGLE_JAR"
+require_file "$G1K_PED"
 
 cd "$VALIDATION_DIR"
 
-phase_log "identifying trio children from metadata"
+# Panel sample list (mirrors v1.1 vcf_samples.txt) — same samples on every chrom,
+# so query the first requested chromosome's subset.
+first_chr="${CHROMS%% *}"
+phase_log "listing panel samples from chr${first_chr}"
+bcftools query -l "$PANEL_DIR/ref_panel_chr${first_chr}.vcf.gz" \
+  > "$VALIDATION_DIR/vcf_samples.txt"
+
+phase_log "identifying trios from the 1000G pedigree ∩ panel"
 python "$SCRIPT_DIR/06a_identify_trios.py" \
+  --ped "$G1K_PED" \
+  --panel-samples "$VALIDATION_DIR/vcf_samples.txt" \
   --meta "$RAW_DIR/gnomad_meta_updated.tsv" \
-  --single-ancestry "$ADMIX_DIR/single_ancestry_samples.tsv" \
   --out-trios "$VALIDATION_DIR/trio_children.txt" \
   --out-pedigree "$VALIDATION_DIR/trio_pedigree.tsv"
 
@@ -58,11 +67,14 @@ python "$SCRIPT_DIR/06d_phasing_accuracy.py" \
   --validation-dir "$VALIDATION_DIR" \
   --out-report "$VALIDATION_DIR/phasing_accuracy_report.json"
 
-phase_log "scoring LAI accuracy against held-out single-ancestry samples"
+# LAI accuracy = mean of gnomix's per-chrom held-out "Estimated val accuracy"
+# (the >=0.88 gate), parsed from the Phase-5 gnomix_train_chr{N}.log files — the
+# proven v1.1 method (`grep "val accuracy" gnomix_train_chr*.log`). NOT a separate
+# inference pass (the prior 06e globbed inference TSVs no phase produces).
+phase_log "scoring LAI accuracy from gnomix per-chromosome training logs"
 python "$SCRIPT_DIR/06e_lai_accuracy.py" \
-  --gnomix-dir "$GNOMIX_DIR" \
-  --validation-dir "$VALIDATION_DIR" \
-  --single-ancestry "$ADMIX_DIR/single_ancestry_samples.tsv" \
+  --log-dir "$LOG_DIR" \
+  --chroms "$CHROMS" \
   --out-report "$VALIDATION_DIR/lai_accuracy_report.json"
 
 phase_log "phase 6 complete — bio-validator: confirm both accuracy reports clear targets before phase 7"
