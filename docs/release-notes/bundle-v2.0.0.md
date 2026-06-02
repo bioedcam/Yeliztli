@@ -3,15 +3,15 @@
 First bundle built from the union of the 23andMe v5 and AncestryDNA v2.0 site
 catalogs.
 
-- **Catalog source**: union of 23andMe v5 + AncestryDNA v2.0 (~840k sites, GRCh37)
-- **Catalog SHA-256**: `<filled by Phase D>` (`union_sites_report.json::sha256_output`)
-- **Site count**: `<filled by Phase D>` (`union_sites_report.json::union_count`; rs-only slice = `rs_count`)
+- **Catalog source**: union of 23andMe v5 + AncestryDNA v2.0 (~2.0M sites, GRCh37)
+- **Catalog SHA-256**: `544295b6813fb5a288e1824f4ab9e29824dd70ebc5027b9d2db8fdbbd3536317` (`union_sites_report.json::sha256_output`)
+- **Site count**: 2,008,131 (`union_sites_report.json::union_count`; rs-only slice = `rs_count` = 1,941,528)
 - **Ensembl version**: 112
-- **Build date**: 2026-05-18
-- **Schema version**: 2
-- **Bundle SHA-256**: `<filled by Phase D>`
-- **Bundle size**: `<bytes>`
-- **Variant count**: see manifest `variant_count`
+- **Build date**: 2026-06-01
+- **Schema version**: 1
+- **Bundle SHA-256**: `9f645b2c6963e2a83e69c0b1e5bea777cb1bf20566d7c051cfda9b0fef6393bc`
+- **Bundle size**: 358,752,256 bytes (342.1 MB)
+- **Variant count**: 2,983,291 (`bundle_metadata.variant_count`; one row per `(rsid, alt)`)
 - **min_app_version**: `0.2.0`
 
 ## Notes
