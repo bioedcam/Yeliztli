@@ -44,6 +44,12 @@ LAI_DROP_RATE_WARNING_THRESHOLD = 0.15
 # Source labels for merged samples (Plan §6.6, §10.2)
 _MERGED_SOURCE_KEYS = ("S1", "S2", "both")
 
+# Accepted filenames for the rsID->GRCh38 liftover lookup, newest first. The
+# v2.0.0 bundle renamed this table ``rsid_to_grch38.tsv`` -> ``array_site_mapping.tsv``
+# (07_assemble_bundle.sh; identical 3-col rsid<TAB>chrom<TAB>grch38_pos format).
+# The runtime accepts either so it works against both v2.0.0 and v1.1 bundles.
+_LIFTOVER_FILENAMES = ("array_site_mapping.tsv", "rsid_to_grch38.tsv")
+
 POPULATIONS: dict[str, dict[str, str]] = {
     "AFR": {"display": "African", "color": "#E8A838"},
     "AMR": {"display": "Indigenous American", "color": "#EE6677"},
@@ -79,7 +85,6 @@ class LAIRunner:
         """Check that all required bundle components exist."""
         required = [
             self.bundle / "beagle" / "beagle.jar",
-            self.bundle / "liftover" / "rsid_to_grch38.tsv",
         ]
         for chr_num in range(1, 23):
             required.extend(
@@ -93,6 +98,10 @@ class LAIRunner:
             )
 
         missing = [str(p) for p in required if not p.exists()]
+        # The rsID->GRCh38 liftover lookup may be named either way (see
+        # _LIFTOVER_FILENAMES); require that at least one exists.
+        if self._liftover_path() is None:
+            missing.append(str(self.bundle / "liftover" / _LIFTOVER_FILENAMES[0]))
         if missing:
             raise FileNotFoundError(
                 "LAI bundle incomplete. Missing:\n"
@@ -101,10 +110,28 @@ class LAIRunner:
             )
         logger.info("lai_bundle_validated", path=str(self.bundle))
 
+    def _liftover_path(self) -> Path | None:
+        """Resolve the rsID->GRCh38 liftover table, tolerating the v2.0.0 rename.
+
+        Returns the first existing candidate from :data:`_LIFTOVER_FILENAMES`
+        (``array_site_mapping.tsv`` for v2.0.0, ``rsid_to_grch38.tsv`` for
+        v1.1), or ``None`` if neither is present.
+        """
+        liftover_dir = self.bundle / "liftover"
+        for name in _LIFTOVER_FILENAMES:
+            candidate = liftover_dir / name
+            if candidate.exists():
+                return candidate
+        return None
+
     def _load_rsid_lookup(self) -> dict[str, tuple[str, int]]:
         """Load rsID -> (chrom, pos_grch38) lookup table."""
         lookup: dict[str, tuple[str, int]] = {}
-        path = self.bundle / "liftover" / "rsid_to_grch38.tsv"
+        path = self._liftover_path()
+        if path is None:
+            raise FileNotFoundError(
+                f"LAI bundle liftover table not found in {self.bundle / 'liftover'}"
+            )
         with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")

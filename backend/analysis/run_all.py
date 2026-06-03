@@ -46,9 +46,12 @@ def run_all_analyses(
         try:
             count = runner(sample_engine, registry)
             results[name] = count
-            logger.info("analysis_module_complete", extra={"module": name, "findings": count})
+            logger.info(
+                "analysis_module_complete",
+                extra={"analysis_module": name, "findings": count},
+            )
         except Exception:
-            logger.exception("analysis_module_failed", extra={"module": name})
+            logger.exception("analysis_module_failed", extra={"analysis_module": name})
             results[name] = "error"
 
     return results
