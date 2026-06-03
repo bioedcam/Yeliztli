@@ -149,7 +149,16 @@ jobs:
           else
             echo "::warning::LAI manifest sha256 is the placeholder; skipping verification."
           fi
-          tar -xzf "$tarball" -C "$HOME/.genomeinsight/"
+          # The published tarball is flat (top level is gnomix_models/,
+          # genetic_maps/, liftover/, metadata.json …), so it must be
+          # extracted INTO data_dir/lai_bundle/ to match the cache path, the
+          # staged-bundle check, and Settings.resolved_lai_bundle_path
+          # (== data_dir/lai_bundle). This mirrors the production
+          # database_registry._extract_lai_bundle hook. Extracting straight
+          # into data_dir/ would scatter the contents and validate_lai_bundle
+          # would never find gnomix_models/chrN/ → "LAI bundle … incomplete".
+          mkdir -p "$HOME/.genomeinsight/lai_bundle"
+          tar -xzf "$tarball" -C "$HOME/.genomeinsight/lai_bundle"
           rm -f "$tarball"
 
       # ── Run slow-tier tests ────────────────────────────────────────────
