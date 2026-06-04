@@ -18,6 +18,8 @@ import type {
   MigrateFromSourcesResponse,
   StaleSampleDetail,
 } from "@/types/individuals"
+import type { BundleGatePayload } from "@/types/setup"
+import { BundleGateError, isBundleGatePayload } from "@/api/setup"
 
 export function useSamples() {
   return useQuery({
@@ -54,8 +56,19 @@ export function useIngestFile() {
         body: formData,
       })
       if (!res.ok) {
-        const text = await res.text().catch(() => "")
-        throw new Error(text || `Upload failed: ${res.status}`)
+        const body = await res.json().catch(() => null)
+        // AncestryDNA + pre-v2.0.0 VEP bundle → structured 409 gate payload.
+        if (res.status === 409 && isBundleGatePayload(body?.detail)) {
+          throw new BundleGateError(body.detail as BundleGatePayload)
+        }
+        // FastAPI surfaces other errors as { detail: "<string>" }. Never let a
+        // non-string detail (e.g. a structured payload) escape as the message,
+        // or rendering it as a React child throws.
+        const detail =
+          typeof body?.detail === "string"
+            ? body.detail
+            : `Upload failed: ${res.status}`
+        throw new Error(detail)
       }
       return await res.json()
     },

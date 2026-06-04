@@ -65,6 +65,7 @@ from backend.api.routes.watches import router as watches_router
 from backend.auth import AuthMiddleware
 from backend.config import get_settings
 from backend.db.connection import get_registry, reset_registry
+from backend.db.reference_schema import ensure_reference_schema_current
 from backend.db.tables import reference_metadata
 from backend.logging_config import configure_logging
 from backend.tasks.huey_tasks import recover_orphaned_jobs
@@ -88,6 +89,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = get_registry()
     # Ensure reference tables exist (safe on existing DBs via checkfirst)
     reference_metadata.create_all(registry.reference_engine, checkfirst=True)
+    # create_all only creates missing *tables*, never adds *columns* to
+    # pre-existing ones. Backfill additive columns (e.g. samples.individual_id)
+    # so DBs that predate a column-adding revision keep working.
+    ensure_reference_schema_current(registry.reference_engine)
     # Configure structured logging with DB persistence
     configure_logging(engine_getter=lambda: registry.reference_engine)
     # Mark any leftover in-progress download sessions as interrupted/stale

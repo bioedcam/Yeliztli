@@ -34,7 +34,7 @@ export class BundleGateError extends Error {
   }
 }
 
-function isBundleGatePayload(value: unknown): value is BundleGatePayload {
+export function isBundleGatePayload(value: unknown): value is BundleGatePayload {
   if (!value || typeof value !== 'object') return false
   const obj = value as Record<string, unknown>
   return (
