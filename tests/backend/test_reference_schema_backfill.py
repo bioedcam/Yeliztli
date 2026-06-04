@@ -1,0 +1,106 @@
+"""Tests for reference-DB additive-column backfill.
+
+The reference database is bootstrapped via
+``reference_metadata.create_all(checkfirst=True)`` (see ``backend/main.py``),
+not Alembic at runtime. ``create_all`` creates missing *tables* but never adds
+*columns* to pre-existing tables. So a ``samples`` table created before Alembic
+009 (which added ``samples.individual_id``) is left without the column, and
+every ``SELECT`` against ``samples`` fails with ``no such column``.
+
+``ensure_reference_schema_current()`` backfills such additive columns. These
+tests build the exact pre-009 drift (a ``samples`` table missing
+``individual_id``, with the ``individuals`` table already present, mirroring a
+post-``create_all`` state) and assert the column + index are added, that the
+function is idempotent, and that a fresh schema is left untouched.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import sqlalchemy as sa
+
+from backend.db.reference_schema import ensure_reference_schema_current
+from backend.db.tables import reference_metadata
+
+
+def _columns(engine: sa.Engine, table: str) -> set[str]:
+    return {c["name"] for c in sa.inspect(engine).get_columns(table)}
+
+
+def _make_pre009_samples(engine: sa.Engine) -> None:
+    """Create a ``samples`` table lacking ``individual_id`` (pre-Alembic-009)."""
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "CREATE TABLE samples ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  name TEXT NOT NULL,"
+                "  db_path TEXT NOT NULL UNIQUE,"
+                "  file_format TEXT,"
+                "  file_hash TEXT,"
+                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                "  updated_at DATETIME"
+                ")"
+            )
+        )
+        # The individuals table exists already, as create_all would have made
+        # it: a new table create_all *can* add, unlike a new column.
+        conn.execute(
+            sa.text(
+                "CREATE TABLE individuals ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  display_name TEXT NOT NULL,"
+                "  notes TEXT DEFAULT '',"
+                "  biological_sex TEXT,"
+                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                "  updated_at DATETIME"
+                ")"
+            )
+        )
+
+
+def test_backfills_missing_individual_id(tmp_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ref.db'}")
+    _make_pre009_samples(engine)
+
+    assert "individual_id" not in _columns(engine, "samples")
+
+    changed = ensure_reference_schema_current(engine)
+
+    assert changed is True
+    assert "individual_id" in _columns(engine, "samples")
+    # The index that backs the two-level sample selector is created too.
+    indexes = {ix["name"] for ix in sa.inspect(engine).get_indexes("samples")}
+    assert "ix_samples_individual_id" in indexes
+
+
+def test_select_with_individual_id_works_after_backfill(tmp_path: Path) -> None:
+    """The crash repro: SELECT ... samples.individual_id must stop 500-ing."""
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ref.db'}")
+    _make_pre009_samples(engine)
+    ensure_reference_schema_current(engine)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa.text("SELECT id, name, individual_id FROM samples")
+        ).fetchall()
+    assert rows == []
+
+
+def test_idempotent_on_second_run(tmp_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ref.db'}")
+    _make_pre009_samples(engine)
+
+    assert ensure_reference_schema_current(engine) is True
+    # Second run finds nothing to do.
+    assert ensure_reference_schema_current(engine) is False
+
+
+def test_noop_on_fresh_create_all_schema(tmp_path: Path) -> None:
+    """A schema built fresh from current metadata already has the column."""
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ref.db'}")
+    reference_metadata.create_all(engine, checkfirst=True)
+
+    assert "individual_id" in _columns(engine, "samples")
+    assert ensure_reference_schema_current(engine) is False

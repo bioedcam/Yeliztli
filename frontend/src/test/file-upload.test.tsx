@@ -105,6 +105,44 @@ describe("FileUpload", () => {
     ).toBeInTheDocument()
   })
 
+  it("renders the bundle-gate banner (not a raw object) on a 409 gate response", async () => {
+    // Regression: the 409 detail is a structured object, not a string. The
+    // old code set it directly as the error message and React threw
+    // "Objects are not valid as a React child".
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          detail: {
+            error: "bundle_version_too_old",
+            installed_version: "v1.0.0",
+            required_version: "v2.0.0",
+            vendor: "ancestrydna",
+            update_url: "https://example.invalid/bundle-v2",
+            size_bytes: 500_000_000,
+            checksum_sha256: null,
+          },
+        }),
+    })
+
+    render(<FileUpload />)
+    const dropZone = screen.getByRole("button")
+    const file = new File(["ancestry"], "AncestryDNA.txt", {
+      type: "text/plain",
+    })
+    fireEvent.drop(dropZone, { dataTransfer: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bundle-gate-banner")).toBeInTheDocument()
+    })
+    // Versions surface as strings; the update CTA is offered.
+    expect(screen.getAllByText(/v2\.0\.0/).length).toBeGreaterThan(0)
+    expect(screen.getByTestId("bundle-gate-update-cta")).toHaveTextContent(
+      /update vep bundle to v2\.0\.0/i,
+    )
+  })
+
   it("uploads file via file input click", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
