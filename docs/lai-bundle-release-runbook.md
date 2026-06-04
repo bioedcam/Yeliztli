@@ -238,6 +238,28 @@ Before publication, bio-validator confirms:
 - **LAI accuracy**: mean per-window accuracy ≥ 0.88 on held-out
   single-ancestry samples (Plan §6.4 final paragraph). The report is
   written by `06e_lai_accuracy.py` to `$VALIDATION_DIR/lai_accuracy_report.json`.
+  `06e` also fails the build if any target superpopulation is under-represented
+  in the training panel (the per-region composition gate, `--min-per-region`).
+- **Held-out per-superpopulation inference accuracy (gold-standard — REQUIRED):**
+  The mean per-window accuracy above is *blind to per-population balance*. The
+  first v2.0.0 LAI bundle reported **0.97** yet misclassified *every* European —
+  the old `04c` `max_q >= 0.95` single-ancestry filter left **EUR = 3** samples
+  in training (continentally-intermediate groups never form a clean ADMIXTURE
+  component), so a held-out Iberian classified as 94% CSA / 0.3% EUR through the
+  production pipeline. Therefore, before publishing, run a held-out
+  per-superpopulation **inference** check: hold a few samples per superpopulation
+  OUT of the gnomix training panel, build AncestryDNA-density fixtures from the
+  phasing panel, run each through the production `run_lai_analysis` against the
+  *assembled* bundle, and confirm each classifies to its own superpopulation
+  (EUR must classify as EUR). Scripts:
+  `06f_select_heldout.py` → `extract_heldout_fixtures.py` →
+  `06f_heldout_superpop_accuracy.py` (per-superpop accuracy; asserts EUR == 1.0).
+  The 2026-06-04 rebuild result was EUR/AFR/AMR/CSA/EAS/OCE **5/5**, MID **2/5**
+  (MID is a known residual — intermediate and adjacent to the much-larger EUR;
+  if MID accuracy matters, rebuild with `--per-region-cap` to balance the large
+  classes down and/or add MID training samples). The build-time composition gate
+  (`--min-per-region`, default 20) is the *floor* that prevents the EUR=3
+  regression; this inference check is the *runtime proof*.
 - **Phasing accuracy**: mean switch error rate ≤ 0.0566 vs. trio-truth
   haplotypes (Plan §6.4). Written by `06d_phasing_accuracy.py` to
   `$VALIDATION_DIR/phasing_accuracy_report.json`.
