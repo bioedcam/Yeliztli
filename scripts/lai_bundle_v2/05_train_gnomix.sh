@@ -14,6 +14,19 @@
 # Plan §6.4: phase unchanged from v1.1; models retrain against the larger
 # window count (~30% bigger total). Bio-validator validates per-window
 # accuracy ≥0.88 mean before publication.
+#
+# KNOWN ISSUE (BUG F, harvest-workaround): gnomix is invoked with the full
+# phasing panel as BOTH reference and query, so AFTER training+saving the model
+# it runs a post-train inference that re-phases all ~4091 query samples — which
+# on the v2.0.0-scale panel can HANG for hours ("Phasing individual N/4091"). The
+# trained model_chm_chrN.pkl is saved BEFORE that tail and is all the bundle
+# needs (07b re-exports it; the inference output is unused), so the v2.0.0 EUR-fix
+# rebuild HARVESTED each task once its model + "Estimated val accuracy" appeared
+# (scancel the still-running task, then run finish 06/07 directly). PROPER FIX
+# (validate on the next re-train): pass gnomix a MINIMAL query (e.g. 1 sample) as
+# query_file — training uses reference+sample_map only, so the model is identical
+# but the post-train inference becomes trivial. Keep phase=True (the model must
+# ship its phasing module for real unphased AncestryDNA uploads at runtime).
 
 set -euo pipefail
 
