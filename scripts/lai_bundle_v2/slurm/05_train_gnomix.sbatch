@@ -12,8 +12,15 @@
 #SBATCH --partition=gpu
 #SBATCH --array=1-22
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+# 64G (not 32G): the v2.0.0 genetic_region panel is ~1.9x the old single-ancestry
+# panel (3690 vs 1939 founders), so per-chrom gnomix simulation/training needs more.
+#SBATCH --mem=64G
 #SBATCH --time=48:00:00
+# --no-requeue: a transient per-task failure must NOT silently requeue + re-train.
+# SLURM's default Requeue=1 (combined with the old shared-sample_map cp race that
+# this fix removes) caused a wasteful, non-converging re-train loop. Fail the task
+# instead so the afterok finish dependency surfaces it.
+#SBATCH --no-requeue
 #SBATCH --output=lai_gnomix_chr%a_%A.out
 
 set -euo pipefail

@@ -39,8 +39,8 @@ VEP_BUNDLE_SIZE_BYTES = 358_752_256
 # confirmed reachable; before that the manifest carried the v1.1 asset values.
 # Pins bundles/manifest.json against accidental rollback/drift and must
 # byte-match DATABASES["lai_bundle"].sha256 (Plan §9 Done criterion #4).
-LAI_BUNDLE_SHA256 = "96f2fcacd3877b3a9574745e4833ea506312832353f4ec88db052a2ba619d734"
-LAI_BUNDLE_SIZE_BYTES = 1_710_542_766
+LAI_BUNDLE_SHA256 = "f2d8b0a2c1b9249c3f7b3b69a3ec4426d20860fa659fc63993c33f61f8d1c791"
+LAI_BUNDLE_SIZE_BYTES = 1_725_028_142
 
 SAMPLE_PAYLOAD: dict = {
     "schema_version": 1,
@@ -640,7 +640,7 @@ class TestRepoManifest:
         m = fetch_manifest()
         lai = m.bundles["lai_bundle"]
         assert lai.version == "v2.0.0"
-        assert lai.build_date == "2026-06-02"
+        assert lai.build_date == "2026-06-04"
         assert lai.url.endswith("/lai-bundle-v2.0.0/genomeinsight_lai_bundle_v2.0.0.tar.gz")
         # Exact-equality vs the real published asset values (PR-0c, Phase D);
         # pins bundles/manifest.json against accidental rollback or drift.

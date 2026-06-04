@@ -226,6 +226,36 @@ class TestPhase05ModelPathCheck:
         assert '"output_chr${chr}"/*.pkl' not in text
 
 
+class TestPhase05SampleMapNoCpRace:
+    """Under the phase-05 SLURM array every chromosome task shares $GNOMIX_DIR, so
+    copying the sample_map to a single shared $GNOMIX_DIR/sample_map.txt races on
+    the cluster NFS (cp: 'File exists') and, with set -e + the default Requeue=1,
+    kills + requeues + re-trains the task (a non-converging loop that strands
+    chroms which keep losing the race). gnomix reads the map read-only, so it is
+    passed directly from $ADMIX_DIR; the array must also disable requeue.
+    """
+
+    def test_no_shared_sample_map_copy(self) -> None:
+        text = (SCRIPTS_DIR / "05_train_gnomix.sh").read_text()
+        # the racing shared-destination copy must be gone
+        assert 'cp "$ADMIX_DIR/sample_map.txt" "$GNOMIX_DIR/sample_map.txt"' not in text
+
+    def test_gnomix_reads_sample_map_directly_from_admix_dir(self) -> None:
+        text = (SCRIPTS_DIR / "05_train_gnomix.sh").read_text()
+        # gnomix is handed the read-only ADMIX_DIR map, not a per-run shared copy
+        assert '"$ADMIX_DIR/sample_map.txt"' in text
+
+    def test_array_sbatch_disables_requeue(self) -> None:
+        text = (SCRIPTS_DIR / "slurm" / "05_train_gnomix.sbatch").read_text()
+        assert "--no-requeue" in text
+
+    def test_array_sbatch_mem_sized_for_genetic_region_panel(self) -> None:
+        # the v2.0.0 genetic_region panel (~3690 founders) needs more than the
+        # old 32G default sized for the ~1939-founder single-ancestry panel.
+        text = (SCRIPTS_DIR / "slurm" / "05_train_gnomix.sbatch").read_text()
+        assert "--mem=64G" in text
+
+
 class TestPhase07ReexportsGnomixModels:
     """The shipped bundle ships base_coefs.npz + smoother.json + metadata.npz per
     chromosome (what backend/analysis/gnomix_inference.load_gnomix_model loads), not
