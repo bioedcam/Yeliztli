@@ -170,6 +170,7 @@ class TestNoOutboundVariantData:
         "annotation/encode_ccres.py": "reference DB download",
         "annotation/gnomad.py": "reference DB download",
         "annotation/gwas.py": "reference DB download",
+        "annotation/http_download.py": "generic resumable reference DB downloader",
         "annotation/mondo_hpo.py": "reference DB download",
         "annotation/omim.py": "reference DB download (with API key)",
         "api/routes/genes.py": "UniProt protein domain lookup (gene symbol only)",
