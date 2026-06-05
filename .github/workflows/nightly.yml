@@ -33,8 +33,14 @@ permissions:
 jobs:
   slow-tests:
     name: Slow-tier pytest
+    # The slow-tier runs the 600k ingest/annotation benchmarks (~40 min) PLUS two
+    # real-bundle LAI accuracy tests that each do a full 22-chromosome Beagle phase
+    # (~18 min each: held-out EUR HG01502 + held-out MID HGDP01282). That total
+    # (~75 min) exceeds the old 60-min ceiling — which the suite was already
+    # brushing against before the MID guard landed. 120 min gives headroom for a
+    # slow GitHub-hosted runner without masking a genuine hang.
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
