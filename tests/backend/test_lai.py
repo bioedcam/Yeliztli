@@ -540,6 +540,25 @@ _EUR_FIXTURE_MIN_EUR_FRACTION = 0.85
 # regression gate). Bio-validator may tighten after observing nightly stability.
 _GLOBAL_ANCESTRY_TOLERANCE = 0.05
 
+# ── Held-out Middle-Eastern (MID) regression guard (runbook §4.4) ──────────────
+# HGDP01282 is a held-out NON-founder HGDP Middle-Eastern sample (not in gnomix
+# training, and not one of the pre-cap misses); on the re-balanced v2.0.0 bundle it
+# classifies top=MID at 0.77 (EUR 0.13, AFR 0.09) — the highest/cleanest of the 5
+# held-out MID samples, i.e. the largest MID-over-EUR margin to pin the nightly to.
+_MID_FIXTURE_CANDIDATES = ("heldout_mid_HGDP01282.adna.txt.gz",)
+
+# MID is continentally INTERMEDIATE (adjacent to EUR): its dominant fraction is
+# ~0.53–0.77 across the held-out cohort (vs EUR's ~0.95) and its minor components
+# (EUR 0.13–0.25, CSA up to 0.14) move on the MID↔EUR decision boundary — the least
+# reproducible axis across phasing-RNG / Java / Beagle versions. So this guard
+# asserts ONLY the property guards (top==MID and MID ≥ floor), NOT per-population
+# drift like the EUR fixture: the regression it guards (MID misclassified as EUR)
+# necessarily drops MID below the floor and flips top_pop — already caught — while a
+# numeric per-component band would add only cross-environment flake. 0.45 clears the
+# lowest cohort sample (0.532) with headroom and sits well above the pre-cap miss
+# level (MID≈0.38). Do NOT ratchet it up toward the single-run 0.77.
+_MID_FIXTURE_MIN_MID_FRACTION = 0.45
+
 
 def _parse_ancestrydna_fixture(path: Path) -> list[dict[str, str | int]]:
     """Read an AncestryDNA-format file into `raw_variants`-shaped dicts.
@@ -669,3 +688,74 @@ class TestRealBundleLAIAccuracy:
                 "Bio-validator: update reference in test_lai.py if "
                 "this reflects a legitimate bundle re-calibration."
             )
+
+    def test_heldout_mid_classifies_as_mid(self, tmp_path: Path, sample_engine: sa.Engine) -> None:
+        """A held-out Middle-Eastern sample must classify as MID, not EUR.
+
+        Guards the MID re-balance (``--per-region-cap=250``): before it, the held-out
+        per-superpopulation gate ran MID 2/5, the misses landing in the genetically
+        adjacent EUR class. Only the property guards are asserted (top==MID and
+        MID ≥ floor) — MID's intermediate per-population fractions move too much
+        across environments to band without flaking (see _MID_FIXTURE_MIN_MID_FRACTION).
+        """
+        from backend.analysis.lai import run_lai_analysis
+        from backend.db.tables import raw_variants, sample_metadata_table
+
+        fixture_dir = Path(__file__).resolve().parent.parent / "fixtures"
+        fixture_path: Path | None = None
+        for name in _MID_FIXTURE_CANDIDATES:
+            candidate = fixture_dir / name
+            if candidate.exists():
+                fixture_path = candidate
+                break
+        if fixture_path is None:
+            pytest.skip(
+                "No held-out MID fixture present "
+                f"(looked for: {', '.join(_MID_FIXTURE_CANDIDATES)})"
+            )
+
+        variants = _parse_ancestrydna_fixture(fixture_path)
+        if not variants:
+            pytest.skip(f"Fixture {fixture_path.name} parsed to zero variants")
+
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sample_metadata_table.insert().values(
+                    id=1,
+                    name="lai_real_bundle_mid_test",
+                    file_format="ancestrydna_v2.0",
+                    file_hash="real-bundle-mid-fixture",
+                )
+            )
+            conn.execute(raw_variants.insert(), variants)
+
+        result = run_lai_analysis(
+            sample_id=1,
+            sample_engine=sample_engine,
+        )
+
+        # Sanity: proportions sum to ~1.0 across the canonical 7 populations.
+        total = sum(info["fraction"] for info in result.global_ancestry.values())
+        assert abs(total - 1.0) < 1e-3, f"global ancestry sums to {total}"
+
+        fracs = {
+            p: result.global_ancestry.get(p, {}).get("fraction", 0.0)
+            for p in CANONICAL_POPULATIONS
+        }
+        mid = fracs["MID"]
+        top_pop = max(fracs, key=fracs.get)
+
+        # PRIMARY regression guard: a held-out Middle-Eastern sample MUST classify as
+        # MID, not the genetically adjacent EUR. Pre-cap, this exact failure mode left
+        # held-out MID at 2/5 with the misses going to EUR (0.40–0.50); the
+        # --per-region-cap=250 re-balance took it to 5/5. A top of EUR here means the
+        # MID→EUR misclassification has returned.
+        assert top_pop == "MID", (
+            f"REGRESSION: held-out Middle-Eastern sample classified as {top_pop} "
+            f"(MID={mid:.4f}); the MID→EUR misclassification has returned. "
+            f"fractions={fracs}"
+        )
+        assert mid >= _MID_FIXTURE_MIN_MID_FRACTION, (
+            f"MID fraction {mid:.4f} below floor {_MID_FIXTURE_MIN_MID_FRACTION} "
+            f"for a held-out Middle-Eastern sample. fractions={fracs}"
+        )
