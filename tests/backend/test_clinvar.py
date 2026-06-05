@@ -521,34 +521,44 @@ class TestRecordClinvarVersion:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _make_mock_client(content: bytes, status_code: int = 200):
-    """Create a mocked httpx.Client with stream support."""
-    mock_response = MagicMock()
-    mock_response.headers = {"Content-Length": str(len(content))}
-    mock_response.iter_bytes.return_value = [content]
-    mock_response.num_bytes_downloaded = len(content)
-    mock_response.raise_for_status = MagicMock()
-    if status_code >= 400:
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "error", request=MagicMock(), response=MagicMock(status_code=status_code)
-        )
-    mock_response.__enter__ = MagicMock(return_value=mock_response)
-    mock_response.__exit__ = MagicMock(return_value=False)
+def _fake_stream_download(*, content: bytes = b"", headers=None, exc: BaseException | None = None):
+    """Build a fake ``stream_download`` that writes ``content`` (or raises ``exc``).
 
-    mock_client = MagicMock()
-    mock_client.stream.return_value = mock_response
-    mock_client.__enter__ = MagicMock(return_value=mock_client)
-    mock_client.__exit__ = MagicMock(return_value=False)
-    return mock_client
+    The wrapper functions delegate the actual transfer to
+    ``backend.annotation.http_download.stream_download`` (exhaustively tested in
+    ``test_http_download.py``); here we only verify the wrapper's own work:
+    filenames, ``meta`` capture, and the atomic rename.
+    """
+    from backend.annotation.http_download import DownloadOutcome
+
+    def _impl(url, tmp_path, *, progress_callback=None, **kwargs):
+        if exc is not None:
+            raise exc
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_bytes(content)
+        if progress_callback is not None:
+            progress_callback(len(content), len(content))
+        return DownloadOutcome(
+            path=tmp_path,
+            total_bytes=len(content),
+            expected_total=len(content),
+            headers=httpx.Headers(headers or {}),  # case-insensitive, like the real one
+            attempts=1,
+            resumed=False,
+        )
+
+    return _impl
 
 
 class TestDownloadClinvarVcf:
     def test_download_writes_file(self, tmp_path: Path):
         """download_clinvar_vcf should write the file and return its path."""
         fake_content = b"##fileformat=VCFv4.1\nfake data\n"
-        mock_client = _make_mock_client(fake_content)
 
-        with patch("backend.annotation.clinvar.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.clinvar.stream_download",
+            _fake_stream_download(content=fake_content),
+        ):
             result = download_clinvar_vcf(tmp_path / "downloads")
 
         assert result.exists()
@@ -557,10 +567,12 @@ class TestDownloadClinvarVcf:
 
     def test_no_temp_file_on_success(self, tmp_path: Path):
         """After successful download, no .tmp file should remain."""
-        mock_client = _make_mock_client(b"data")
         dl_dir = tmp_path / "downloads"
 
-        with patch("backend.annotation.clinvar.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.clinvar.stream_download",
+            _fake_stream_download(content=b"data"),
+        ):
             download_clinvar_vcf(dl_dir)
 
         assert not (dl_dir / "clinvar_GRCh37.vcf.gz.tmp").exists()
@@ -568,23 +580,28 @@ class TestDownloadClinvarVcf:
 
     def test_download_progress_callback(self, tmp_path: Path):
         """Progress callback should be called during download."""
-        fake_content = b"data"
         cb = MagicMock()
-        mock_client = _make_mock_client(fake_content)
 
-        with patch("backend.annotation.clinvar.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.clinvar.stream_download",
+            _fake_stream_download(content=b"data"),
+        ):
             download_clinvar_vcf(tmp_path / "dl", progress_callback=cb)
 
         cb.assert_called_once_with(4, 4)
 
-    def test_http_error_cleans_up_temp(self, tmp_path: Path):
-        """HTTP error should not leave a partial .tmp file."""
-        mock_client = _make_mock_client(b"", status_code=404)
+    def test_http_error_propagates_no_temp(self, tmp_path: Path):
+        """A non-retryable HTTP error propagates and leaves no partial .tmp."""
         dl_dir = tmp_path / "downloads"
+        err = httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=MagicMock(status_code=404)
+        )
 
-        with patch("backend.annotation.clinvar.httpx.Client", return_value=mock_client):
-            with pytest.raises(httpx.HTTPStatusError):
-                download_clinvar_vcf(dl_dir)
+        with (
+            patch("backend.annotation.clinvar.stream_download", _fake_stream_download(exc=err)),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            download_clinvar_vcf(dl_dir)
 
         assert not (dl_dir / "clinvar_GRCh37.vcf.gz.tmp").exists()
         assert not (dl_dir / "clinvar_GRCh37.vcf.gz").exists()

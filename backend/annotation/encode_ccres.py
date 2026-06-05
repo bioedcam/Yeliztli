@@ -36,9 +36,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
 import sqlalchemy as sa
 import structlog
+
+from backend.annotation.http_download import stream_download
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -165,7 +166,8 @@ def download_encode_ccres_bed(
         Path to the downloaded BED file.
 
     Raises:
-        httpx.HTTPStatusError: If the download fails.
+        DownloadError: If the download fails after exhausting retries.
+        httpx.HTTPStatusError: On a non-retryable HTTP status (e.g. 404).
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     filename = url.rsplit("/", 1)[-1]
@@ -181,22 +183,18 @@ def download_encode_ccres_bed(
 
     logger.info("encode_ccres_download_start", url=url, dest=str(dest_path))
 
-    with httpx.stream("GET", url, follow_redirects=True, timeout=300.0) as response:
-        response.raise_for_status()
-        total = int(response.headers.get("content-length", 0)) or None
-        downloaded = 0
+    tmp_path = dest_path.with_suffix(".tmp")
+    outcome = stream_download(
+        url,
+        tmp_path,
+        progress_callback=progress_callback,
+        timeout=300.0,
+        chunk_size=1_048_576,
+    )
 
-        tmp_path = dest_path.with_suffix(".tmp")
-        with open(tmp_path, "wb") as f:
-            for chunk in response.iter_bytes(chunk_size=1_048_576):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback:
-                    progress_callback(downloaded, total)
-
-    # Atomic rename
-    tmp_path.rename(dest_path)
-    logger.info("encode_ccres_download_complete", path=str(dest_path), bytes=downloaded)
+    # Atomic rename (stream_download cleans up the .tmp on failure).
+    tmp_path.replace(dest_path)
+    logger.info("encode_ccres_download_complete", path=str(dest_path), bytes=outcome.total_bytes)
     return dest_path
 
 

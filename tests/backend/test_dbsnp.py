@@ -259,67 +259,86 @@ class TestRecordDbsnpVersion:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def _fake_stream_download(
+    *, content: bytes = b"", headers=None, exc: BaseException | None = None
+):
+    """Fake ``stream_download`` writing ``content`` (or raising ``exc``).
+
+    The real transfer/resume logic is covered by ``test_http_download.py``; the
+    wrapper tests here verify only filenames, ``meta`` capture and the rename.
+    """
+    import httpx
+
+    from backend.annotation.http_download import DownloadOutcome
+
+    def _impl(url, tmp_path, *, progress_callback=None, **kwargs):
+        if exc is not None:
+            raise exc
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_bytes(content)
+        if progress_callback is not None:
+            progress_callback(len(content), len(content))
+        return DownloadOutcome(
+            path=tmp_path,
+            total_bytes=len(content),
+            expected_total=len(content),
+            headers=httpx.Headers(headers or {}),  # case-insensitive, like the real one
+            attempts=1,
+            resumed=False,
+        )
+
+    return _impl
+
+
 class TestDownloadRsmergeArch:
-    """Tests for downloading (mocked HTTP)."""
+    """Tests for downloading (transfer delegated to stream_download)."""
 
     def test_download_success(self, tmp_path: Path):
         content = b"fake bcp content"
 
-        mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": str(len(content))}
-        mock_response.iter_bytes.return_value = [content]
-        mock_response.raise_for_status = MagicMock()
-        mock_response.num_bytes_downloaded = len(content)
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        mock_client = MagicMock()
-        mock_client.stream.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
-        with patch("backend.annotation.dbsnp.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.dbsnp.stream_download",
+            _fake_stream_download(content=content),
+        ):
             path = download_rsmerge_arch(tmp_path, url="https://example.com/test.bcp.gz")
 
         assert path.exists()
         assert path.name == "RsMergeArch.bcp.gz"
         assert path.read_bytes() == content
 
-    def test_download_cleans_up_on_failure(self, tmp_path: Path):
+    def test_meta_version_from_last_modified(self, tmp_path: Path):
+        meta: dict = {}
+        with patch(
+            "backend.annotation.dbsnp.stream_download",
+            _fake_stream_download(
+                content=b"x", headers={"Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT"}
+            ),
+        ):
+            download_rsmerge_arch(
+                tmp_path, url="https://example.com/test.bcp.gz", meta=meta
+            )
+        assert meta["version"] == "20151021"
+
+    def test_download_error_propagates_no_temp(self, tmp_path: Path):
         import httpx
 
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.stream.side_effect = httpx.HTTPError("fail")
-
+        err = httpx.HTTPError("fail")
         with (
-            patch("backend.annotation.dbsnp.httpx.Client", return_value=mock_client),
+            patch("backend.annotation.dbsnp.stream_download", _fake_stream_download(exc=err)),
             pytest.raises(httpx.HTTPError),
         ):
             download_rsmerge_arch(tmp_path, url="https://example.com/test.bcp.gz")
 
-        tmp_file = tmp_path / "RsMergeArch.bcp.gz.tmp"
-        assert not tmp_file.exists()
+        assert not (tmp_path / "RsMergeArch.bcp.gz.tmp").exists()
 
     def test_progress_callback_called(self, tmp_path: Path):
         content = b"data"
         callback = MagicMock()
 
-        mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": str(len(content))}
-        mock_response.iter_bytes.return_value = [content]
-        mock_response.raise_for_status = MagicMock()
-        mock_response.num_bytes_downloaded = len(content)
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        mock_client = MagicMock()
-        mock_client.stream.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
-        with patch("backend.annotation.dbsnp.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.dbsnp.stream_download",
+            _fake_stream_download(content=content),
+        ):
             download_rsmerge_arch(
                 tmp_path,
                 url="https://example.com/test.bcp.gz",

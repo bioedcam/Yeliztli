@@ -25,10 +25,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
 import sqlalchemy as sa
 import structlog
 
+from backend.annotation.http_download import stream_download
 from backend.db.tables import downloads, jobs
 
 if TYPE_CHECKING:
@@ -81,10 +81,18 @@ class DownloadManager:
         downloads_dir: Directory where downloaded files are stored.
     """
 
-    def __init__(self, engine: sa.Engine, downloads_dir: Path) -> None:
+    def __init__(
+        self,
+        engine: sa.Engine,
+        downloads_dir: Path,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._engine = engine
         self._downloads_dir = downloads_dir
         self._downloads_dir.mkdir(parents=True, exist_ok=True)
+        # Injectable for tests so retry backoff doesn't sleep for real.
+        self._sleep = sleep
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -216,7 +224,7 @@ class DownloadManager:
         connect_timeout: float,
         total_timeout: float,
     ) -> DownloadResult:
-        """Core download loop with Range resume, checkpointing, and verification."""
+        """Core download loop: resilient streaming with Range resume, checkpoint, verify."""
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
 
@@ -224,79 +232,62 @@ class DownloadManager:
         self._update_download_status(download_id, "downloading")
         self._update_job(job_id, status="running", progress_pct=0.0, message="Starting download")
 
-        headers: dict[str, str] = {}
-        if offset > 0 and tmp_path.exists():
-            headers["Range"] = f"bytes={offset}-"
-        else:
-            # No valid partial file — start fresh
+        # Resume only from a real partial; ignore a stale DB offset with no file.
+        if not tmp_path.exists():
             offset = 0
 
-        current_offset = offset
+        state = {"last_sse": 0.0, "last_checkpoint": offset, "total_set": False}
+
+        def _on_progress(written: int, total: int | None) -> None:
+            # Forward to the external caller's callback.
+            if progress_callback is not None:
+                progress_callback(written, total)
+            # Persist the advertised total once (drives the SSE percentage).
+            if total and not state["total_set"]:
+                self._update_total_bytes(download_id, total)
+                state["total_set"] = True
+            # Checkpoint the byte offset periodically for cross-process resume.
+            # A forced full restart resets the file size, so track regressions to
+            # keep the checkpoint cadence correct (the real resume offset always
+            # comes from the file size, not this DB value).
+            if written < state["last_checkpoint"]:
+                state["last_checkpoint"] = written
+            if written - state["last_checkpoint"] >= CHECKPOINT_INTERVAL:
+                self._checkpoint_offset(download_id, written)
+                state["last_checkpoint"] = written
+            # Throttled, non-fatal SSE progress update.
+            now = time.monotonic()
+            if total and total > 0 and now - state["last_sse"] >= 2.0:
+                pct = min((written / total) * 100.0, 99.9)
+                try:
+                    self._update_job(
+                        job_id,
+                        status="running",
+                        progress_pct=pct,
+                        message=f"{written:,} / {total:,} bytes",
+                    )
+                except sa.exc.OperationalError:
+                    pass  # progress update is non-critical
+                state["last_sse"] = now
 
         try:
-            with httpx.Client(
-                follow_redirects=True,
-                timeout=httpx.Timeout(total_timeout, connect=connect_timeout),
-            ) as client:
-                with client.stream("GET", url, headers=headers) as response:
-                    # Handle range response
-                    if response.status_code == 206:
-                        # Partial content — server supports Range
-                        total_bytes = self._parse_content_range_total(response)
-                    elif response.status_code == 200:
-                        # Full content — server ignored Range or fresh start
-                        offset = 0
-                        content_length = response.headers.get("Content-Length")
-                        total_bytes = int(content_length) if content_length else None
-                    else:
-                        response.raise_for_status()
-                        total_bytes = None  # unreachable but keeps type checker happy
-
-                    # Update total_bytes in downloads table
-                    if total_bytes is not None:
-                        self._update_total_bytes(download_id, total_bytes)
-
-                    # Open file in append or write mode
-                    mode = "ab" if offset > 0 else "wb"
-                    bytes_since_checkpoint = 0
-                    current_offset = offset
-                    last_sse_update = 0.0
-
-                    with open(tmp_path, mode) as f:
-                        for chunk in response.iter_bytes(chunk_size=CHUNK_SIZE):
-                            f.write(chunk)
-                            current_offset += len(chunk)
-                            bytes_since_checkpoint += len(chunk)
-
-                            # Progress callback
-                            if progress_callback:
-                                progress_callback(current_offset, total_bytes)
-
-                            # Update job progress for SSE (throttled, non-fatal)
-                            now = time.monotonic()
-                            if total_bytes and total_bytes > 0 and now - last_sse_update >= 2.0:
-                                pct = min((current_offset / total_bytes) * 100.0, 99.9)
-                                try:
-                                    self._update_job(
-                                        job_id,
-                                        status="running",
-                                        progress_pct=pct,
-                                        message=f"{current_offset:,} / {total_bytes:,} bytes",
-                                    )
-                                except sa.exc.OperationalError:
-                                    pass  # progress update is non-critical
-                                last_sse_update = now
-
-                            # Checkpoint byte offset periodically
-                            if bytes_since_checkpoint >= CHECKPOINT_INTERVAL:
-                                self._checkpoint_offset(download_id, current_offset)
-                                bytes_since_checkpoint = 0
-
-                    # Final checkpoint
-                    self._checkpoint_offset(download_id, current_offset)
-
+            # resumable=True: keep the partial across calls so a previously
+            # interrupted download (tracked in the downloads table) resumes from
+            # its checkpointed bytes instead of restarting from zero.
+            outcome = stream_download(
+                url,
+                tmp_path,
+                progress_callback=_on_progress,
+                timeout=total_timeout,
+                connect_timeout=connect_timeout,
+                chunk_size=CHUNK_SIZE,
+                resumable=True,
+                sleep=self._sleep,
+            )
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
+            current_offset = tmp_path.stat().st_size if tmp_path.exists() else 0
+            self._checkpoint_offset(download_id, current_offset)
             self._update_download_status(download_id, "failed")
             self._update_job(job_id, status="failed", progress_pct=0.0, error=error_msg)
             logger.exception("download_failed", download_id=download_id, url=url, error=error_msg)
@@ -307,6 +298,10 @@ class DownloadManager:
                 total_bytes=current_offset,
                 error=error_msg,
             )
+
+        current_offset = outcome.total_bytes
+        # Final checkpoint.
+        self._checkpoint_offset(download_id, current_offset)
 
         # SHA-256 verification
         sha256 = _compute_sha256(tmp_path)
@@ -319,8 +314,23 @@ class DownloadManager:
             logger.error("download_checksum_mismatch", download_id=download_id, url=url)
             raise ChecksumMismatchError(error_msg)
 
-        # Atomic rename on success
-        tmp_path.replace(dest_path)
+        # Atomic rename on success. Guard it so a filesystem error here doesn't
+        # leave the record stuck in "downloading" with no result returned.
+        try:
+            tmp_path.replace(dest_path)
+        except OSError as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            self._update_download_status(download_id, "failed")
+            self._update_job(job_id, status="failed", progress_pct=100.0, error=error_msg)
+            logger.exception("download_finalize_failed", download_id=download_id, error=error_msg)
+            return DownloadResult(
+                download_id=download_id,
+                job_id=job_id,
+                dest_path=dest_path,
+                total_bytes=current_offset,
+                sha256=sha256,
+                error=error_msg,
+            )
 
         # Mark complete
         self._update_download_status(download_id, "complete")
@@ -347,21 +357,6 @@ class DownloadManager:
             sha256=sha256,
             verified=verified,
         )
-
-    @staticmethod
-    def _parse_content_range_total(response: httpx.Response) -> int | None:
-        """Parse total size from Content-Range header (e.g. ``bytes 100-999/5000``)."""
-        cr = response.headers.get("Content-Range", "")
-        if "/" in cr:
-            total_str = cr.rsplit("/", 1)[1].strip()
-            if total_str != "*":
-                try:
-                    return int(total_str)
-                except ValueError:
-                    pass
-        # Fall back to Content-Length if available
-        cl = response.headers.get("Content-Length")
-        return int(cl) if cl else None
 
     # ── Internal: database helpers ────────────────────────────────────
 

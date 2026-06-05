@@ -53,8 +53,11 @@ def dl_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def manager(ref_engine: sa.Engine, dl_dir: Path) -> DownloadManager:
-    """DownloadManager wired to in-memory engine and temp dir."""
-    return DownloadManager(ref_engine, dl_dir)
+    """DownloadManager wired to in-memory engine and temp dir.
+
+    Uses a no-op sleep so retry backoff doesn't slow the suite down.
+    """
+    return DownloadManager(ref_engine, dl_dir, sleep=lambda _delay: None)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -354,6 +357,61 @@ def test_start_finds_resumable(
     result = manager.start(url, "auto_resume.db")
     assert result.error is None
     assert (dl_dir / "auto_resume.db").read_bytes() == TEST_DATA
+
+
+def test_start_recovers_from_midstream_drop(
+    ref_engine: sa.Engine,
+    dl_dir: Path,
+) -> None:
+    """A single start() auto-retries a mid-stream connection drop and completes."""
+
+    class DropOnceHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        dropped = False
+
+        def do_GET(self) -> None:
+            range_header = self.headers.get("Range")
+            if range_header:
+                start = int(range_header.split("=", 1)[1].split("-", 1)[0])
+                self.send_response(206)
+                self.send_header(
+                    "Content-Range", f"bytes {start}-{len(TEST_DATA) - 1}/{len(TEST_DATA)}"
+                )
+                self.send_header("Content-Length", str(len(TEST_DATA) - start))
+                self.end_headers()
+                self.wfile.write(TEST_DATA[start:])
+                return
+            if not type(self).dropped:
+                type(self).dropped = True
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(TEST_DATA)))
+                self.end_headers()
+                self.wfile.write(TEST_DATA[:1024])
+                self.close_connection = True
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(TEST_DATA)))
+            self.end_headers()
+            self.wfile.write(TEST_DATA)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), DropOnceHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        url = f"http://{host}:{port}/testfile.db"
+        manager = DownloadManager(ref_engine, dl_dir, sleep=lambda _delay: None)
+
+        result = manager.start(url, "drop_recover.db")
+
+        assert result.error is None
+        assert result.total_bytes == len(TEST_DATA)
+        assert (dl_dir / "drop_recover.db").read_bytes() == TEST_DATA
+    finally:
+        server.shutdown()
 
 
 # ═══════════════════════════════════════════════════════════════════════

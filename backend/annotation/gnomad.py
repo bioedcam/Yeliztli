@@ -35,7 +35,7 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
-from backend.annotation.http_download import stream_download_with_resume
+from backend.annotation.http_download import stream_download
 from backend.annotation.sqlite_limits import SQLITE_MAX_VARIABLE_NUMBER as _SQLITE_VAR_LIMIT
 
 if TYPE_CHECKING:
@@ -578,20 +578,21 @@ def download_gnomad_vcf(
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / "gnomad_exomes_r2.1.1.vcf.bgz"
+    tmp_path = dest_dir / "gnomad_exomes_r2.1.1.vcf.bgz.tmp"
 
     logger.info("gnomad_download_start", url=url)
 
-    # Resilient streaming download: retries and resumes via HTTP Range so a
-    # dropped connection mid-transfer (common on this multi-GB file) does not
-    # discard progress. See backend/annotation/http_download.py.
-    stream_download_with_resume(
+    outcome = stream_download(
         url,
-        dest_path,
+        tmp_path,
         progress_callback=progress_callback,
         timeout=timeout,
     )
 
-    logger.info("gnomad_download_complete", path=str(dest_path))
+    # Atomic rename on success (stream_download cleans up the .tmp on failure).
+    tmp_path.replace(dest_path)
+
+    logger.info("gnomad_download_complete", path=str(dest_path), bytes=outcome.total_bytes)
     return dest_path
 
 
