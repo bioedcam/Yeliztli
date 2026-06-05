@@ -268,7 +268,7 @@ def test_extract_succeeds_when_reference_db_missing(
 
 # The published LAI bundle v2.0.0 SHA-256 (registry side). Must byte-match
 # bundles.lai_bundle.sha256 — see ``test_lai_bundle_registry_sha_matches_manifest``.
-LAI_V2_0_0_SHA256 = "f2d8b0a2c1b9249c3f7b3b69a3ec4426d20860fa659fc63993c33f61f8d1c791"
+LAI_V2_0_0_SHA256 = "36abb5f2ed95011aff1227c894f52597ef5c31adb5a132fafdf0830eabf14bff"
 
 
 def test_lai_bundle_registry_sha256_set_for_phase_d_pr0c() -> None:

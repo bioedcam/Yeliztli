@@ -15,18 +15,20 @@
 # window count (~30% bigger total). Bio-validator validates per-window
 # accuracy ≥0.88 mean before publication.
 #
-# KNOWN ISSUE (BUG F, harvest-workaround): gnomix is invoked with the full
-# phasing panel as BOTH reference and query, so AFTER training+saving the model
-# it runs a post-train inference that re-phases all ~4091 query samples — which
-# on the v2.0.0-scale panel can HANG for hours ("Phasing individual N/4091"). The
-# trained model_chm_chrN.pkl is saved BEFORE that tail and is all the bundle
-# needs (07b re-exports it; the inference output is unused), so the v2.0.0 EUR-fix
-# rebuild HARVESTED each task once its model + "Estimated val accuracy" appeared
-# (scancel the still-running task, then run finish 06/07 directly). PROPER FIX
-# (validate on the next re-train): pass gnomix a MINIMAL query (e.g. 1 sample) as
-# query_file — training uses reference+sample_map only, so the model is identical
-# but the post-train inference becomes trivial. Keep phase=True (the model must
-# ship its phasing module for real unphased AncestryDNA uploads at runtime).
+# BUG F (FIXED — minimal-query): gnomix runs a post-train inference on the
+# *query* AFTER it trains+saves the model. The v1.1 invocation passed the full
+# ~4091-sample phasing panel as the query, so that tail re-phased all 4091
+# haplotypes and HUNG for hours ("Phasing individual N/4091") even though the
+# trained model_chm_chrN.pkl was already on disk (07b re-exports it; the
+# inference output is unused). Training consumes only reference_file + sample_map
+# (+ the seeded simulation in config.yaml, seed=94305), so the model is
+# independent of the query. This script now passes a tiny 2-sample query (a
+# strict subset of the panel -> identical sites) so the post-train inference is
+# trivial and the SLURM array finishes on its own — no harvest babysitting, the
+# afterok finish fires cleanly. phase=True is kept so the saved model still ships
+# its phasing module for real unphased AncestryDNA uploads. (The EUR-fix rebuild
+# instead HARVESTED each task — scancel once the model + "Estimated val accuracy"
+# appeared, then ran finish directly — which remains a valid fallback.)
 
 set -euo pipefail
 
@@ -73,12 +75,30 @@ for chr in $CHROMS; do
   fi
 
   phase_log "chr${chr}: training gnomix"
+  # ── BUG F fix: minimal query so the post-train inference can't hang ────────
+  # Build a tiny 2-sample query (first 2 panel samples → a strict subset, so its
+  # sites are identical to the reference). gnomix only uses the query for the
+  # discarded post-train inference; passing 2 instead of ~4091 samples makes that
+  # pass trivial. Per-chrom filename → no write race under the SLURM array. Built
+  # in the outer (lai_bundle) env, which has bcftools, before the gnomix conda run.
+  query_vcf="$GNOMIX_DIR/minquery_chr${chr}.vcf.gz"
+  if [ ! -s "$query_vcf" ] || [ ! -s "$query_vcf.tbi" ]; then
+    # NB: `... | head -n2` would SIGPIPE bcftools (exit 141) and, under
+    # `set -o pipefail`, kill the task; `awk 'NR<=2'` drains the stream so
+    # bcftools always exits 0.
+    qsamples=$(bcftools query -l "$panel_vcf" | awk 'NR<=2' | paste -sd,)
+    bcftools view -s "$qsamples" -Oz -o "$query_vcf" "$panel_vcf"
+    bcftools index -t -f "$query_vcf"
+  fi
   # gnomix.py infers its mode SOLELY from positional arg count (see
   # ~/tools/gnomix/gnomix.py): len(sys.argv)==6 -> pre-trained/inference;
   # ==8 or ==9 -> train. TRAINING needs exactly 7 positional args in this
   # source order:
   #   query_file  output_basename  chr_nr  phase  genetic_map  reference_file  sample_map
-  # In training the phased reference panel is BOTH query_file and reference_file.
+  # reference_file = the phased panel; query_file = the tiny $query_vcf built
+  # above (BUG F fix). Training reads reference_file + sample_map only, so the
+  # model is identical to passing the panel as the query — only the discarded
+  # post-train inference shrinks (and so no longer hangs).
   # The old 6-arg call gave len(sys.argv)==7 -> "Incorrect number of arguments"
   # + sys.exit(0): a SILENT no-op that set -e cannot catch (exit 0).
   # The 7-positional form (args 1-7) is the proven v1.1 production invocation
@@ -101,7 +121,7 @@ for chr in $CHROMS; do
   conda run -n "$GNOMIX_ENV" --no-capture-output \
     python "$SCRIPT_DIR/gnomix_launcher.py" \
     "$GNOMIX_DIR_INSTALL/gnomix.py" \
-    "$panel_vcf" \
+    "$query_vcf" \
     "$out_dir" \
     "chr${chr}" \
     True \

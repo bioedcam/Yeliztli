@@ -42,8 +42,8 @@ class TestLAIBundleRegistry:
         # published v2.0.0 union bundle (23andMe v5 ∪ AncestryDNA v2.0, 1,941,023
         # autosomal sites — Plan §6.4). The registry SHA-256 must byte-match
         # bundles.lai_bundle.sha256 (Plan §9 Done criterion #4).
-        assert db.expected_size_bytes == 1_725_028_142
-        assert db.sha256 == ("f2d8b0a2c1b9249c3f7b3b69a3ec4426d20860fa659fc63993c33f61f8d1c791")
+        assert db.expected_size_bytes == 1_723_731_810
+        assert db.sha256 == ("36abb5f2ed95011aff1227c894f52597ef5c31adb5a132fafdf0830eabf14bff")
         assert db.build_mode == "download"
         assert db.target_db == "standalone"
         assert db.phase == 3

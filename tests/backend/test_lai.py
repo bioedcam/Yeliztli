@@ -517,22 +517,22 @@ _REAL_BUNDLE_FIXTURE_CANDIDATES = (
 )
 
 # Observed global ancestry for the held-out HG01502 (IBS/EUR) fixture on the
-# rebuilt v2.0.0 bundle (sha256 f2d8b0a2…). The primary regression guard is
+# re-balanced v2.0.0 bundle (sha256 36abb5f2…). The primary regression guard is
 # property-based (top==EUR and EUR >= floor) so it survives the small
 # phasing-RNG / Java-version jitter that makes exact per-population fractions
 # non-reproducible across environments; the reference below is a drift monitor.
 _EUR_FIXTURE_GLOBAL_ANCESTRY_REFERENCE: dict[str, float] = {
-    "AFR": 0.02,
+    "AFR": 0.01,
     "AMR": 0.00,
-    "CSA": 0.02,
+    "CSA": 0.01,
     "EAS": 0.00,
-    "EUR": 0.96,
-    "MID": 0.00,
+    "EUR": 0.95,
+    "MID": 0.03,
     "OCE": 0.00,
 }
 
 # A held-out European must classify as EUR-dominant. The broken bundle gave
-# EUR≈0.003 (top=CSA); the rebuilt bundle gives ≈0.96. 0.85 is a safe floor.
+# EUR≈0.003 (top=CSA); the re-balanced bundle gives ≈0.95. 0.85 is a safe floor.
 _EUR_FIXTURE_MIN_EUR_FRACTION = 0.85
 
 # Generous drift band on the reference (minor components vary with the phasing

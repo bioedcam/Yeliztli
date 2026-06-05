@@ -355,9 +355,11 @@ DATABASES: dict[str, DatabaseInfo] = {
         # bundles.lai_bundle.sha256 (Phase E1 smoke + nightly cache pin on
         # registry/manifest agreement — Plan §9 Done criterion #4).
         # Rebuilt 2026-06-04 to fix European misclassification (the original
-        # 96f2fcac… bundle dropped 767/770 EUR from training — see fix-lai PR).
-        expected_size_bytes=1_725_028_142,  # ~1.6 GB (v2.0.0 union bundle)
-        sha256="f2d8b0a2c1b9249c3f7b3b69a3ec4426d20860fa659fc63993c33f61f8d1c791",
+        # 96f2fcac… bundle dropped 767/770 EUR from training), then re-balanced
+        # 2026-06-05 (--per-region-cap=250) to fix residual Middle-Eastern
+        # misclassification (held-out MID 2/5 → 5/5; see fix-lai-mid-rebalance PR).
+        expected_size_bytes=1_723_731_810,  # ~1.6 GB (v2.0.0 union bundle)
+        sha256="36abb5f2ed95011aff1227c894f52597ef5c31adb5a132fafdf0830eabf14bff",
         required=False,
         phase=3,
         build_mode="download",

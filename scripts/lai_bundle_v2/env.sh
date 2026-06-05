@@ -64,7 +64,14 @@
 # genetic_region with a light outlier floor + a per-region composition gate.
 : "${SINGLE_ANCESTRY_THRESHOLD:=0.95}"   # DEPRECATED/unused (see 04c --threshold)
 : "${SINGLE_ANCESTRY_MIN_Q:=0.5}"        # light admixture-outlier floor (0 = off)
-: "${PER_REGION_CAP:=0}"                 # 0 = no cap; else balance each region to <= N
+# Class balance for continentally-intermediate groups. MID is genetically
+# adjacent to EUR and the panel is ~5x EUR-heavy (738 vs 152), so an uncapped
+# panel lets gnomix pull borderline MID windows into EUR (held-out MID 2/5). The
+# floor (MIN_PER_REGION) only guarantees presence; the cap is what makes the
+# minority classes competitive. 250 caps EUR/AFR/EAS/CSA and leaves AMR/MID/OCE
+# untouched (~250/250/250/250/238/157/30). Override at runtime if the held-out
+# per-superpop gate forces a different value (e.g. 350).
+: "${PER_REGION_CAP:=250}"               # 0 = no cap; else balance each region to <= N
 : "${MIN_PER_REGION:=20}"                # BUILD GATE — fail if any superpop under-represented
 : "${BEAGLE_XMX:=4g}"
 # Phase 6c parallel fan-out: BEAGLE_PARALLEL concurrent Beagle runs, each capped to
