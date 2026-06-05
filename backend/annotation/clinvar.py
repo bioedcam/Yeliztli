@@ -34,6 +34,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from backend.annotation.http_download import stream_download
 from backend.db.tables import annotated_variants, clinvar_variants, raw_variants
 
 if TYPE_CHECKING:
@@ -510,33 +511,17 @@ def download_clinvar_vcf(
 
     logger.info("clinvar_download_start", url=url)
 
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(timeout, connect=30.0, read=120.0),
-        ) as client:
-            with client.stream("GET", url) as response:
-                response.raise_for_status()
+    outcome = stream_download(
+        url,
+        tmp_path,
+        progress_callback=progress_callback,
+        timeout=timeout,
+    )
 
-                total_bytes: int | None = None
-                content_length = response.headers.get("Content-Length")
-                if content_length:
-                    total_bytes = int(content_length)
+    # Atomic rename on success (stream_download cleans up the .tmp on failure).
+    tmp_path.replace(dest_path)
 
-                with open(tmp_path, "wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        if progress_callback:
-                            progress_callback(response.num_bytes_downloaded, total_bytes)
-
-        # Atomic rename on success
-        tmp_path.rename(dest_path)
-    except BaseException:
-        # Clean up partial temp file on any failure
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-    logger.info("clinvar_download_complete", path=str(dest_path))
+    logger.info("clinvar_download_complete", path=str(dest_path), bytes=outcome.total_bytes)
     return dest_path
 
 

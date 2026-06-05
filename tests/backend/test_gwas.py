@@ -853,6 +853,33 @@ class TestRecordGwasVersion:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def _fake_stream_download(*, content: bytes = b"", headers=None, exc: BaseException | None = None):
+    """Fake ``stream_download`` writing ``content`` (or raising ``exc``).
+
+    Resume/retry behaviour is covered in ``test_http_download.py``; these tests
+    verify the wrapper's ZIP download → extract → cleanup flow.
+    """
+    from backend.annotation.http_download import DownloadOutcome
+
+    def _impl(url, tmp_path, *, progress_callback=None, **kwargs):
+        if exc is not None:
+            raise exc
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_bytes(content)
+        if progress_callback is not None:
+            progress_callback(len(content), len(content))
+        return DownloadOutcome(
+            path=tmp_path,
+            total_bytes=len(content),
+            expected_total=len(content),
+            headers=httpx.Headers(headers or {}),  # case-insensitive, like the real one
+            attempts=1,
+            resumed=False,
+        )
+
+    return _impl
+
+
 class TestDownloadGwasCatalog:
     def test_download_success(self, tmp_path: Path):
         """Download should write ZIP, extract TSV, and clean up ZIP."""
@@ -864,20 +891,10 @@ class TestDownloadGwasCatalog:
             zf.writestr("gwas-catalog-download-associations-alt-full.tsv", tsv_content)
         zip_bytes = zip_buf.getvalue()
 
-        mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": str(len(zip_bytes))}
-        mock_response.iter_bytes.return_value = [zip_bytes]
-        mock_response.num_bytes_downloaded = len(zip_bytes)
-        mock_response.raise_for_status = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        mock_client = MagicMock()
-        mock_client.stream.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
-        with patch("backend.annotation.gwas.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.gwas.stream_download",
+            _fake_stream_download(content=zip_bytes),
+        ):
             result = download_gwas_catalog(tmp_path, url="http://test/gwas.zip")
 
         assert result.exists()
@@ -887,21 +904,10 @@ class TestDownloadGwasCatalog:
         assert not (tmp_path / "gwas_catalog_associations.zip").exists()
 
     def test_download_cleanup_on_failure(self, tmp_path: Path):
-        """Temp file should be cleaned up on download failure."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=MagicMock()
-        )
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        mock_client = MagicMock()
-        mock_client.stream.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
+        """A download error propagates and leaves no partial .tmp."""
+        err = httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
         with (
-            patch("backend.annotation.gwas.httpx.Client", return_value=mock_client),
+            patch("backend.annotation.gwas.stream_download", _fake_stream_download(exc=err)),
             pytest.raises(httpx.HTTPStatusError),
         ):
             download_gwas_catalog(tmp_path, url="http://test/gwas.zip")
@@ -918,20 +924,10 @@ class TestDownloadGwasCatalog:
         zip_bytes = zip_buf.getvalue()
         callback = MagicMock()
 
-        mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": str(len(zip_bytes))}
-        mock_response.iter_bytes.return_value = [zip_bytes]
-        mock_response.num_bytes_downloaded = len(zip_bytes)
-        mock_response.raise_for_status = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        mock_client = MagicMock()
-        mock_client.stream.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
-        with patch("backend.annotation.gwas.httpx.Client", return_value=mock_client):
+        with patch(
+            "backend.annotation.gwas.stream_download",
+            _fake_stream_download(content=zip_bytes),
+        ):
             download_gwas_catalog(
                 tmp_path,
                 url="http://test/gwas.zip",

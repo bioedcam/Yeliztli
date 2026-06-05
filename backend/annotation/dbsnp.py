@@ -42,6 +42,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from backend.annotation.http_download import stream_download
 from backend.db.tables import (
     annotated_variants,
     dbsnp_merges,
@@ -481,41 +482,25 @@ def download_rsmerge_arch(
 
     logger.info("dbsnp_download_start", url=url)
 
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(timeout, connect=30.0, read=120.0),
-        ) as client:
-            with client.stream("GET", url) as response:
-                response.raise_for_status()
+    outcome = stream_download(
+        url,
+        tmp_path,
+        progress_callback=progress_callback,
+        timeout=timeout,
+    )
 
-                total_bytes: int | None = None
-                content_length = response.headers.get("Content-Length")
-                if content_length:
-                    total_bytes = int(content_length)
+    if meta is not None:
+        last_modified = outcome.headers.get("Last-Modified", "")
+        if last_modified:
+            from email.utils import parsedate_to_datetime
 
-                if meta is not None:
-                    last_modified = response.headers.get("Last-Modified", "")
-                    if last_modified:
-                        from email.utils import parsedate_to_datetime
+            try:
+                meta["version"] = parsedate_to_datetime(last_modified).strftime("%Y%m%d")
+            except (TypeError, ValueError) as exc:
+                logger.warning("dbsnp_download_bad_last_modified", error=str(exc))
 
-                        try:
-                            meta["version"] = parsedate_to_datetime(last_modified).strftime(
-                                "%Y%m%d"
-                            )
-                        except (TypeError, ValueError) as exc:
-                            logger.warning("dbsnp_download_bad_last_modified", error=str(exc))
-
-                with open(tmp_path, "wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        if progress_callback:
-                            progress_callback(response.num_bytes_downloaded, total_bytes)
-
-        tmp_path.rename(dest_path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    # Atomic rename on success (stream_download cleans up the .tmp on failure).
+    tmp_path.replace(dest_path)
 
     logger.info("dbsnp_download_complete", path=str(dest_path))
     return dest_path

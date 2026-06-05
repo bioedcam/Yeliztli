@@ -36,6 +36,7 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
+from backend.annotation.http_download import stream_download
 from backend.db.tables import gene_phenotype
 
 if TYPE_CHECKING:
@@ -363,32 +364,20 @@ def download_file(
 
     logger.info("download_start", url=url, dest=str(dest_path))
 
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(timeout, connect=30.0, read=120.0),
-        ) as client:
-            with client.stream("GET", url) as response:
-                response.raise_for_status()
-                if meta is not None:
-                    source_version = _parse_last_modified_version(
-                        response.headers.get("Last-Modified")
-                    )
-                    if source_version:
-                        meta["version"] = source_version
-                total: int | None = None
-                cl = response.headers.get("Content-Length")
-                if cl:
-                    total = int(cl)
-                with open(tmp_path, "wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        if progress_callback:
-                            progress_callback(response.num_bytes_downloaded, total)
-        tmp_path.rename(dest_path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    outcome = stream_download(
+        url,
+        tmp_path,
+        progress_callback=progress_callback,
+        timeout=timeout,
+    )
+
+    if meta is not None:
+        source_version = _parse_last_modified_version(outcome.headers.get("Last-Modified"))
+        if source_version:
+            meta["version"] = source_version
+
+    # Atomic rename on success (stream_download cleans up the .tmp on failure).
+    tmp_path.replace(dest_path)
 
     logger.info("download_complete", path=str(dest_path))
     return dest_path

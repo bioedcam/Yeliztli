@@ -37,6 +37,7 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
+from backend.annotation.http_download import stream_download
 from backend.db.tables import gwas_associations
 
 if TYPE_CHECKING:
@@ -861,49 +862,40 @@ def download_gwas_catalog(
 
     logger.info("gwas_download_start", url=url)
 
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(timeout, connect=30.0, read=120.0),
-        ) as client:
-            with client.stream("GET", url) as response:
-                response.raise_for_status()
+    outcome = stream_download(
+        url,
+        zip_tmp,
+        progress_callback=progress_callback,
+        timeout=timeout,
+    )
 
-                if meta is not None:
-                    remote_version = _parse_last_modified_version(
-                        response.headers.get("Last-Modified")
-                    )
-                    if remote_version:
-                        meta["version"] = remote_version
+    if meta is not None:
+        remote_version = _parse_last_modified_version(outcome.headers.get("Last-Modified"))
+        if remote_version:
+            meta["version"] = remote_version
 
-                total_bytes: int | None = None
-                content_length = response.headers.get("Content-Length")
-                if content_length:
-                    total_bytes = int(content_length)
+    # Atomic rename on success (stream_download cleans up the .tmp on failure).
+    zip_tmp.replace(zip_path)
 
-                with open(zip_tmp, "wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        if progress_callback:
-                            progress_callback(response.num_bytes_downloaded, total_bytes)
-
-        zip_tmp.rename(zip_path)
-    except BaseException:
-        zip_tmp.unlink(missing_ok=True)
-        raise
-
-    # Extract the TSV from the ZIP
+    # Extract the TSV from the ZIP. Write to a temp file and atomically rename so
+    # a failure mid-extraction (corrupt ZIP, disk full) never leaves a truncated
+    # dest_path that a later run could silently load as if complete.
+    dest_tmp = dest_path.with_suffix(dest_path.suffix + ".tmp")
     try:
         with zipfile.ZipFile(zip_path) as zf:
             tsv_names = [n for n in zf.namelist() if n.endswith(".tsv")]
             if not tsv_names:
                 raise ValueError("No TSV file found inside GWAS Catalog ZIP")
-            with zf.open(tsv_names[0]) as src, open(dest_path, "wb") as dst:
+            with zf.open(tsv_names[0]) as src, open(dest_tmp, "wb") as dst:
                 while True:
                     chunk = src.read(65536)
                     if not chunk:
                         break
                     dst.write(chunk)
+        dest_tmp.replace(dest_path)
+    except BaseException:
+        dest_tmp.unlink(missing_ok=True)
+        raise
     finally:
         zip_path.unlink(missing_ok=True)
 
