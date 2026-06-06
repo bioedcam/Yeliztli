@@ -747,3 +747,28 @@ class TestRareFlagIndexes:
     def test_gnomad_af_global_index_exists(self, index_names: set[str]):
         """Index on gnomad_af_global column exists for AF range queries."""
         assert "idx_annot_gnomad_af" in index_names
+
+
+class TestIndexAfterLoad:
+    """The load path builds indexes AFTER the bulk insert (speed + smaller lock window)."""
+
+    def test_load_on_fresh_engine_creates_indexes_and_data(self) -> None:
+        engine = sa.create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        stats = load_gnomad_from_csv(GNOMAD_SEED_CSV, engine)
+        assert stats.variants_loaded > 0
+
+        with engine.connect() as conn:
+            count = conn.execute(sa.text("SELECT COUNT(*) FROM gnomad_af")).scalar()
+            indexes = conn.execute(
+                sa.text(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='gnomad_af'"
+                )
+            ).fetchall()
+        index_names = {r[0] for r in indexes}
+        assert count == stats.variants_loaded
+        assert "idx_gnomad_chrom_pos" in index_names
+        assert "idx_gnomad_chrom_pos_ref_alt" in index_names

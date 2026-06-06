@@ -39,6 +39,12 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
+from backend.annotation.bulk_load import (
+    bulk_write_connection,
+    execute_write,
+    insert_batch,
+    retry_on_locked,
+)
 from backend.annotation.http_download import stream_download
 from backend.annotation.sqlite_limits import SQLITE_MAX_VARIABLE_NUMBER as _SQLITE_VAR_LIMIT
 
@@ -174,6 +180,19 @@ CREATE_INDEXES_SQL = [
         "metasvm, metalr, gerp_rs, phylop, mpc, primateai)"
     ),
 ]
+
+# Bulk-insert statement (idempotent upsert on the composite primary key).
+_INSERT_DBNSFP_SQL = sa.text(
+    "INSERT OR REPLACE INTO dbnsfp_scores "
+    "(rsid, chrom, pos, ref, alt, cadd_phred, "
+    "sift_score, sift_pred, polyphen2_hsvar_score, "
+    "polyphen2_hsvar_pred, revel, mutpred2, vest4, "
+    "metasvm, metalr, gerp_rs, phylop, mpc, primateai) "
+    "VALUES (:rsid, :chrom, :pos, :ref, :alt, :cadd_phred, "
+    ":sift_score, :sift_pred, :polyphen2_hsvar_score, "
+    ":polyphen2_hsvar_pred, :revel, :mutpred2, :vest4, "
+    ":metasvm, :metalr, :gerp_rs, :phylop, :mpc, :primateai)"
+)
 
 
 # ── Data classes ─────────────────────────────────────────────────────────
@@ -548,6 +567,29 @@ def _record_to_dict(record: DbNSFPRecord) -> dict:
 # ── Database creation & loading ──────────────────────────────────────────
 
 
+def _create_dbnsfp_table(engine: sa.Engine) -> None:
+    """Create only the dbnsfp_scores table (no indexes). Safe to call repeatedly."""
+    with engine.begin() as conn:
+        conn.execute(sa.text(CREATE_TABLE_SQL))
+
+
+def _create_dbnsfp_indexes(engine: sa.Engine) -> None:
+    """Create the dbnsfp_scores indexes (idempotent). Retries on lock contention.
+
+    Building the indexes — especially the wide ``idx_dbnsfp_rsid_covering`` — once
+    over a fully populated table is far cheaper than maintaining them per-row
+    across tens of millions of inserts, so the load path defers index creation
+    to after the bulk insert and calls this.
+    """
+
+    def _do() -> None:
+        with engine.begin() as conn:
+            for idx_sql in CREATE_INDEXES_SQL:
+                conn.execute(sa.text(idx_sql))
+
+    retry_on_locked(_do)
+
+
 def create_dbnsfp_tables(engine: sa.Engine) -> None:
     """Create the dbnsfp_scores table and indexes in the target database.
 
@@ -556,10 +598,8 @@ def create_dbnsfp_tables(engine: sa.Engine) -> None:
     Args:
         engine: SQLAlchemy engine for the dbnsfp.db file.
     """
-    with engine.begin() as conn:
-        conn.execute(sa.text(CREATE_TABLE_SQL))
-        for idx_sql in CREATE_INDEXES_SQL:
-            conn.execute(sa.text(idx_sql))
+    _create_dbnsfp_table(engine)
+    _create_dbnsfp_indexes(engine)
 
 
 def load_dbnsfp_from_tsv(
@@ -582,27 +622,29 @@ def load_dbnsfp_from_tsv(
     Returns:
         LoadStats with counts and metadata.
     """
-    create_dbnsfp_tables(engine)
-
-    if clear_existing:
-        with engine.begin() as conn:
-            conn.execute(sa.text("DELETE FROM dbnsfp_scores"))
+    # Create the table only; indexes are built once after the bulk insert.
+    _create_dbnsfp_table(engine)
 
     batch: list[dict] = []
     final_stats = LoadStats()
 
-    for row, final_stats in iter_dbnsfp_tsv(tsv_path, progress_callback=progress_callback):
-        batch.append(row)
+    with bulk_write_connection(engine) as conn:
+        if clear_existing:
+            execute_write(conn, sa.text("DELETE FROM dbnsfp_scores"))
 
-        if len(batch) >= BATCH_SIZE:
-            _insert_batch(engine, batch)
-            batch = []
+        for row, final_stats in iter_dbnsfp_tsv(tsv_path, progress_callback=progress_callback):
+            batch.append(row)
 
-    # Flush remaining
-    if batch:
-        _insert_batch(engine, batch)
+            if len(batch) >= BATCH_SIZE:
+                insert_batch(conn, _INSERT_DBNSFP_SQL, batch)
+                batch = []
 
-    # WAL checkpoint
+        # Flush remaining
+        if batch:
+            insert_batch(conn, _INSERT_DBNSFP_SQL, batch)
+
+    # Build indexes over the populated table, then truncate the WAL.
+    _create_dbnsfp_indexes(engine)
     _wal_checkpoint(engine)
 
     logger.info(
@@ -637,80 +679,61 @@ def load_dbnsfp_from_csv(
     Returns:
         LoadStats with counts.
     """
-    create_dbnsfp_tables(engine)
-
-    if clear_existing:
-        with engine.begin() as conn:
-            conn.execute(sa.text("DELETE FROM dbnsfp_scores"))
+    # Create the table only; indexes are built once after the bulk insert.
+    _create_dbnsfp_table(engine)
 
     stats = LoadStats()
     batch: list[dict] = []
 
-    with open(csv_path, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            stats.total_lines += 1
-            for required in ("chrom", "pos", "ref", "alt"):
-                if required not in row:
-                    msg = f"Missing required column '{required}' in CSV"
-                    raise ValueError(msg)
-            batch.append(
-                {
-                    "rsid": row.get("rsid") or None,
-                    "chrom": row["chrom"],
-                    "pos": int(row["pos"]),
-                    "ref": row["ref"],
-                    "alt": row["alt"],
-                    "cadd_phred": _parse_float(row.get("cadd_phred")),
-                    "sift_score": _parse_float(row.get("sift_score")),
-                    "sift_pred": row.get("sift_pred") or None,
-                    "polyphen2_hsvar_score": _parse_float(row.get("polyphen2_hsvar_score")),
-                    "polyphen2_hsvar_pred": row.get("polyphen2_hsvar_pred") or None,
-                    "revel": _parse_float(row.get("revel")),
-                    "mutpred2": _parse_float(row.get("mutpred2")),
-                    "vest4": _parse_float(row.get("vest4")),
-                    "metasvm": _parse_float(row.get("metasvm")),
-                    "metalr": _parse_float(row.get("metalr")),
-                    "gerp_rs": _parse_float(row.get("gerp_rs")),
-                    "phylop": _parse_float(row.get("phylop")),
-                    "mpc": _parse_float(row.get("mpc")),
-                    "primateai": _parse_float(row.get("primateai")),
-                }
-            )
-            stats.variants_loaded += 1
+    with bulk_write_connection(engine) as conn:
+        if clear_existing:
+            execute_write(conn, sa.text("DELETE FROM dbnsfp_scores"))
 
-            if len(batch) >= BATCH_SIZE:
-                _insert_batch(engine, batch)
-                batch = []
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                stats.total_lines += 1
+                for required in ("chrom", "pos", "ref", "alt"):
+                    if required not in row:
+                        msg = f"Missing required column '{required}' in CSV"
+                        raise ValueError(msg)
+                batch.append(
+                    {
+                        "rsid": row.get("rsid") or None,
+                        "chrom": row["chrom"],
+                        "pos": int(row["pos"]),
+                        "ref": row["ref"],
+                        "alt": row["alt"],
+                        "cadd_phred": _parse_float(row.get("cadd_phred")),
+                        "sift_score": _parse_float(row.get("sift_score")),
+                        "sift_pred": row.get("sift_pred") or None,
+                        "polyphen2_hsvar_score": _parse_float(row.get("polyphen2_hsvar_score")),
+                        "polyphen2_hsvar_pred": row.get("polyphen2_hsvar_pred") or None,
+                        "revel": _parse_float(row.get("revel")),
+                        "mutpred2": _parse_float(row.get("mutpred2")),
+                        "vest4": _parse_float(row.get("vest4")),
+                        "metasvm": _parse_float(row.get("metasvm")),
+                        "metalr": _parse_float(row.get("metalr")),
+                        "gerp_rs": _parse_float(row.get("gerp_rs")),
+                        "phylop": _parse_float(row.get("phylop")),
+                        "mpc": _parse_float(row.get("mpc")),
+                        "primateai": _parse_float(row.get("primateai")),
+                    }
+                )
+                stats.variants_loaded += 1
 
-    if batch:
-        _insert_batch(engine, batch)
+                if len(batch) >= BATCH_SIZE:
+                    insert_batch(conn, _INSERT_DBNSFP_SQL, batch)
+                    batch = []
 
+        if batch:
+            insert_batch(conn, _INSERT_DBNSFP_SQL, batch)
+
+    _create_dbnsfp_indexes(engine)
     _wal_checkpoint(engine)
 
     logger.info("dbnsfp_csv_loaded", variants=stats.variants_loaded)
     return stats
-
-
-def _insert_batch(engine: sa.Engine, batch: list[dict]) -> None:
-    """Insert a batch of rows into dbnsfp_scores using INSERT OR REPLACE."""
-    if not batch:
-        return
-    with engine.begin() as conn:
-        conn.execute(
-            sa.text(
-                "INSERT OR REPLACE INTO dbnsfp_scores "
-                "(rsid, chrom, pos, ref, alt, cadd_phred, "
-                "sift_score, sift_pred, polyphen2_hsvar_score, "
-                "polyphen2_hsvar_pred, revel, mutpred2, vest4, "
-                "metasvm, metalr, gerp_rs, phylop, mpc, primateai) "
-                "VALUES (:rsid, :chrom, :pos, :ref, :alt, :cadd_phred, "
-                ":sift_score, :sift_pred, :polyphen2_hsvar_score, "
-                ":polyphen2_hsvar_pred, :revel, :mutpred2, :vest4, "
-                ":metasvm, :metalr, :gerp_rs, :phylop, :mpc, :primateai)"
-            ),
-            batch,
-        )
 
 
 # ── Download ─────────────────────────────────────────────────────────────

@@ -35,6 +35,12 @@ import httpx
 import sqlalchemy as sa
 import structlog
 
+from backend.annotation.bulk_load import (
+    bulk_write_connection,
+    execute_write,
+    insert_batch,
+    retry_on_locked,
+)
 from backend.annotation.http_download import stream_download
 from backend.annotation.sqlite_limits import SQLITE_MAX_VARIABLE_NUMBER as _SQLITE_VAR_LIMIT
 
@@ -105,6 +111,16 @@ CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_gnomad_chrom_pos ON gnomad_af (chrom, pos)",
     "CREATE INDEX IF NOT EXISTS idx_gnomad_chrom_pos_ref_alt ON gnomad_af (chrom, pos, ref, alt)",
 ]
+
+# Bulk-insert statement (idempotent upsert on the rsid primary key).
+_INSERT_GNOMAD_SQL = sa.text(
+    "INSERT OR REPLACE INTO gnomad_af "
+    "(rsid, chrom, pos, ref, alt, af_global, af_afr, af_amr, "
+    "af_eas, af_eur, af_fin, af_sas, homozygous_count) "
+    "VALUES (:rsid, :chrom, :pos, :ref, :alt, :af_global, "
+    ":af_afr, :af_amr, :af_eas, :af_eur, :af_fin, :af_sas, "
+    ":homozygous_count)"
+)
 
 
 # ── Data classes ─────────────────────────────────────────────────────────
@@ -403,6 +419,27 @@ def iter_gnomad_vcf(
 # ── Database creation & loading ──────────────────────────────────────────
 
 
+def _create_gnomad_table(engine: sa.Engine) -> None:
+    """Create only the gnomad_af table (no indexes). Safe to call repeatedly."""
+    with engine.begin() as conn:
+        conn.execute(sa.text(CREATE_TABLE_SQL))
+
+
+def _create_gnomad_indexes(engine: sa.Engine) -> None:
+    """Create the gnomad_af indexes (idempotent). Retries on lock contention.
+
+    The load path defers index creation to after the bulk insert so the indexes
+    are built once over a fully populated table rather than maintained per-row.
+    """
+
+    def _do() -> None:
+        with engine.begin() as conn:
+            for idx_sql in CREATE_INDEXES_SQL:
+                conn.execute(sa.text(idx_sql))
+
+    retry_on_locked(_do)
+
+
 def create_gnomad_tables(engine: sa.Engine) -> None:
     """Create the gnomad_af table and indexes in the target database.
 
@@ -411,10 +448,8 @@ def create_gnomad_tables(engine: sa.Engine) -> None:
     Args:
         engine: SQLAlchemy engine for the gnomad_af.db file.
     """
-    with engine.begin() as conn:
-        conn.execute(sa.text(CREATE_TABLE_SQL))
-        for idx_sql in CREATE_INDEXES_SQL:
-            conn.execute(sa.text(idx_sql))
+    _create_gnomad_table(engine)
+    _create_gnomad_indexes(engine)
 
 
 def load_gnomad_from_vcf(
@@ -437,27 +472,29 @@ def load_gnomad_from_vcf(
     Returns:
         LoadStats with counts and metadata.
     """
-    create_gnomad_tables(engine)
-
-    if clear_existing:
-        with engine.begin() as conn:
-            conn.execute(sa.text("DELETE FROM gnomad_af"))
+    # Create the table only; indexes are built once after the bulk insert.
+    _create_gnomad_table(engine)
 
     batch: list[dict] = []
     final_stats = LoadStats()
 
-    for row, final_stats in iter_gnomad_vcf(vcf_path, progress_callback=progress_callback):
-        batch.append(row)
+    with bulk_write_connection(engine) as conn:
+        if clear_existing:
+            execute_write(conn, sa.text("DELETE FROM gnomad_af"))
 
-        if len(batch) >= BATCH_SIZE:
-            _insert_batch(engine, batch)
-            batch = []
+        for row, final_stats in iter_gnomad_vcf(vcf_path, progress_callback=progress_callback):
+            batch.append(row)
 
-    # Flush remaining
-    if batch:
-        _insert_batch(engine, batch)
+            if len(batch) >= BATCH_SIZE:
+                insert_batch(conn, _INSERT_GNOMAD_SQL, batch)
+                batch = []
 
-    # WAL checkpoint
+        # Flush remaining
+        if batch:
+            insert_batch(conn, _INSERT_GNOMAD_SQL, batch)
+
+    # Build indexes over the populated table, then truncate the WAL.
+    _create_gnomad_indexes(engine)
     _wal_checkpoint(engine)
 
     logger.info(
@@ -489,67 +526,51 @@ def load_gnomad_from_csv(
     Returns:
         LoadStats with counts.
     """
-    create_gnomad_tables(engine)
-
-    if clear_existing:
-        with engine.begin() as conn:
-            conn.execute(sa.text("DELETE FROM gnomad_af"))
+    # Create the table only; indexes are built once after the bulk insert.
+    _create_gnomad_table(engine)
 
     stats = LoadStats()
     batch: list[dict] = []
 
-    with open(csv_path, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            stats.total_lines += 1
-            batch.append(
-                {
-                    "rsid": row["rsid"],
-                    "chrom": row["chrom"],
-                    "pos": int(row["pos"]),
-                    "ref": row["ref"],
-                    "alt": row["alt"],
-                    "af_global": _parse_float(row.get("af_global")),
-                    "af_afr": _parse_float(row.get("af_afr")),
-                    "af_amr": _parse_float(row.get("af_amr")),
-                    "af_eas": _parse_float(row.get("af_eas")),
-                    "af_eur": _parse_float(row.get("af_eur")),
-                    "af_fin": _parse_float(row.get("af_fin")),
-                    "af_sas": _parse_float(row.get("af_sas")),
-                    "homozygous_count": _parse_int(row.get("homozygous_count")),
-                }
-            )
-            stats.variants_loaded += 1
+    with bulk_write_connection(engine) as conn:
+        if clear_existing:
+            execute_write(conn, sa.text("DELETE FROM gnomad_af"))
 
-            if len(batch) >= BATCH_SIZE:
-                _insert_batch(engine, batch)
-                batch = []
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                stats.total_lines += 1
+                batch.append(
+                    {
+                        "rsid": row["rsid"],
+                        "chrom": row["chrom"],
+                        "pos": int(row["pos"]),
+                        "ref": row["ref"],
+                        "alt": row["alt"],
+                        "af_global": _parse_float(row.get("af_global")),
+                        "af_afr": _parse_float(row.get("af_afr")),
+                        "af_amr": _parse_float(row.get("af_amr")),
+                        "af_eas": _parse_float(row.get("af_eas")),
+                        "af_eur": _parse_float(row.get("af_eur")),
+                        "af_fin": _parse_float(row.get("af_fin")),
+                        "af_sas": _parse_float(row.get("af_sas")),
+                        "homozygous_count": _parse_int(row.get("homozygous_count")),
+                    }
+                )
+                stats.variants_loaded += 1
 
-    if batch:
-        _insert_batch(engine, batch)
+                if len(batch) >= BATCH_SIZE:
+                    insert_batch(conn, _INSERT_GNOMAD_SQL, batch)
+                    batch = []
 
+        if batch:
+            insert_batch(conn, _INSERT_GNOMAD_SQL, batch)
+
+    _create_gnomad_indexes(engine)
     _wal_checkpoint(engine)
 
     logger.info("gnomad_csv_loaded", variants=stats.variants_loaded)
     return stats
-
-
-def _insert_batch(engine: sa.Engine, batch: list[dict]) -> None:
-    """Insert a batch of rows into gnomad_af using INSERT OR REPLACE."""
-    if not batch:
-        return
-    with engine.begin() as conn:
-        conn.execute(
-            sa.text(
-                "INSERT OR REPLACE INTO gnomad_af "
-                "(rsid, chrom, pos, ref, alt, af_global, af_afr, af_amr, "
-                "af_eas, af_eur, af_fin, af_sas, homozygous_count) "
-                "VALUES (:rsid, :chrom, :pos, :ref, :alt, :af_global, "
-                ":af_afr, :af_amr, :af_eas, :af_eur, :af_fin, :af_sas, "
-                ":homozygous_count)"
-            ),
-            batch,
-        )
 
 
 # ── Download ─────────────────────────────────────────────────────────────

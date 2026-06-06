@@ -28,6 +28,7 @@ from starlette.responses import StreamingResponse
 
 from backend.api.sse import _format_sse, get_job_progress
 from backend.config import Settings, get_settings
+from backend.db.build_guard import build_lock
 from backend.db.connection import get_registry
 from backend.db.database_registry import (
     DATABASES,
@@ -569,6 +570,40 @@ def _create_job_record(engine: sa.Engine, job_id: str, db_name: str) -> None:
 
 
 def _run_build(
+    *,
+    db_info: DatabaseInfo,
+    job_id: str,
+    engine: sa.Engine,
+    settings: Settings,
+) -> None:
+    """Build a database, serialized per-DB so two builds can't race the same file.
+
+    A duplicate download request (the in-flight dedup has a check-then-act gap)
+    or a build racing an auto-update would otherwise open two writers on the
+    same SQLite file and deadlock on the WAL write lock ("database is locked").
+    :func:`build_lock` makes same-DB builds run one at a time (different DBs
+    still build in parallel); once we hold the lock we re-check whether a
+    concurrent build already finished this DB to avoid a redundant rebuild.
+    """
+    with build_lock(db_info.name):
+        if get_database_status(db_info, settings)["downloaded"]:
+            _update_job(
+                engine,
+                job_id,
+                status="complete",
+                progress_pct=100.0,
+                message=f"{db_info.display_name} already downloaded",
+            )
+            logger.info(
+                "database_build_skipped_already_present",
+                db_name=db_info.name,
+                job_id=job_id,
+            )
+            return
+        _execute_build(db_info=db_info, job_id=job_id, engine=engine, settings=settings)
+
+
+def _execute_build(
     *,
     db_info: DatabaseInfo,
     job_id: str,

@@ -568,3 +568,32 @@ class TestLoadStats:
         assert stats.variants_loaded == 0
         assert stats.skipped_no_rsid == 0
         assert stats.sha256 is None
+
+
+class TestIndexAfterLoad:
+    """The load path builds indexes AFTER the bulk insert (speed + smaller lock window)."""
+
+    def test_load_on_fresh_engine_creates_indexes_and_data(self) -> None:
+        # Fresh engine with NO tables: load must create the table, insert, then
+        # build the indexes — all three must exist afterward and be queryable.
+        engine = sa.create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        stats = load_dbnsfp_from_csv(DBNSFP_SEED_CSV, engine)
+        assert stats.variants_loaded == 61
+
+        with engine.connect() as conn:
+            count = conn.execute(sa.text("SELECT COUNT(*) FROM dbnsfp_scores")).scalar()
+            indexes = conn.execute(
+                sa.text(
+                    "SELECT name FROM sqlite_master"
+                    " WHERE type='index' AND tbl_name='dbnsfp_scores'"
+                )
+            ).fetchall()
+        index_names = {r[0] for r in indexes}
+        assert count == 61
+        assert "idx_dbnsfp_rsid" in index_names
+        assert "idx_dbnsfp_chrom_pos" in index_names
+        assert "idx_dbnsfp_rsid_covering" in index_names

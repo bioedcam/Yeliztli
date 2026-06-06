@@ -17,6 +17,7 @@ from huey import SqliteHuey, crontab
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from backend.config import get_settings
+from backend.db.build_guard import build_lock
 
 logger = structlog.get_logger(__name__)
 
@@ -778,27 +779,32 @@ def run_database_update_task(job_id: str, db_name: str) -> None:
 
         # Build functions for reference-target DBs take the reference engine;
         # standalone DBs write to their own file and take a fresh engine.
-        if db_info and db_info.target_db == "reference":
-            build_fn(engine, settings.downloads_dir)
-        else:
-            import sqlalchemy as sa
-            from sqlalchemy import event
+        # Serialize per-DB so an auto-update can't race a setup-wizard build of
+        # the same file (the "database is locked" failure mode).
+        with build_lock(db_name):
+            if db_info and db_info.target_db == "reference":
+                build_fn(engine, settings.downloads_dir)
+            else:
+                import sqlalchemy as sa
+                from sqlalchemy import event
 
-            dest = db_info.dest_path(settings) if db_info else settings.data_dir / f"{db_name}.db"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            standalone_engine = sa.create_engine(f"sqlite:///{dest}")
+                dest = (
+                    db_info.dest_path(settings) if db_info else settings.data_dir / f"{db_name}.db"
+                )
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                standalone_engine = sa.create_engine(f"sqlite:///{dest}")
 
-            @event.listens_for(standalone_engine, "connect")
-            def _set_pragmas(dbapi_conn, _):
-                cursor = dbapi_conn.cursor()
-                cursor.execute("PRAGMA busy_timeout=30000")
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.close()
+                @event.listens_for(standalone_engine, "connect")
+                def _set_pragmas(dbapi_conn, _):
+                    cursor = dbapi_conn.cursor()
+                    cursor.execute("PRAGMA busy_timeout=30000")
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.close()
 
-            try:
-                build_fn(standalone_engine, settings.downloads_dir)
-            finally:
-                standalone_engine.dispose()
+                try:
+                    build_fn(standalone_engine, settings.downloads_dir)
+                finally:
+                    standalone_engine.dispose()
 
         msg = f"{db_name} update complete"
 
