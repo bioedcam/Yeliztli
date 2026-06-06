@@ -522,6 +522,102 @@ def _record_db_version(
             )
 
 
+# ── Bundled-DB materialization (offline fallback) ────────────────
+
+
+def _committed_bundle_version(db_info: DatabaseInfo) -> str:
+    """Return an honest version string for a bundled DB's committed fixture.
+
+    The repo ships small fixtures under ``bundles/`` so the app works offline,
+    but they are *not* always the current release (notably ``vep_bundle.db`` is
+    a small pre-v2.0.0 fixture — the real 358 MB union catalog lives as a GitHub
+    release asset). Recording a truthful version keeps the §5.4 AncestryDNA gate
+    and the Update Manager honest:
+
+    - ``vep_bundle``: read the fixture's own ``bundle_metadata.bundle_version``;
+      fixtures predating v2.0.0 omit that key → fall back to ``"v1.0.0"`` (the
+      version the staleness machinery already assumes for pre-Phase-0 bundles).
+    - everything else (e.g. ``ancestry_pca``): the committed fixture *is* the
+      shipped release, so use the manifest version when reachable.
+    """
+    import sqlite3
+
+    src = BUNDLED_DIR / db_info.filename
+
+    if db_info.name == "vep_bundle" and src.exists():
+        try:
+            with sqlite3.connect(str(src)) as conn:
+                row = conn.execute(
+                    "SELECT value FROM bundle_metadata WHERE key = 'bundle_version'"
+                ).fetchone()
+            if row and row[0]:
+                return str(row[0])
+        except Exception:
+            pass
+        return "v1.0.0"
+
+    from backend.db.manifest import get_bundle_info
+
+    entry = get_bundle_info(db_info.name)
+    if entry is not None and entry.version:
+        return entry.version
+    return "v1.0.0"
+
+
+def install_committed_bundle(db_info: DatabaseInfo, settings: Settings) -> bool:
+    """Materialize a bundled DB from its committed fixture and record a version.
+
+    Copies ``bundles/<filename>`` into ``data_dir`` (only when the destination
+    is absent) and upserts a ``database_versions`` row with the honest fixture
+    version (:func:`_committed_bundle_version`). This is the *offline fallback*
+    install path — the setup wizard prefers the manifest download (real latest
+    release) and only falls back here when the release is unreachable or the
+    manifest carries no URL (e.g. the out-of-band ``ancestry_pca`` bundle).
+
+    Returns ``True`` when the destination file exists after the call. Version
+    recording is best-effort: a missing reference DB is logged, not fatal.
+    """
+    import sqlalchemy as sa
+
+    src = BUNDLED_DIR / db_info.filename
+    dest = db_info.dest_path(settings)
+    if not dest.exists():
+        if not src.exists():
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dest))
+        logger.info(
+            "bundled_db_copied",
+            db_name=db_info.name,
+            src=str(src),
+            dest=str(dest),
+        )
+
+    version = _committed_bundle_version(db_info)
+    ref_path = settings.reference_db_path
+    if ref_path.exists():
+        try:
+            engine = sa.create_engine(f"sqlite:///{ref_path}")
+            try:
+                _record_db_version(
+                    engine,
+                    db_name=db_info.name,
+                    version=version,
+                    file_size_bytes=dest.stat().st_size if dest.exists() else None,
+                )
+            finally:
+                engine.dispose()
+        except Exception as exc:
+            logger.warning(
+                "bundled_db_version_record_failed",
+                db_name=db_info.name,
+                error=str(exc),
+                reference_db=str(ref_path),
+            )
+
+    return dest.exists()
+
+
 # ── Status checking ──────────────────────────────────────────────
 
 
@@ -564,7 +660,13 @@ def get_database_status(db_info: DatabaseInfo, settings: Settings) -> dict:
         dest = db_info.dest_path(settings)
         bundled_src = BUNDLED_DIR / db_info.filename
         if not dest.exists() and bundled_src.exists():
-            # Auto-copy from the repo bundled directory to data_dir
+            # Offline fallback: surface the committed fixture so the app works
+            # without a download. This deliberately does NOT record a
+            # database_versions row — the version stamp is owned by the explicit
+            # install path (install_committed_bundle / the manifest download),
+            # keeping this status call side-effect-light and network-free. A
+            # versionless vep_bundle stays gated for AncestryDNA (§5.4) and is
+            # offered the real-release download by the setup wizard.
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(bundled_src), str(dest))
             logger.info(

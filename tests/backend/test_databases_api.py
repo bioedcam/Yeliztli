@@ -235,6 +235,111 @@ class TestDatabaseRegistry:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Tests: bundled-DB install (real-latest download + honest version stamp)
+# ═══════════════════════════════════════════════════════════════════════
+
+_REPO_MANIFEST = Path(__file__).resolve().parents[2] / "bundles" / "manifest.json"
+
+
+def _make_reference_db(data_dir: Path) -> None:
+    """Create an empty reference.db with all reference tables at data_dir."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    engine = sa.create_engine(f"sqlite:///{data_dir / 'reference.db'}")
+    try:
+        reference_metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+
+def _recorded_version(data_dir: Path, db_name: str) -> str | None:
+    from backend.db.tables import database_versions
+
+    engine = sa.create_engine(f"sqlite:///{data_dir / 'reference.db'}")
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                sa.select(database_versions.c.version).where(
+                    database_versions.c.db_name == db_name
+                )
+            ).fetchone()
+    finally:
+        engine.dispose()
+    return row.version if row else None
+
+
+class TestBundledInstall:
+    """install_committed_bundle + _bundle_install_needed — the explicit install
+    path that replaces the silent stale-fixture auto-copy. The committed
+    vep_bundle.db is a pre-v2.0.0 fixture; the real 358 MB union catalog is a
+    GitHub release asset pulled by the setup wizard / Update Manager.
+    """
+
+    def test_install_committed_bundle_vep_records_stale_version(self, tmp_data_dir: Path):
+        from backend.db.database_registry import install_committed_bundle
+
+        settings = Settings(data_dir=tmp_data_dir, wal_mode=False)
+        _make_reference_db(tmp_data_dir)
+        db_info = get_database("vep_bundle")
+        assert db_info is not None
+
+        assert install_committed_bundle(db_info, settings) is True
+        assert db_info.dest_path(settings).exists()
+        # The fixture predates v2.0.0 (no bundle_version key) → honest v1.0.0,
+        # which keeps the §5.4 AncestryDNA gate blocking until the real release.
+        assert _recorded_version(tmp_data_dir, "vep_bundle") == "v1.0.0"
+
+    def test_install_committed_bundle_ancestry_records_manifest_version(
+        self, tmp_data_dir: Path, monkeypatch
+    ):
+        from backend.db import manifest as manifest_mod
+        from backend.db.database_registry import install_committed_bundle
+
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(_REPO_MANIFEST))
+        manifest_mod.reset_cache()
+        try:
+            settings = Settings(data_dir=tmp_data_dir, wal_mode=False)
+            _make_reference_db(tmp_data_dir)
+            db_info = get_database("ancestry_pca")
+            assert db_info is not None
+
+            assert install_committed_bundle(db_info, settings) is True
+            assert db_info.dest_path(settings).exists()
+            # The committed npz IS the shipped release → version from manifest.
+            assert _recorded_version(tmp_data_dir, "ancestry_pca") == "v1.0"
+        finally:
+            manifest_mod.reset_cache()
+
+    def test_bundle_install_needed_uses_manifest_version(self, tmp_data_dir: Path, monkeypatch):
+        from backend.api.routes.databases import _bundle_install_needed
+        from backend.db import manifest as manifest_mod
+        from backend.db.database_registry import _record_db_version
+
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(_REPO_MANIFEST))
+        manifest_mod.reset_cache()
+        _make_reference_db(tmp_data_dir)
+        engine = sa.create_engine(f"sqlite:///{tmp_data_dir / 'reference.db'}")
+        try:
+            vep = get_database("vep_bundle")
+            anc = get_database("ancestry_pca")
+            assert vep is not None and anc is not None
+
+            # No recorded version → needs install.
+            assert _bundle_install_needed(vep, engine) is True
+            # Stale fixture (v1.0.0) trails manifest v2.0.0 → needs install.
+            _record_db_version(engine, db_name="vep_bundle", version="v1.0.0", file_size_bytes=1)
+            assert _bundle_install_needed(vep, engine) is True
+            # Recorded == manifest → no re-install.
+            _record_db_version(engine, db_name="vep_bundle", version="v2.0.0", file_size_bytes=1)
+            assert _bundle_install_needed(vep, engine) is False
+            # ancestry already at manifest v1.0 → no re-install (setup re-run safe).
+            _record_db_version(engine, db_name="ancestry_pca", version="v1.0", file_size_bytes=1)
+            assert _bundle_install_needed(anc, engine) is False
+        finally:
+            engine.dispose()
+            manifest_mod.reset_cache()
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Tests: GET /api/databases
 # ═══════════════════════════════════════════════════════════════════════
 

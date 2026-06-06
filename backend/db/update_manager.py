@@ -846,13 +846,18 @@ def _check_manifest_bundle_update(
     Returns a :class:`VersionInfo` when the manifest version differs from the
     one recorded in ``database_versions`` (including the "no row" case so a
     freshly-installed bundle without a recorded version is offered an update).
-    Returns ``None`` when the manifest entry is missing/unreachable or the
-    versions match.
+    Returns ``None`` when the manifest entry is missing/unreachable, the
+    versions match, or the manifest carries no download URL.
+
+    The no-URL guard matters for out-of-band bundles such as ``ancestry_pca``
+    (shipped in-repo, ``url=""``): there is nothing to download, so surfacing
+    an "update available" the user can never satisfy — and that the trigger
+    endpoint rejects — is a dead end. Skip it.
     """
     from backend.db.manifest import get_bundle_info
 
     entry = get_bundle_info(db_name, timeout=timeout)
-    if entry is None:
+    if entry is None or not entry.url:
         return None
 
     current = get_current_version(reference_engine, db_name)

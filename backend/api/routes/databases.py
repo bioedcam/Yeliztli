@@ -22,6 +22,7 @@ from typing import Any
 import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, HTTPException
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
@@ -35,6 +36,7 @@ from backend.db.database_registry import (
     get_build_fn,
     get_database,
     get_database_status,
+    install_committed_bundle,
 )
 from backend.db.download_manager import DownloadManager
 from backend.db.manifest import get_bundle_info
@@ -188,9 +190,18 @@ async def trigger_download(body: DownloadRequest) -> DownloadResponse:
         db_info = get_database(name)
         if db_info is None:
             continue
-        if db_info.build_mode in ("manual", "bundled"):
+        if db_info.build_mode == "manual":
             continue
         if name in in_flight:
+            continue
+        if db_info.build_mode == "bundled":
+            # Bundled DBs (vep_bundle, ancestry_pca) install the real latest
+            # release via the manifest. (Re)install when there is no recorded
+            # version or the installed version trails the manifest — this is how
+            # the stale committed vep_bundle fixture gets upgraded to the real
+            # 358 MB v2.0.0 union catalog instead of being silently skipped.
+            if _bundle_install_needed(db_info, engine):
+                to_download.append(name)
             continue
         status = get_database_status(db_info, settings)
         if not status["downloaded"]:
@@ -231,8 +242,18 @@ async def trigger_download(body: DownloadRequest) -> DownloadResponse:
                 engine=engine,
                 settings=settings,
             )
+        elif db_info.build_mode == "bundled":
+            # Pre-built bundle (vep_bundle, ancestry_pca): manifest download of
+            # the real latest release, with the committed fixture as fallback.
+            executor.submit(
+                _run_bundle_install,
+                db_info=db_info,
+                job_id=job_id,
+                engine=engine,
+                settings=settings,
+            )
         else:
-            # Legacy HTTP download (encode_ccres)
+            # HTTP download (encode_ccres, lai_bundle)
             dm = DownloadManager(engine, settings.downloads_dir)
             executor.submit(
                 _run_download,
@@ -779,6 +800,107 @@ def _run_download(
         )
         logger.exception(
             "database_download_failed",
+            db_name=db_info.name,
+            job_id=job_id,
+            error=error_msg,
+        )
+
+
+def _bundle_install_needed(db_info: DatabaseInfo, engine: sa.Engine) -> bool:
+    """Whether a bundled DB should be (re)installed from the manifest.
+
+    ``True`` when there is no ``database_versions`` row, or the installed
+    version is strictly below the manifest version (semver-compared, falling
+    back to string inequality). This upgrades a stale committed-fixture
+    auto-copy — e.g. ``vep_bundle`` v1.0.0 — to the real manifest release
+    (v2.0.0) while leaving an already-current bundle (``ancestry_pca`` v1.0)
+    untouched so a setup re-run does not re-download it.
+    """
+    from backend.db.update_manager import get_current_version
+
+    installed = get_current_version(engine, db_info.name)
+    if installed is None:
+        return True
+    entry = get_bundle_info(db_info.name)
+    if entry is None or not entry.version:
+        return False
+    try:
+        return Version(installed.lstrip("v")) < Version(entry.version.lstrip("v"))
+    except InvalidVersion:
+        return installed != entry.version
+
+
+def _run_bundle_install(
+    *,
+    db_info: DatabaseInfo,
+    job_id: str,
+    engine: sa.Engine,
+    settings: Settings,
+) -> None:
+    """Install a pre-built bundle in a background thread.
+
+    Prefers the manifest download of the real latest release (via the dedicated
+    ``run_<bundle>_update`` runner, which verifies SHA-256 and records the
+    version stamp). Falls back to the committed fixture when the release is
+    unreachable or the manifest carries no URL (the out-of-band ``ancestry_pca``
+    bundle), still recording an honest version row either way.
+    """
+    try:
+        _update_job(
+            engine,
+            job_id,
+            status="running",
+            message=f"Downloading {db_info.display_name}...",
+        )
+
+        from backend.db.update_manager import (
+            run_ancestry_pca_bundle_update,
+            run_vep_bundle_update,
+        )
+
+        runners = {
+            "vep_bundle": run_vep_bundle_update,
+            "ancestry_pca": run_ancestry_pca_bundle_update,
+        }
+        runner = runners.get(db_info.name)
+        result = runner(settings, timeout=3600.0) if runner is not None else None
+
+        if result is not None:
+            _update_job(
+                engine,
+                job_id,
+                status="complete",
+                progress_pct=100.0,
+                message=f"{db_info.display_name} download complete",
+            )
+            logger.info("bundle_install_complete", db_name=db_info.name, source="manifest")
+            return
+
+        # Remote unavailable or no manifest URL — fall back to the committed copy.
+        if install_committed_bundle(db_info, settings):
+            _update_job(
+                engine,
+                job_id,
+                status="complete",
+                progress_pct=100.0,
+                message=f"{db_info.display_name} installed (bundled copy)",
+            )
+            logger.info("bundle_install_complete", db_name=db_info.name, source="bundled")
+            return
+
+        _update_job(
+            engine,
+            job_id,
+            status="failed",
+            progress_pct=0.0,
+            error=f"No download source available for {db_info.name}",
+        )
+
+    except Exception as exc:
+        error_msg = f"{type(exc).__name__}: {exc}"
+        _update_job(engine, job_id, status="failed", progress_pct=0.0, error=error_msg)
+        logger.exception(
+            "bundle_install_failed",
             db_name=db_info.name,
             job_id=job_id,
             error=error_msg,

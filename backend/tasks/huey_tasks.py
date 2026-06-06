@@ -718,6 +718,56 @@ def run_database_update_task(job_id: str, db_name: str) -> None:
             )
             return
 
+        # LAI / ancestry-PCA bundles flow through their manifest-driven runners
+        # (same path as the scheduler's _dispatch_auto_update), not a build_fn.
+        if db_name in ("lai_bundle", "ancestry_pca"):
+            from backend.db.manifest import get_bundle_info
+            from backend.db.update_manager import (
+                run_ancestry_pca_bundle_update,
+                run_lai_bundle_update,
+            )
+
+            _update_job(
+                job_id,
+                status="running",
+                progress_pct=10.0,
+                message=f"Downloading {db_name} bundle",
+            )
+            runner = {
+                "lai_bundle": run_lai_bundle_update,
+                "ancestry_pca": run_ancestry_pca_bundle_update,
+            }[db_name]
+            result = runner(registry.settings)
+            if result is None:
+                # None means either a genuine failure (manifest URL present) or a
+                # no-op for an out-of-band bundle with no URL (ancestry_pca). Only
+                # the former is an error.
+                entry = get_bundle_info(db_name)
+                if entry is None or not entry.url:
+                    _update_job(
+                        job_id,
+                        status="complete",
+                        progress_pct=100.0,
+                        message=f"{db_name}: no remote update available",
+                    )
+                    logger.info(
+                        "database_update_task_noop",
+                        extra={"job_id": job_id, "db_name": db_name},
+                    )
+                    return
+                raise RuntimeError(f"{db_name} bundle update failed")
+            _update_job(
+                job_id,
+                status="complete",
+                progress_pct=100.0,
+                message=f"{db_name} update complete",
+            )
+            logger.info(
+                "database_update_task_complete",
+                extra={"job_id": job_id, "db_name": db_name},
+            )
+            return
+
         build_fn = get_build_fn(db_name)
         if build_fn is None:
             raise ValueError(f"No build function registered for '{db_name}'")
