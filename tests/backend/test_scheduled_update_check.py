@@ -267,6 +267,35 @@ class TestBundleDispatch:
         mock_pca.assert_called_once_with(registry.settings)
         assert result.errors == []
 
+    def test_gnomad_bundle_dispatch(self, reference_engine, tmp_path: Path):
+        """gnomad now routes through the bundle runner (not the huey build path)."""
+        registry = _make_registry(reference_engine, tmp_path)
+        # gnomad's default toggle is True; a small _info() size stays under the
+        # bandwidth window so the dispatch proceeds synchronously.
+        with (
+            patch(
+                "backend.db.update_manager.check_all_updates",
+                return_value=UpdateCheckResult(available=[_info("gnomad")]),
+            ),
+            patch(
+                "backend.db.update_manager.run_gnomad_bundle_update",
+                return_value=UpdateResult(
+                    db_name="gnomad",
+                    previous_version=None,
+                    new_version="v1.0.0",
+                ),
+            ) as mock_gnomad,
+            # Guard against gnomad accidentally falling through to the huey path.
+            patch("backend.tasks.huey_tasks.create_database_update_job") as mock_create_job,
+            patch("backend.tasks.huey_tasks.run_database_update_task") as mock_run_task,
+        ):
+            result = run_scheduled_update_check(registry)
+
+        mock_gnomad.assert_called_once_with(registry.settings)
+        mock_create_job.assert_not_called()
+        mock_run_task.assert_not_called()
+        assert result.errors == []
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Pipeline DB dispatch — huey_tasks plumbing
@@ -277,23 +306,24 @@ class TestPipelineDispatch:
     def test_pipeline_dispatch_queues_huey_task(self, reference_engine, tmp_path: Path):
         """Pipeline DBs reuse ``run_database_update_task`` via Huey."""
         registry = _make_registry(reference_engine, tmp_path)
-        # gnomad's default toggle is True — exercise the default path.
+        # dbnsfp's default toggle is True and it is still a pipeline build
+        # (gnomad now ships as a bundle) — exercise the default huey path.
 
         with (
             patch(
                 "backend.db.update_manager.check_all_updates",
-                return_value=UpdateCheckResult(available=[_info("gnomad")]),
+                return_value=UpdateCheckResult(available=[_info("dbnsfp")]),
             ),
             patch(
                 "backend.tasks.huey_tasks.create_database_update_job",
-                return_value="job-gnomad",
+                return_value="job-dbnsfp",
             ) as mock_create_job,
             patch("backend.tasks.huey_tasks.run_database_update_task") as mock_run_task,
         ):
             result = run_scheduled_update_check(registry)
 
-        mock_create_job.assert_called_once_with("gnomad")
-        mock_run_task.assert_called_once_with("job-gnomad", "gnomad")
+        mock_create_job.assert_called_once_with("dbnsfp")
+        mock_run_task.assert_called_once_with("job-dbnsfp", "dbnsfp")
         assert result.errors == []
 
     def test_pipeline_dispatch_uses_table_toggle(self, reference_engine, tmp_path: Path):

@@ -293,12 +293,21 @@ DATABASES: dict[str, DatabaseInfo] = {
         name="gnomad",
         display_name="gnomAD",
         description="Population allele frequencies from the Genome Aggregation Database",
-        url="",
+        # TODO(gnomad-asset): publish the gnomad-bundle-v1.0.0 release asset before
+        # enabling auto-install/auto-update. Until then the bundles["gnomad"] manifest
+        # entry is intentionally absent (gnomad stays in pipeline_pins) and this URL is
+        # the eventual release-asset target — the install/update path is inert (returns
+        # "no manifest entry") rather than wrong. In bundled mode the runner reads the
+        # authoritative url/sha/size from the manifest, not this registry entry.
+        url="https://github.com/bioedcam/GenomeInsight/releases/download/gnomad-bundle-v1.0.0/gnomad_af.db",
         filename="gnomad_af.db",
-        expected_size_bytes=2_000_000_000,  # ~2 GB
+        # ~2 GB display estimate until the asset is built (§4); real size lands later.
+        expected_size_bytes=2_000_000_000,
+        # sha256 unpinned in bundled mode — the manifest bundles["gnomad"] entry is authoritative.
+        sha256=None,
         required=True,
         phase=2,
-        build_mode="pipeline",
+        build_mode="bundled",
         target_db="standalone",
     ),
     "dbnsfp": DatabaseInfo(
@@ -435,7 +444,9 @@ def get_database(name: str) -> DatabaseInfo | None:
 
 _BUILD_FN_REGISTRY: dict[str, tuple[str, str]] = {
     "clinvar": ("backend.annotation.clinvar", "download_and_load_clinvar"),
-    "gnomad": ("backend.annotation.gnomad", "download_and_load_gnomad"),
+    # gnomad is no longer a pipeline build — it ships as a prebuilt downloadable
+    # bundle (build_mode="bundled"). get_build_fn("gnomad") now returns None so the
+    # setup wizard / scheduler route it through run_gnomad_bundle_update instead.
     "dbnsfp": ("backend.annotation.dbnsfp", "download_and_load_dbnsfp"),
     "gwas_catalog": ("backend.annotation.gwas", "download_and_load_gwas"),
     "dbsnp": ("backend.annotation.dbsnp", "download_and_load_rsmerge"),

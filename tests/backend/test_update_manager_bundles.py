@@ -25,6 +25,7 @@ from backend.db.update_manager import (
     VersionInfo,
     check_ancestry_pca_update,
     check_clinvar_update,
+    check_gnomad_bundle_update,
     check_lai_bundle_update,
     check_vep_bundle_update,
 )
@@ -46,6 +47,13 @@ SAMPLE_MANIFEST: dict = {
             "url": "",
             "sha256": "3593c24dd32f67e87fa4d58653621a5b5c6635bcce569ead909386c3139ddf58",
             "size_bytes": 414_432,
+        },
+        "gnomad": {
+            "version": "v1.0.0",
+            "build_date": "2026-06-06",
+            "url": "https://example.com/gnomad_af.db",
+            "sha256": "11" * 32,
+            "size_bytes": 2_000_000_123,
         },
     },
     "pipeline_pins": {
@@ -236,14 +244,104 @@ class TestCheckAncestryPcaUpdate:
             assert check_ancestry_pca_update(reference_engine) is None
 
 
+# ── check_gnomad_bundle_update ────────────────────────────────────────
+
+
+class TestCheckGnomadBundleUpdate:
+    def test_manifest_newer_than_recorded_returns_version_info(
+        self, tmp_path: Path, monkeypatch, reference_engine
+    ):
+        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        _record_version_row(reference_engine, "gnomad", "v0.9.0")
+
+        result = check_gnomad_bundle_update(reference_engine)
+
+        assert result is not None
+        assert isinstance(result, VersionInfo)
+        assert result.db_name == "gnomad"
+        assert result.latest_version == "v1.0.0"
+        assert result.download_url == "https://example.com/gnomad_af.db"
+        assert result.download_size_bytes == 2_000_000_123
+        assert result.release_date == "2026-06-06"
+
+    def test_manifest_matches_recorded_returns_none(
+        self, tmp_path: Path, monkeypatch, reference_engine
+    ):
+        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        _record_version_row(reference_engine, "gnomad", "v1.0.0")
+
+        assert check_gnomad_bundle_update(reference_engine) is None
+
+    def test_no_recorded_version_returns_version_info(
+        self, tmp_path: Path, monkeypatch, reference_engine
+    ):
+        """Fresh install (no database_versions row) → offer the bundle."""
+        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        result = check_gnomad_bundle_update(reference_engine)
+
+        assert result is not None
+        assert result.latest_version == "v1.0.0"
+
+    def test_manifest_missing_bundle_entry_returns_none(
+        self, tmp_path: Path, monkeypatch, reference_engine
+    ):
+        """Deferred state: bundles['gnomad'] absent → no update offered."""
+        payload = json.loads(json.dumps(SAMPLE_MANIFEST))
+        del payload["bundles"]["gnomad"]
+        path = _write_manifest(tmp_path, payload)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        assert check_gnomad_bundle_update(reference_engine) is None
+
+    def test_no_url_returns_none(self, tmp_path: Path, monkeypatch, reference_engine):
+        """An entry with an empty url is treated as nothing-to-download."""
+        payload = json.loads(json.dumps(SAMPLE_MANIFEST))
+        payload["bundles"]["gnomad"]["url"] = ""
+        path = _write_manifest(tmp_path, payload)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        _record_version_row(reference_engine, "gnomad", "v0.9.0")
+
+        assert check_gnomad_bundle_update(reference_engine) is None
+
+    def test_manifest_unreachable_returns_none(self, reference_engine):
+        with patch(
+            "backend.db.manifest.httpx.get",
+            side_effect=httpx.ConnectError("nope"),
+        ):
+            assert check_gnomad_bundle_update(reference_engine) is None
+
+    def test_settings_argument_accepted_and_ignored(
+        self, tmp_path: Path, monkeypatch, reference_engine
+    ):
+        """Signature parity: settings is accepted but not required."""
+        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        _record_version_row(reference_engine, "gnomad", "v1.0.0")
+
+        # Both call shapes return None (up to date).
+        assert check_gnomad_bundle_update(reference_engine, None) is None
+        assert check_gnomad_bundle_update(reference_engine, settings=object()) is None
+
+
 # ── CHECK_FNS dispatch dict ───────────────────────────────────────────
 
 
 class TestCheckFnsDispatch:
     def test_contains_currently_implemented_keys(self):
         # Step 18 wires the bundle + clinvar + vep_bundle entries.
-        # Pipeline-DB entries are added in Steps 19–24.
-        assert set(CHECK_FNS) >= {"clinvar", "vep_bundle", "lai_bundle", "ancestry_pca"}
+        # Pipeline-DB entries are added in Steps 19–24. gnomad joined the bundle
+        # set when it flipped to build_mode="bundled".
+        assert set(CHECK_FNS) >= {
+            "clinvar",
+            "vep_bundle",
+            "lai_bundle",
+            "ancestry_pca",
+            "gnomad",
+        }
 
     def test_each_value_is_callable(self):
         for db_name, fn in CHECK_FNS.items():
@@ -254,6 +352,7 @@ class TestCheckFnsDispatch:
         assert CHECK_FNS["vep_bundle"] is check_vep_bundle_update
         assert CHECK_FNS["lai_bundle"] is check_lai_bundle_update
         assert CHECK_FNS["ancestry_pca"] is check_ancestry_pca_update
+        assert CHECK_FNS["gnomad"] is check_gnomad_bundle_update
 
     def test_bundle_dispatch_via_check_fns(self, tmp_path: Path, monkeypatch, reference_engine):
         """Round-trip the dispatch path used by Step 25's scheduler refactor."""

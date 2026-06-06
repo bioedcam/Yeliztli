@@ -20,7 +20,6 @@ import pytest
 from backend.annotation.cpic import check_cpic_update
 from backend.annotation.dbnsfp import check_dbnsfp_update
 from backend.annotation.dbsnp import check_dbsnp_update
-from backend.annotation.gnomad import check_gnomad_update
 from backend.annotation.gwas import check_gwas_update
 from backend.annotation.mondo_hpo import check_mondo_hpo_update
 from backend.db import manifest as manifest_mod
@@ -178,150 +177,6 @@ def _mock_get_client(payload: dict | None = None):
     mock_client.return_value.__exit__ = MagicMock(return_value=False)
     mock_client.return_value.get.return_value = mock_resp
     return mock_client, mock_resp
-
-
-# ── check_gnomad_update ────────────────────────────────────────────────
-
-
-class TestCheckGnomadUpdate:
-    def test_older_recorded_returns_version_info(
-        self, tmp_path: Path, monkeypatch, reference_engine
-    ):
-        """Recorded version older than manifest pin → VersionInfo."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-        _record_version_row(reference_engine, "gnomad", "r2.1.0")
-
-        mock_client, _ = _mock_head_client(content_length="987654321")
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            result = check_gnomad_update(reference_engine)
-
-        assert result is not None
-        assert isinstance(result, VersionInfo)
-        assert result.db_name == "gnomad"
-        assert result.latest_version == "r2.1.1"
-        assert result.download_url == GNOMAD_URL
-        assert result.download_size_bytes == 987_654_321
-        # HEAD was issued against the manifest-pinned URL.
-        mock_client.return_value.head.assert_called_once_with(GNOMAD_URL)
-
-    def test_newer_recorded_returns_none(self, tmp_path: Path, monkeypatch, reference_engine):
-        """Recorded version newer than manifest pin → no downgrade offered."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-        _record_version_row(reference_engine, "gnomad", "r3.0.0")
-
-        # HEAD must not be invoked when the local version already wins.
-        mock_client, _ = _mock_head_client()
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            result = check_gnomad_update(reference_engine)
-
-        assert result is None
-        mock_client.return_value.head.assert_not_called()
-
-    def test_matching_recorded_returns_none(self, tmp_path: Path, monkeypatch, reference_engine):
-        """Recorded version equals manifest pin → already up to date."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-        _record_version_row(reference_engine, "gnomad", "r2.1.1")
-
-        mock_client, _ = _mock_head_client()
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            assert check_gnomad_update(reference_engine) is None
-        mock_client.return_value.head.assert_not_called()
-
-    def test_no_recorded_version_returns_version_info(
-        self, tmp_path: Path, monkeypatch, reference_engine
-    ):
-        """Fresh install (no database_versions row) → offer the pinned version."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-
-        mock_client, _ = _mock_head_client(content_length="987654321")
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            result = check_gnomad_update(reference_engine)
-
-        assert result is not None
-        assert result.latest_version == "r2.1.1"
-        assert result.download_size_bytes == 987_654_321
-
-    def test_head_missing_content_length_returns_zero_size(
-        self, tmp_path: Path, monkeypatch, reference_engine
-    ):
-        """HEAD succeeds without Content-Length → size defaults to 0."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-
-        mock_client, _ = _mock_head_client(content_length=None)
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            result = check_gnomad_update(reference_engine)
-
-        assert result is not None
-        assert result.download_size_bytes == 0
-
-    def test_head_network_error_returns_none(self, tmp_path: Path, monkeypatch, reference_engine):
-        """HEAD raises → graceful None (no spurious update banner)."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-
-        mock_client, _ = _mock_head_client()
-        mock_client.return_value.head.side_effect = httpx.ConnectError("nope")
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            assert check_gnomad_update(reference_engine) is None
-
-    def test_head_http_error_returns_none(self, tmp_path: Path, monkeypatch, reference_engine):
-        """HEAD returns non-2xx → raise_for_status raises → None."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-
-        mock_client, mock_resp = _mock_head_client()
-        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=MagicMock(status_code=404)
-        )
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            assert check_gnomad_update(reference_engine) is None
-
-    def test_manifest_unreachable_returns_none(self, reference_engine):
-        """Manifest fetch failure → None without attempting HEAD."""
-        with patch(
-            "backend.db.manifest.httpx.get",
-            side_effect=httpx.ConnectError("nope"),
-        ):
-            assert check_gnomad_update(reference_engine) is None
-
-    def test_manifest_missing_pipeline_pin_returns_none(
-        self, tmp_path: Path, monkeypatch, reference_engine
-    ):
-        """No ``pipeline_pins["gnomad"]`` entry → None."""
-        payload = json.loads(json.dumps(SAMPLE_MANIFEST))
-        del payload["pipeline_pins"]["gnomad"]
-        path = _write_manifest(tmp_path, payload)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-
-        assert check_gnomad_update(reference_engine) is None
-
-    def test_manifest_pin_empty_version_returns_none(
-        self, tmp_path: Path, monkeypatch, reference_engine
-    ):
-        """Pipeline pin with empty ``last_known_version`` → nothing to compare → None."""
-        payload = json.loads(json.dumps(SAMPLE_MANIFEST))
-        payload["pipeline_pins"]["gnomad"]["last_known_version"] = ""
-        path = _write_manifest(tmp_path, payload)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-
-        assert check_gnomad_update(reference_engine) is None
-
-    def test_settings_argument_accepted_and_ignored(
-        self, tmp_path: Path, monkeypatch, reference_engine
-    ):
-        """Signature parity: ``settings`` is accepted positionally / by keyword."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-        _record_version_row(reference_engine, "gnomad", "r2.1.1")
-
-        # Both call shapes return None (recorded matches pin).
-        assert check_gnomad_update(reference_engine, None) is None
-        assert check_gnomad_update(reference_engine, settings=object()) is None
 
 
 # ── check_dbnsfp_update ────────────────────────────────────────────────
@@ -1239,10 +1094,8 @@ class TestCheckMondoHpoUpdate:
 
 
 class TestCheckFnsRegistration:
-    def test_gnomad_registered(self):
-        assert "gnomad" in CHECK_FNS
-        assert CHECK_FNS["gnomad"] is check_gnomad_update
-
+    # gnomad's CHECK_FN is now check_gnomad_bundle_update (it ships as a bundle);
+    # that binding + round-trip are covered in test_update_manager_bundles.py.
     def test_dbnsfp_registered(self):
         assert "dbnsfp" in CHECK_FNS
         assert CHECK_FNS["dbnsfp"] is check_dbnsfp_update
@@ -1262,21 +1115,6 @@ class TestCheckFnsRegistration:
     def test_mondo_hpo_registered(self):
         assert "mondo_hpo" in CHECK_FNS
         assert CHECK_FNS["mondo_hpo"] is check_mondo_hpo_update
-
-    def test_dispatch_via_check_fns(self, tmp_path: Path, monkeypatch, reference_engine):
-        """Round-trip the dispatch path used by Step 25's scheduler refactor."""
-        path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
-        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
-        _record_version_row(reference_engine, "gnomad", "r2.1.0")
-
-        mock_client, _ = _mock_head_client(content_length="123456")
-        with patch("backend.annotation.gnomad.httpx.Client", mock_client):
-            result = CHECK_FNS["gnomad"](reference_engine, None)
-
-        assert result is not None
-        assert result.db_name == "gnomad"
-        assert result.latest_version == "r2.1.1"
-        assert result.download_size_bytes == 123_456
 
     def test_dbnsfp_dispatch_via_check_fns(self, tmp_path: Path, monkeypatch, reference_engine):
         """Same dispatch path, exercising the dbNSFP entry."""

@@ -29,6 +29,7 @@ from backend.db.tables import database_versions, reference_metadata, update_hist
 from backend.db.update_manager import (
     UpdateResult,
     run_ancestry_pca_bundle_update,
+    run_gnomad_bundle_update,
     run_lai_bundle_update,
     run_vep_bundle_update,
 )
@@ -761,3 +762,167 @@ class TestRunAncestryPcaBundleUpdate:
         ref_path = data_dir_with_ref / "reference.db"
         assert _query_one(ref_path, database_versions, "ancestry_pca") is None
         assert _query_all(ref_path, update_history, "ancestry_pca") == []
+
+
+# ──────────────────────────────────────────────────────────────────────
+# run_gnomad_bundle_update
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestRunGnomadBundleUpdate:
+    def test_writes_database_versions_and_update_history(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        data_dir_with_ref: Path,
+        serve_payload: Callable[[bytes], str],
+    ) -> None:
+        # gnomad_af.db contents are opaque to the runner — it stages + records
+        # the file, never opens it. Any bytes work.
+        payload = b"SQLite format 3\x00fake-gnomad-af-db" * 64
+        url = serve_payload(payload)
+        sha = hashlib.sha256(payload).hexdigest()
+
+        manifest_path = _write_manifest(
+            tmp_path,
+            {
+                "gnomad": {
+                    "version": "v1.0.0",
+                    "build_date": "2026-06-06",
+                    "url": url,
+                    "sha256": sha,
+                    "size_bytes": len(payload),
+                },
+            },
+        )
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+        settings = Settings(data_dir=data_dir_with_ref, wal_mode=False)
+        result = run_gnomad_bundle_update(settings)
+
+        assert isinstance(result, UpdateResult)
+        assert result.db_name == "gnomad"
+        assert result.new_version == "v1.0.0"
+        assert result.download_size_bytes == len(payload)
+
+        # File now lives at data_dir/gnomad_af.db (standalone).
+        dest = data_dir_with_ref / "gnomad_af.db"
+        assert dest.exists()
+        assert dest.read_bytes() == payload
+
+        ref_path = data_dir_with_ref / "reference.db"
+        version_row = _query_one(ref_path, database_versions, "gnomad")
+        assert version_row is not None
+        assert version_row.version == "v1.0.0"
+        assert version_row.checksum_sha256 == sha
+        assert version_row.file_size_bytes == len(payload)
+
+        history = _query_all(ref_path, update_history, "gnomad")
+        assert len(history) == 1
+        assert history[0].new_version == "v1.0.0"
+        assert history[0].download_size_bytes == len(payload)
+        assert history[0].previous_version is None
+
+    def test_returns_none_when_manifest_missing_entry(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        data_dir_with_ref: Path,
+    ) -> None:
+        """Deferred state: no bundles['gnomad'] entry → no-op, no rows written."""
+        manifest_path = _write_manifest(tmp_path, {})
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+        settings = Settings(data_dir=data_dir_with_ref, wal_mode=False)
+        assert run_gnomad_bundle_update(settings) is None
+
+        ref_path = data_dir_with_ref / "reference.db"
+        assert _query_one(ref_path, database_versions, "gnomad") is None
+        assert _query_all(ref_path, update_history, "gnomad") == []
+
+    def test_returns_none_when_manifest_has_no_url(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        data_dir_with_ref: Path,
+    ) -> None:
+        manifest_path = _write_manifest(
+            tmp_path,
+            {
+                "gnomad": {
+                    "version": "v1.0.0",
+                    "build_date": "2026-06-06",
+                    "url": "",
+                    "sha256": "a" * 64,
+                    "size_bytes": 2_000_000_000,
+                },
+            },
+        )
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+        settings = Settings(data_dir=data_dir_with_ref, wal_mode=False)
+        assert run_gnomad_bundle_update(settings) is None
+
+        ref_path = data_dir_with_ref / "reference.db"
+        assert _query_one(ref_path, database_versions, "gnomad") is None
+        assert _query_all(ref_path, update_history, "gnomad") == []
+
+    def test_returns_none_on_checksum_mismatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        data_dir_with_ref: Path,
+        serve_payload: Callable[[bytes], str],
+    ) -> None:
+        """DownloadManager raises on bad sha256; the bundle wrapper swallows it."""
+        payload = b"gnomad-bytes" * 16
+        url = serve_payload(payload)
+        manifest_path = _write_manifest(
+            tmp_path,
+            {
+                "gnomad": {
+                    "version": "v1.0.0",
+                    "build_date": "2026-06-06",
+                    "url": url,
+                    "sha256": "0" * 64,  # deliberately wrong
+                    "size_bytes": len(payload),
+                },
+            },
+        )
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+        settings = Settings(data_dir=data_dir_with_ref, wal_mode=False)
+        assert run_gnomad_bundle_update(settings) is None
+
+        ref_path = data_dir_with_ref / "reference.db"
+        assert _query_one(ref_path, database_versions, "gnomad") is None
+        assert _query_all(ref_path, update_history, "gnomad") == []
+
+    def test_returns_none_when_reference_db_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        serve_payload: Callable[[bytes], str],
+    ) -> None:
+        payload = b"SQLite format 3\x00fake" * 16
+        url = serve_payload(payload)
+        sha = hashlib.sha256(payload).hexdigest()
+        manifest_path = _write_manifest(
+            tmp_path,
+            {
+                "gnomad": {
+                    "version": "v1.0.0",
+                    "build_date": "2026-06-06",
+                    "url": url,
+                    "sha256": sha,
+                    "size_bytes": len(payload),
+                },
+            },
+        )
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(manifest_path))
+
+        data_dir = tmp_path / "empty_data"
+        data_dir.mkdir()
+        settings = Settings(data_dir=data_dir, wal_mode=False)
+
+        assert run_gnomad_bundle_update(settings) is None
