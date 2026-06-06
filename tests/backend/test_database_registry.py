@@ -352,3 +352,40 @@ def test_vep_bundle_registry_url_points_at_v2_0_0_release() -> None:
     entry = DATABASES["vep_bundle"]
     assert entry.url.endswith("/releases/download/bundle-v2.0.0/vep_bundle.db")
     assert "raw.githubusercontent.com" not in entry.url
+
+
+def test_gnomad_registry_entry_is_bundled() -> None:
+    """gnomAD now ships as a prebuilt downloadable bundle, not a pipeline build.
+
+    Flipping build_mode to "bundled" + removing it from _BUILD_FN_REGISTRY routes
+    the setup wizard / scheduler through run_gnomad_bundle_update (manifest
+    download) instead of the ~16 GB VCF rebuild. filename/target/required/phase
+    stay put so the read path (gnomad_engine on data_dir/gnomad_af.db) is untouched.
+    """
+    from backend.db.database_registry import DATABASES, get_build_fn
+
+    entry = DATABASES["gnomad"]
+    assert entry.build_mode == "bundled"
+    assert entry.target_db == "standalone"
+    assert entry.filename == "gnomad_af.db"
+    assert entry.required is True
+    assert entry.phase == 2
+    # sha256 is unpinned in bundled mode — the manifest is the source of truth.
+    assert entry.sha256 is None
+    # No build function: the VCF rebuild is retired from the wizard/scheduler path.
+    assert get_build_fn("gnomad") is None
+
+
+def test_gnomad_registry_url_targets_release_asset() -> None:
+    """The fallback URL points at the eventual gnomad-bundle release asset.
+
+    In bundled mode the runner reads the authoritative url/sha/size from the
+    manifest; this registry URL is documentation/fallback. It is pinned here so a
+    future edit can't silently point it elsewhere. (Until the asset is published
+    the bundles["gnomad"] manifest entry is intentionally absent — see
+    GNOMAD_BUNDLE_PLAN.md §7 deferred path.)
+    """
+    from backend.db.database_registry import DATABASES
+
+    entry = DATABASES["gnomad"]
+    assert entry.url.endswith("/releases/download/gnomad-bundle-v1.0.0/gnomad_af.db")

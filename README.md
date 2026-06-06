@@ -158,6 +158,25 @@ make test-e2e          # Playwright E2E (Chrome, Firefox, WebKit)
 | Blank page at localhost:5173 | Backend not running | Start with `make dev` (runs both servers) |
 | Reference DB download fails | Network issue | Re-run from Settings > Database Management; downloads are resumable |
 
+## Data Sources & Attribution
+
+GenomeInsight annotates variants against several public reference datasets. Most
+are downloaded and built locally; **gnomAD** ships as a prebuilt, redistributable
+allele-frequency bundle.
+
+- **gnomAD (Genome Aggregation Database)** — population allele frequencies.
+  <https://gnomad.broadinstitute.org/> · CC0 1.0 (public domain dedication).
+  Bundle scope: allele frequencies and homozygous counts only (no academic-license
+  predictor columns). Cite: Karczewski, K.J., Francioli, L.C., Tiao, G. et al.,
+  "The mutational constraint spectrum quantified from variation in 141,456 humans,"
+  *Nature* 581, 434–443 (2020), doi:10.1038/s41586-020-2308-7.
+  "gnomAD" and "Broad Institute" are trademarks of their respective owners, used
+  here solely for source attribution; GenomeInsight is an independent project and
+  is not affiliated with or endorsed by the Broad Institute.
+
+See the repo-root [`NOTICE`](NOTICE) file for the full third-party data
+attribution list.
+
 ## License
 
 MIT

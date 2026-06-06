@@ -29,7 +29,6 @@ import structlog
 from backend.annotation.cpic import check_cpic_update
 from backend.annotation.dbnsfp import check_dbnsfp_update
 from backend.annotation.dbsnp import check_dbsnp_update
-from backend.annotation.gnomad import check_gnomad_update
 from backend.annotation.gwas import check_gwas_update
 from backend.annotation.mondo_hpo import check_mondo_hpo_update
 from backend.db.tables import (
@@ -835,6 +834,110 @@ def run_ancestry_pca_bundle_update(
         engine.dispose()
 
 
+def run_gnomad_bundle_update(
+    settings: Settings | None = None,
+    *,
+    timeout: float = 3600.0,
+) -> UpdateResult | None:
+    """Download the latest prebuilt gnomAD bundle (gnomad_af.db) via the manifest.
+
+    Mirrors :func:`run_ancestry_pca_bundle_update`: a single SQLite file, no
+    extract. Downloads to ``downloads_dir`` (SHA-256 verified by
+    :class:`DownloadManager`), moves it into ``data_dir/gnomad_af.db``
+    (standalone), then records the version + history rows in ``reference.db``.
+    Returns ``None`` (no raise) when the manifest entry is missing or carries
+    no URL — e.g. the pre-publish deferred state, where ``bundles["gnomad"]``
+    is intentionally absent — so the scheduler simply skips until a hosted
+    release exists.
+    """
+    import shutil
+
+    from backend.config import get_settings
+    from backend.db.database_registry import DATABASES, _record_db_version
+    from backend.db.manifest import get_bundle_info
+
+    if settings is None:
+        settings = get_settings()
+
+    db_info = DATABASES["gnomad"]
+    entry = get_bundle_info("gnomad", timeout=min(timeout, 30.0))
+    if entry is None:
+        logger.warning("gnomad_update_skipped_no_manifest")
+        return None
+    if not entry.url:
+        logger.info("gnomad_update_skipped_no_url", version=entry.version)
+        return None
+
+    ref_path = settings.reference_db_path
+    if not ref_path.exists():
+        logger.warning("gnomad_update_skipped_no_reference_db", path=str(ref_path))
+        return None
+
+    engine = sa.create_engine(f"sqlite:///{ref_path}")
+    start_time = time.monotonic()
+
+    try:
+        previous_version = get_current_version(engine, "gnomad")
+
+        download = _run_bundle_download(
+            settings,
+            engine,
+            url=entry.url,
+            filename=db_info.filename,  # "gnomad_af.db"
+            expected_sha256=entry.sha256,
+            total_timeout=timeout,  # large file — default 1h
+        )
+        if download is None:
+            return None
+        downloaded_path, downloaded_bytes = download
+
+        final_dest = db_info.dest_path(settings)  # data_dir/gnomad_af.db
+        final_dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(downloaded_path), str(final_dest))
+        except OSError as exc:
+            downloaded_path.unlink(missing_ok=True)
+            logger.exception("gnomad_move_failed", error=str(exc))
+            return None
+
+        file_size = final_dest.stat().st_size
+        duration = int(time.monotonic() - start_time)
+
+        _record_db_version(
+            engine,
+            db_name="gnomad",
+            version=entry.version,
+            file_size_bytes=file_size,
+            sha256=entry.sha256,
+        )
+        _record_update_history(
+            engine,
+            db_name="gnomad",
+            previous_version=previous_version,
+            new_version=entry.version,
+            download_size_bytes=downloaded_bytes,
+            duration_seconds=duration,
+        )
+
+        logger.info(
+            "gnomad_update_complete",
+            previous_version=previous_version,
+            new_version=entry.version,
+            download_size_bytes=downloaded_bytes,
+            duration_seconds=duration,
+        )
+
+        return UpdateResult(
+            db_name="gnomad",
+            previous_version=previous_version,
+            new_version=entry.version,
+            download_size_bytes=downloaded_bytes,
+            duration_seconds=duration,
+        )
+    finally:
+        engine.dispose()
+
+
 def _check_manifest_bundle_update(
     reference_engine: Engine,
     db_name: str,
@@ -900,6 +1003,23 @@ def check_ancestry_pca_update(
     return _check_manifest_bundle_update(reference_engine, "ancestry_pca", timeout=timeout)
 
 
+def check_gnomad_bundle_update(
+    reference_engine: Engine,
+    settings: Settings | None = None,
+    *,
+    timeout: float = 30.0,
+) -> VersionInfo | None:
+    """Check whether the gnomAD bundle in the manifest is newer than the installed copy.
+
+    gnomAD ships as a prebuilt SQLite bundle (``bundles["gnomad"]``). This is
+    the registered CHECK_FN for gnomAD, replacing the former pipeline-pin
+    check. Until the asset is published the bundle entry is absent, so this
+    returns ``None`` (no spurious update offer).
+    """
+    del settings  # unused; kept for signature parity
+    return _check_manifest_bundle_update(reference_engine, "gnomad", timeout=timeout)
+
+
 # ── Check-function dispatch ──────────────────────────────────────────
 # Maps db_name → callable that returns ``VersionInfo | None``.
 #
@@ -912,7 +1032,7 @@ CHECK_FNS: dict[str, object] = {
     "vep_bundle": check_vep_bundle_update,
     "lai_bundle": check_lai_bundle_update,
     "ancestry_pca": check_ancestry_pca_update,
-    "gnomad": check_gnomad_update,
+    "gnomad": check_gnomad_bundle_update,
     "dbnsfp": check_dbnsfp_update,
     "cpic": check_cpic_update,
     "gwas_catalog": check_gwas_update,
@@ -1544,7 +1664,7 @@ def set_auto_update(engine: Engine, db_name: str, enabled: bool) -> None:
 # manifest-driven ``run_<bundle>_update`` functions defined above. Each
 # runner is resolved by name at dispatch time so test patches against this
 # module's attributes are honored.
-_BUNDLE_DBS: frozenset[str] = frozenset({"vep_bundle", "lai_bundle", "ancestry_pca"})
+_BUNDLE_DBS: frozenset[str] = frozenset({"vep_bundle", "lai_bundle", "ancestry_pca", "gnomad"})
 
 
 def _dispatch_auto_update(registry: DBRegistry, db_name: str) -> None:
@@ -1569,6 +1689,7 @@ def _dispatch_auto_update(registry: DBRegistry, db_name: str) -> None:
             "vep_bundle": "run_vep_bundle_update",
             "lai_bundle": "run_lai_bundle_update",
             "ancestry_pca": "run_ancestry_pca_bundle_update",
+            "gnomad": "run_gnomad_bundle_update",
         }[db_name]
         runner = globals()[runner_name]
         result = runner(settings)

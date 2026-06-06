@@ -161,13 +161,14 @@ class TestDatabaseRegistry:
 
     def test_get_database_status_downloaded(self, tmp_data_dir: Path):
         settings = Settings(data_dir=tmp_data_dir, wal_mode=False)
-        # Use a standalone pipeline DB (gnomad) — needs file + version entry
-        db_info = get_database("gnomad")
+        # Use a standalone pipeline DB (dbnsfp) — needs file + version entry.
+        # (gnomad now ships as a bundle, where file existence alone suffices.)
+        db_info = get_database("dbnsfp")
         assert db_info is not None
 
         dest = db_info.dest_path(settings)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"fake gnomad data")
+        dest.write_bytes(b"fake dbnsfp data")
 
         # File alone is NOT sufficient for standalone pipeline DBs
         status = get_database_status(db_info, settings)
@@ -180,12 +181,12 @@ class TestDatabaseRegistry:
         from backend.db.tables import database_versions
 
         with engine.begin() as conn:
-            conn.execute(database_versions.insert().values(db_name="gnomad", version="test"))
+            conn.execute(database_versions.insert().values(db_name="dbnsfp", version="test"))
         engine.dispose()
 
         status = get_database_status(db_info, settings)
         assert status["downloaded"] is True
-        assert status["file_size_bytes"] == len(b"fake gnomad data")
+        assert status["file_size_bytes"] == len(b"fake dbnsfp data")
 
     def test_get_database_status_reference_db(self, tmp_data_dir: Path):
         """Reference.db-resident databases check database_versions table."""
@@ -366,16 +367,18 @@ class TestListDatabases:
         assert data["downloaded_count"] == bundled_downloaded
 
     def test_list_databases_shows_downloaded(self, db_client: TestClient, tmp_data_dir: Path):
-        # Create a fake downloaded gnomAD file + version entry (standalone pipeline DB)
-        gnomad_path = tmp_data_dir / "gnomad_af.db"
-        gnomad_path.write_bytes(b"fake data")
+        # Create a fake downloaded dbNSFP file + version entry (standalone pipeline
+        # DB — file + version row both required). gnomad now ships as a bundle, so
+        # it would be counted within bundled_downloaded rather than as the +1.
+        dbnsfp_path = tmp_data_dir / "dbnsfp.db"
+        dbnsfp_path.write_bytes(b"fake data")
 
         from backend.db.tables import database_versions
 
         ref_path = tmp_data_dir / "reference.db"
         engine = sa.create_engine(f"sqlite:///{ref_path}")
         with engine.begin() as conn:
-            conn.execute(database_versions.insert().values(db_name="gnomad", version="test"))
+            conn.execute(database_versions.insert().values(db_name="dbnsfp", version="test"))
         engine.dispose()
 
         resp = db_client.get("/api/databases")
@@ -385,9 +388,9 @@ class TestListDatabases:
         )
         assert data["downloaded_count"] == bundled_downloaded + 1
 
-        gnomad_status = next(d for d in data["databases"] if d["name"] == "gnomad")
-        assert gnomad_status["downloaded"] is True
-        assert gnomad_status["file_size_bytes"] == len(b"fake data")
+        dbnsfp_status = next(d for d in data["databases"] if d["name"] == "dbnsfp")
+        assert dbnsfp_status["downloaded"] is True
+        assert dbnsfp_status["file_size_bytes"] == len(b"fake data")
 
     def test_list_databases_has_total_size(self, db_client: TestClient):
         resp = db_client.get("/api/databases")
@@ -437,16 +440,21 @@ class TestTriggerDownload:
         ref_path = tmp_data_dir / "reference.db"
         engine = sa.create_engine(f"sqlite:///{ref_path}")
 
-        # Mark all required databases as downloaded
+        # Mark all required databases as already current. Manual DBs are never
+        # auto-downloaded (the trigger skips them outright), so they don't block
+        # the 409. Pipeline DBs need a database_versions row; bundled DBs (now
+        # including gnomad) need one too so _bundle_install_needed() — which
+        # compares the recorded version against the manifest — treats them as up
+        # to date (in the deferred state bundles["gnomad"] is absent, so any
+        # recorded row short-circuits to "no install needed").
         for db in get_all_databases():
             if not db.required:
                 continue
-            if db.build_mode in ("manual", "bundled"):
+            if db.build_mode == "manual":
                 continue
-            # All pipeline DBs need a database_versions entry
             with engine.begin() as conn:
                 conn.execute(database_versions.insert().values(db_name=db.name, version="test"))
-            # Standalone DBs also need the file on disk
+            # Standalone DBs (pipeline or bundled) also need the file on disk.
             if db.target_db == "standalone" and db.filename:
                 dest = tmp_data_dir / db.filename
                 dest.write_bytes(b"fake")

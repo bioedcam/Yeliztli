@@ -106,9 +106,11 @@ class TestApplyManifestOverrides:
         assert result is db
 
     def test_no_override_for_pipeline_build_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        gnomad = get_database("gnomad")
-        assert gnomad is not None
-        assert gnomad.build_mode == "pipeline"
+        # dbnsfp is the remaining standalone pipeline DB (gnomad now ships as a
+        # bundle), so it keeps this pipeline short-circuit assertion meaningful.
+        dbnsfp = get_database("dbnsfp")
+        assert dbnsfp is not None
+        assert dbnsfp.build_mode == "pipeline"
 
         called: list[str] = []
 
@@ -118,9 +120,9 @@ class TestApplyManifestOverrides:
 
         monkeypatch.setattr(databases_routes, "get_bundle_info", fake_fetch)
 
-        result = databases_routes._apply_manifest_overrides(gnomad)
+        result = databases_routes._apply_manifest_overrides(dbnsfp)
 
-        assert result is gnomad
+        assert result is dbnsfp
         assert called == []
 
     def test_keeps_registry_url_when_manifest_url_empty(

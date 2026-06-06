@@ -31,7 +31,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
 import sqlalchemy as sa
 import structlog
 
@@ -676,32 +675,6 @@ def download_and_load_gnomad(
 # ── Version tracking ─────────────────────────────────────────────────────
 
 
-def _parse_gnomad_version(tag: str | None) -> tuple[int, ...] | None:
-    """Parse a gnomAD release tag into a comparable integer tuple.
-
-    Strips any leading non-digit prefix (e.g. the ``r`` in ``r2.1.1``),
-    splits on ``.``, and converts each component to an int. Returns
-    ``None`` when the tag is missing/empty or any component is not purely
-    numeric, signalling that a safe comparison is not possible.
-
-    Examples:
-        ``"r2.10.0"`` → ``(2, 10, 0)``; ``"r2.9.0"`` → ``(2, 9, 0)``,
-        so ``r2.10.0`` correctly sorts after ``r2.9.0``.
-    """
-    if not tag:
-        return None
-    # Strip any leading non-digit prefix (e.g. "r" in "r2.1.1").
-    stripped = tag.lstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    if not stripped:
-        return None
-    components: list[int] = []
-    for part in stripped.split("."):
-        if not part.isdigit():
-            return None
-        components.append(int(part))
-    return tuple(components)
-
-
 def record_gnomad_version(
     engine: sa.Engine,
     *,
@@ -729,68 +702,29 @@ def check_gnomad_update(
     *,
     timeout: float = 30.0,
 ):
-    """Check whether the gnomAD release pinned in the manifest is newer than installed.
+    """Check whether the gnomAD bundle pinned in the manifest is newer than installed.
 
-    Uses ``pipeline_pins["gnomad"]`` from ``bundles/manifest.json`` as the
-    authoritative source for the latest URL + release tag, then performs an
-    HTTP HEAD on the pinned URL to confirm reachability and obtain a
-    download-size estimate for the bandwidth-window check. Returns ``None``
-    when the manifest pin is missing/unreachable, the HEAD call fails, or
-    the recorded version is the same as or newer than the manifest pin
-    (parsed-version compare on the release tag — gnomAD tags follow
-    ``rMAJOR.MINOR.PATCH``; an unparseable tag falls back to a safe skip).
+    gnomAD now ships as a prebuilt SQLite bundle (``bundles["gnomad"]`` in
+    ``bundles/manifest.json``), not a pipeline VCF rebuild. This delegates to
+    the generic manifest-bundle checker (version string-equality vs the
+    recorded ``database_versions`` row), matching ``lai_bundle`` /
+    ``ancestry_pca``. It is retained for direct callers/tests; the registered
+    CHECK_FN is :func:`backend.db.update_manager.check_gnomad_bundle_update`.
 
     Args:
         reference_engine: Reference DB engine for ``database_versions`` lookup.
-        settings: Accepted for dispatch-signature parity with other
-            ``check_*_update`` functions; unused.
-        timeout: HTTP timeout in seconds for both the manifest fetch and HEAD.
+        settings: Accepted for dispatch-signature parity; unused.
+        timeout: Manifest-fetch timeout in seconds.
 
     Returns:
-        ``VersionInfo`` when the manifest pin is newer than the installed
-        version, otherwise ``None``.
+        ``VersionInfo`` when the manifest bundle is newer than the installed
+        version, otherwise ``None`` (including when the bundle entry is absent,
+        as in the pre-publish deferred state).
     """
     del settings  # unused; kept for dispatch-signature parity
-    from backend.db.manifest import get_pipeline_pin
-    from backend.db.update_manager import VersionInfo, get_current_version
+    from backend.db.update_manager import _check_manifest_bundle_update
 
-    pin = get_pipeline_pin("gnomad", timeout=timeout)
-    if pin is None or not pin.last_known_version:
-        return None
-
-    current = get_current_version(reference_engine, "gnomad")
-    if current is not None:
-        current_parsed = _parse_gnomad_version(current)
-        pinned_parsed = _parse_gnomad_version(pin.last_known_version)
-        # If either tag can't be parsed into a comparable version, fall back
-        # to a safe skip (no update offered) rather than risk a misordered
-        # lexicographic comparison.
-        if current_parsed is None or pinned_parsed is None:
-            return None
-        if current_parsed >= pinned_parsed:
-            return None
-
-    download_size = 0
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(timeout, connect=10.0),
-        ) as client:
-            resp = client.head(pin.url)
-            resp.raise_for_status()
-            content_length = resp.headers.get("Content-Length")
-            if content_length:
-                download_size = int(content_length)
-    except Exception as exc:
-        logger.warning("gnomad_update_check_failed", error=str(exc))
-        return None
-
-    return VersionInfo(
-        db_name="gnomad",
-        latest_version=pin.last_known_version,
-        download_url=pin.url,
-        download_size_bytes=download_size,
-    )
+    return _check_manifest_bundle_update(reference_engine, "gnomad", timeout=timeout)
 
 
 # ── Annotation lookup ────────────────────────────────────────────────────

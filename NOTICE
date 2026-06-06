@@ -1,0 +1,22 @@
+GenomeInsight — Third-Party Data Attribution
+============================================
+
+This product redistributes data derived from the following sources. It is the
+companion to the MIT LICENSE (which covers GenomeInsight's own source code).
+
+gnomAD (Genome Aggregation Database)
+------------------------------------
+Source:   https://gnomad.broadinstitute.org/
+License:  CC0 1.0 (public domain dedication) — primary allele-frequency data.
+Scope:    Allele frequencies and homozygous counts only (table `gnomad_af`).
+          No SpliceAI, CADD, REVEL, SIFT, PolyPhen, or any CC-BY-NC /
+          academic-license-restricted predictor columns are included.
+Version:  gnomAD v2.1.1 (GRCh37 exomes).
+Citation: Karczewski, K.J., Francioli, L.C., Tiao, G. et al.
+          "The mutational constraint spectrum quantified from variation in
+          141,456 humans." Nature 581, 434–443 (2020).
+          doi:10.1038/s41586-020-2308-7
+
+"gnomAD" and "Broad Institute" are trademarks of their respective owners and
+are used here solely for source attribution. GenomeInsight is an independent
+project and is not affiliated with or endorsed by the Broad Institute.
