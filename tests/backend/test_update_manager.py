@@ -1158,6 +1158,27 @@ class TestUpdateAPI:
         assert data["db_name"] == "clinvar"
         assert data["job_id"] == "test-job-id"
 
+    def test_trigger_bundle_dbs_accepted(self, update_client):
+        """Regression: vep_bundle / lai_bundle / ancestry_pca are valid update
+        targets. lai_bundle and ancestry_pca previously 400'd because the
+        endpoint's supported set only covered build-function DBs + vep_bundle,
+        even though check_all_updates surfaces them and the scheduler can apply
+        them. The UI must never offer an update the endpoint rejects.
+        """
+        for db_name in ("vep_bundle", "lai_bundle", "ancestry_pca"):
+            with (
+                patch("backend.tasks.huey_tasks.run_database_update_task"),
+                patch(
+                    "backend.tasks.huey_tasks.create_database_update_job",
+                    return_value=f"job-{db_name}",
+                ),
+            ):
+                resp = update_client.post(
+                    "/api/updates/trigger", json={"db_name": db_name}
+                )
+            assert resp.status_code == 202, (db_name, resp.text)
+            assert resp.json()["db_name"] == db_name
+
     def test_status_returns_enhanced_fields(self, update_client):
         """P4-17: status returns display_name, version_display, downloaded_at."""
         resp = update_client.get("/api/updates/status")

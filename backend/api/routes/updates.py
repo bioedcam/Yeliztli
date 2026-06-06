@@ -138,18 +138,23 @@ async def trigger_update(req: TriggerUpdateRequest) -> TriggerUpdateResponse:
     Enqueues the update as a background Huey task and returns
     the job_id for progress tracking via SSE.
     """
+    from backend.db.update_manager import _BUNDLE_DBS
     from backend.tasks.huey_tasks import (
         create_database_update_job,
         run_database_update_task,
     )
 
-    # Any database with a build function or VEP bundle can be updated
+    # Any database with a build function, or a manifest-driven bundle
+    # (vep_bundle / lai_bundle / ancestry_pca), can be updated. The bundle set
+    # must mirror the scheduler's _dispatch_auto_update and huey's
+    # run_database_update_task so the UI never offers an update the backend
+    # rejects (previously lai_bundle/ancestry_pca 400'd here).
     db_info = DATABASES.get(req.db_name)
     build_fn = get_build_fn(req.db_name) if db_info else None
-    is_vep_bundle = req.db_name == "vep_bundle"
-    if build_fn is None and not is_vep_bundle:
+    is_bundle = req.db_name in _BUNDLE_DBS
+    if build_fn is None and not is_bundle:
         supported = sorted(
-            k for k in DATABASES if get_build_fn(k) is not None or k == "vep_bundle"
+            {k for k in DATABASES if get_build_fn(k) is not None} | set(_BUNDLE_DBS)
         )
         raise HTTPException(
             status_code=400,

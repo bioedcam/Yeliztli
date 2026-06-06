@@ -167,22 +167,18 @@ class TestCheckLaiBundleUpdate:
 
 
 class TestCheckAncestryPcaUpdate:
-    def test_manifest_newer_than_recorded_returns_version_info(
+    def test_no_url_returns_none_even_if_version_differs(
         self, tmp_path: Path, monkeypatch, reference_engine
     ):
+        """ancestry_pca ships out-of-band (manifest ``url=""``): there is nothing
+        to download, so no update is surfaced even when the recorded version
+        trails the manifest. Surfacing it would dead-end — the trigger endpoint
+        cannot apply a no-URL bundle (the bug this guards against)."""
         path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
         _record_version_row(reference_engine, "ancestry_pca", "v0.9")
 
-        result = check_ancestry_pca_update(reference_engine)
-
-        assert result is not None
-        assert result.db_name == "ancestry_pca"
-        assert result.latest_version == "v1.0"
-        assert result.download_size_bytes == 414_432
-        # ancestry_pca ships out-of-band in the repo, so URL may be empty.
-        assert result.download_url == ""
-        assert result.release_date == "2026-04-07"
+        assert check_ancestry_pca_update(reference_engine) is None
 
     def test_manifest_matches_recorded_returns_none(
         self, tmp_path: Path, monkeypatch, reference_engine
@@ -193,16 +189,34 @@ class TestCheckAncestryPcaUpdate:
 
         assert check_ancestry_pca_update(reference_engine) is None
 
-    def test_no_recorded_version_returns_version_info(
+    def test_no_url_no_recorded_version_returns_none(
         self, tmp_path: Path, monkeypatch, reference_engine
     ):
+        """Even a fresh install (no recorded version) is not offered a no-URL
+        update — installation flows through the committed-fixture path, not the
+        Update Manager."""
         path = _write_manifest(tmp_path, SAMPLE_MANIFEST)
         monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+
+        assert check_ancestry_pca_update(reference_engine) is None
+
+    def test_with_url_surfaces_update_when_version_differs(
+        self, tmp_path: Path, monkeypatch, reference_engine
+    ):
+        """The no-URL guard only suppresses out-of-band bundles: once a hosted
+        release URL exists, a version mismatch is surfaced normally."""
+        payload = json.loads(json.dumps(SAMPLE_MANIFEST))
+        payload["bundles"]["ancestry_pca"]["url"] = "https://example.com/pca.npz"
+        path = _write_manifest(tmp_path, payload)
+        monkeypatch.setenv(manifest_mod.MANIFEST_PATH_ENV, str(path))
+        _record_version_row(reference_engine, "ancestry_pca", "v0.9")
 
         result = check_ancestry_pca_update(reference_engine)
 
         assert result is not None
+        assert result.db_name == "ancestry_pca"
         assert result.latest_version == "v1.0"
+        assert result.download_url == "https://example.com/pca.npz"
 
     def test_manifest_missing_bundle_entry_returns_none(
         self, tmp_path: Path, monkeypatch, reference_engine
