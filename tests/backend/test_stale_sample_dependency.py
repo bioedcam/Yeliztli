@@ -261,9 +261,13 @@ class TestRequireFreshSample:
         # Manifest fixture exposes the published URL.
         assert detail["update_url"]
 
-    def test_missing_annotation_state_treated_as_v1(self, manifest_env, gate_env):
-        # Plan §7.4 missing-state fallback — no annotation_state table
-        # ⇒ v1.0.0 ⇒ gate fires against v2.0.0 installed.
+    def test_never_annotated_sample_not_gated(self, manifest_env, gate_env):
+        # A sample whose per-sample DB has no annotation_state table has
+        # never completed an annotation run (the row is written only on a
+        # successful annotation). It is NOT stale — it needs its *first*
+        # annotation, surfaced by the dashboard's "Run Annotation" CTA, not
+        # the re-annotation banner. require_fresh_sample lets it through so
+        # analysis routes can return their own empty/404 state.
         _seed_installed_bundle(gate_env["settings"], "v2.0.0")
         _make_sample_db(
             gate_env["settings"],
@@ -271,10 +275,17 @@ class TestRequireFreshSample:
             seed_version=None,
         )
 
-        with pytest.raises(HTTPException) as exc:
-            require_fresh_sample(gate_env["sample_id"])
-        assert exc.value.status_code == 423
-        assert exc.value.detail["installed_version"] == "v1.0.0"
+        assert require_fresh_sample(gate_env["sample_id"]) == 1
+
+    def test_fresh_import_missing_version_row_not_gated(self, manifest_env, gate_env):
+        # annotation_state table present (fresh per-sample schema) but no
+        # vep_bundle_version row yet — a freshly imported, never-annotated
+        # sample. Must not be gated as stale (the bug: it otherwise showed
+        # "re-annotate against v2.0.0" against the current bundle).
+        _seed_installed_bundle(gate_env["settings"], "v2.0.0")
+        _make_sample_db(gate_env["settings"], seed_version=None)
+
+        assert require_fresh_sample(gate_env["sample_id"]) == 1
 
     def test_required_version_falls_back_to_db_row(self, monkeypatch, gate_env):
         # When the manifest is unreachable, the payload still reports the

@@ -34,7 +34,7 @@ from backend.db.connection import get_registry
 from backend.db.database_registry import DATABASES
 from backend.db.manifest import get_bundle_info
 from backend.db.tables import annotation_state, database_versions, samples
-from backend.services.staleness import is_sample_stale
+from backend.services.staleness import get_recorded_bundle_version, is_sample_stale
 
 _BUNDLE_KEY = "vep_bundle"
 # Plan §7.4 — every pre-Phase-0 sample state is treated as v1.0.0.
@@ -80,6 +80,24 @@ def _read_recorded_sample_version(sample_id: int) -> str:
     return value_row.value
 
 
+def _sample_exists(sample_id: int) -> bool:
+    """Whether ``sample_id`` has a row in the reference DB ``samples`` table.
+
+    Returns ``False`` defensively when the reference DB or ``samples``
+    table is unreachable (e.g. a fresh install before setup) — the caller
+    then falls through to :func:`is_sample_stale`, which already tolerates
+    a missing table. This mirrors the staleness service's "never raise"
+    contract so the gate cannot turn an unreadable reference DB into a 500.
+    """
+    registry = get_registry()
+    try:
+        with registry.reference_engine.connect() as conn:
+            row = conn.execute(sa.select(samples.c.id).where(samples.c.id == sample_id)).fetchone()
+    except sa.exc.OperationalError:
+        return False
+    return row is not None
+
+
 def _read_installed_version() -> str:
     registry = get_registry()
     with registry.reference_engine.connect() as conn:
@@ -116,7 +134,27 @@ def require_fresh_sample(sample_id: int) -> int:
     routes can declare the dependency without losing path-parameter
     access (``sample_id: int = Depends(require_fresh_sample)`` keeps
     the value bound to the handler signature).
+
+    An **existing** sample that has never completed an annotation run (no
+    recorded ``annotation_state.vep_bundle_version`` row) is *not* gated
+    here: it has no stale data to block, it needs its *first* annotation.
+    Gating it would surface the re-annotation banner (implying the bundle
+    is out of date) instead of the dashboard's "Run Annotation" CTA — the
+    bug a freshly imported sample otherwise hits, since Plan §7.4's
+    missing-state fallback treats an absent row as ``v1.0.0``. That
+    fallback predates the migration-008 / restore explicit ``v1.0.0``
+    backfill, which now covers every genuinely pre-Phase-0 *annotated*
+    sample, so an absent row on an existing sample reliably means "never
+    annotated". (``is_sample_stale`` keeps the fallback for the merge
+    stale-source gate, where blocking an un-annotated source before merge
+    is intended.)
+
+    A *missing* ``samples`` row falls through to the gate below (423),
+    preserving the existing contract that gated routes do not leak sample
+    existence via a 404.
     """
+    if _sample_exists(sample_id) and get_recorded_bundle_version(sample_id) is None:
+        return sample_id
     if not is_sample_stale(sample_id):
         return sample_id
 

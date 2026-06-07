@@ -67,13 +67,21 @@ def _read_installed_major() -> int | None:
     return _coerce_major(row.version if row else None)
 
 
-def _read_sample_bundle_version(sample_id: int) -> str:
-    """Return the sample's recorded ``vep_bundle_version`` or the fallback.
+def get_recorded_bundle_version(sample_id: int) -> str | None:
+    """Return the sample's recorded ``annotation_state.vep_bundle_version``.
 
-    Emits a structured ``annotation_state_missing`` warning when any of
-    these defensive paths fire: sample row missing from reference DB,
-    per-sample DB unreachable, ``annotation_state`` table missing, or the
-    reserved ``vep_bundle_version`` row absent.
+    Returns ``None`` when the sample has **never completed an annotation
+    run** — i.e. the per-sample row is missing from the reference DB, the
+    per-sample DB is unreachable, the ``annotation_state`` table is
+    absent, or the reserved ``vep_bundle_version`` row is absent/empty.
+    The annotation task writes this row only on a successful completion
+    (``backend.tasks.huey_tasks``), so an absent row distinguishes a
+    freshly-imported (or mid-first-annotation) sample from one that
+    finished annotating against some bundle.
+
+    Emits a structured ``annotation_state_missing`` warning on each
+    defensive path so observability is unchanged for callers that treat
+    the missing state as the Plan §7.4 ``v1.0.0`` fallback.
     """
     registry = get_registry()
     with registry.reference_engine.connect() as conn:
@@ -86,7 +94,7 @@ def _read_sample_bundle_version(sample_id: int) -> str:
             sample_id=sample_id,
             reason="sample_row_missing",
         )
-        return _FALLBACK_SAMPLE_VERSION
+        return None
 
     sample_db = registry.settings.data_dir / row.db_path
     try:
@@ -104,7 +112,7 @@ def _read_sample_bundle_version(sample_id: int) -> str:
             reason="table_or_db_unreachable",
             error=str(exc),
         )
-        return _FALLBACK_SAMPLE_VERSION
+        return None
 
     if value_row is None or not value_row.value:
         logger.warning(
@@ -112,9 +120,22 @@ def _read_sample_bundle_version(sample_id: int) -> str:
             sample_id=sample_id,
             reason="vep_bundle_version_row_missing",
         )
-        return _FALLBACK_SAMPLE_VERSION
+        return None
 
     return value_row.value
+
+
+def _read_sample_bundle_version(sample_id: int) -> str:
+    """Recorded ``vep_bundle_version`` with the Plan §7.4 ``v1.0.0`` fallback.
+
+    Wraps :func:`get_recorded_bundle_version`, substituting the
+    missing-state fallback so :func:`is_sample_stale` keeps its
+    major-version comparison semantics (an absent row is treated as a
+    pre-Phase-0 ``v1.0.0`` annotation). Callers that need to distinguish
+    "never annotated" from "annotated against v1.0.0" should use
+    :func:`get_recorded_bundle_version` directly.
+    """
+    return get_recorded_bundle_version(sample_id) or _FALLBACK_SAMPLE_VERSION
 
 
 def is_sample_stale(sample_id: int) -> bool:
