@@ -47,6 +47,7 @@ import sqlalchemy as sa
 import structlog
 
 from backend.analysis.evidence import assign_clinvar_evidence_level
+from backend.analysis.zygosity import CARRIED_ZYGOSITIES
 from backend.db.tables import annotated_variants, findings
 
 logger = structlog.get_logger(__name__)
@@ -252,6 +253,16 @@ def extract_cancer_variants(
     Queries the annotated_variants table for variants where:
       1. gene_symbol is in the cancer panel genes
       2. clinvar_significance is Pathogenic or Likely pathogenic
+      3. the sample's genotype actually carries the ALT allele
+         (zygosity het or hom_alt)
+
+    Criterion 3 is essential: a 23andMe chip reports a genotype at every probe
+    regardless of carriage, so without it every chip position overlapping a
+    ClinVar P/LP record would be (wrongly) surfaced as a finding even when the
+    individual is homozygous reference. Carriage is computed at annotation time
+    (``backend.annotation.clinvar``) via the shared ``classify_zygosity`` helper;
+    rows that are homozygous reference or unscoreable (indel/no-call/strand) have
+    ``zygosity`` outside ``CARRIED_ZYGOSITIES`` and are excluded here.
 
     For each matching variant, enriches with panel metadata (syndromes,
     cancer types, inheritance, cross-links, PMIDs).
@@ -292,6 +303,8 @@ def extract_cancer_variants(
             .where(
                 annotated_variants.c.gene_symbol.in_(gene_symbols),
                 annotated_variants.c.clinvar_significance.in_(list(_PATHOGENIC_SIGNIFICANCE)),
+                # Only surface variants the individual actually carries.
+                annotated_variants.c.zygosity.in_(list(CARRIED_ZYGOSITIES)),
             )
             .order_by(annotated_variants.c.gene_symbol, annotated_variants.c.rsid)
         )

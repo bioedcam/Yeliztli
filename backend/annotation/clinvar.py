@@ -34,6 +34,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from backend.analysis.zygosity import CARRIED_ZYGOSITIES, classify_zygosity
 from backend.annotation.http_download import stream_download
 from backend.db.tables import annotated_variants, clinvar_variants, raw_variants
 
@@ -619,6 +620,11 @@ class ClinVarAnnotation:
     clinvar_accession: str | None
     clinvar_conditions: str | None
     matched_by: str  # "rsid" or "chrom_pos"
+    # Reference/alternate alleles from the matched ClinVar record. Needed to
+    # determine whether the sample's genotype actually carries the ALT allele
+    # (zygosity) — a chip genotypes every probe regardless of carriage.
+    ref: str | None = None
+    alt: str | None = None
 
 
 @dataclass
@@ -636,19 +642,47 @@ class AnnotationResult:
         return self.matched_by_rsid + self.matched_by_position
 
 
+def _pick_clinvar_row(rows: list[sa.Row], genotype: str | None) -> sa.Row:
+    """Choose which ClinVar record to annotate from same-site candidates.
+
+    ``rows`` are the candidate ClinVar records for one rsid (or one
+    ``(chrom, pos)``), ordered by ``review_stars`` descending.
+
+    At multi-allelic sites the candidates can have different ``ref``/``alt``
+    pairs, so picking purely by review stars can score the sample against an
+    allele it does not carry (missing a true carrier or attaching the wrong
+    condition). When a sample ``genotype`` is available, prefer the
+    highest-star record whose ALT the genotype actually carries; otherwise fall
+    back to the highest-star record so the ClinVar significance is still
+    recorded (and scored as homozygous reference downstream).
+    """
+    if genotype is not None:
+        for row in rows:  # already sorted by review_stars descending
+            if classify_zygosity(genotype, row.ref, row.alt) in CARRIED_ZYGOSITIES:
+                return row
+    return rows[0]
+
+
 def lookup_clinvar_by_rsids(
     rsids: list[str],
     reference_engine: sa.Engine,
+    *,
+    genotype_by_rsid: dict[str, str] | None = None,
 ) -> dict[str, ClinVarAnnotation]:
     """Look up ClinVar annotations for a batch of rsids.
 
     When multiple ClinVar records share the same rsid (e.g. multi-allelic
-    or multi-condition), the record with the highest review_stars is
-    returned. Ties broken by significance (Pathogenic > others).
+    or multi-condition) the record with the highest review_stars is returned —
+    except that, when ``genotype_by_rsid`` is supplied, a record whose ALT the
+    sample actually carries is preferred over a higher-star record it does not
+    carry (multi-allelic carriage correctness; see ``_pick_clinvar_row``).
 
     Args:
         rsids: List of rsid strings (e.g. ["rs429358", "rs7412"]).
         reference_engine: SQLAlchemy engine for reference.db.
+        genotype_by_rsid: Optional map of rsid → sample genotype enabling
+            carriage-aware record selection at multi-allelic sites. When omitted
+            selection is by review_stars only (backward-compatible).
 
     Returns:
         Dict mapping rsid → ClinVarAnnotation for matched variants.
@@ -670,6 +704,8 @@ def lookup_clinvar_by_rsids(
                     clinvar_variants.c.review_stars,
                     clinvar_variants.c.accession,
                     clinvar_variants.c.conditions,
+                    clinvar_variants.c.ref,
+                    clinvar_variants.c.alt,
                 )
                 .where(clinvar_variants.c.rsid.in_(batch))
                 .order_by(
@@ -680,18 +716,27 @@ def lookup_clinvar_by_rsids(
 
             rows = conn.execute(stmt).fetchall()
 
+            # Group candidate records per rsid (preserving review_stars order),
+            # then choose carriage-aware.
+            candidates: dict[str, list[sa.Row]] = {}
             for row in rows:
-                rsid = row.rsid
-                # Keep only the first (highest review_stars) per rsid
-                if rsid not in results:
-                    results[rsid] = ClinVarAnnotation(
-                        rsid=rsid,
-                        clinvar_significance=row.significance,
-                        clinvar_review_stars=row.review_stars or 0,
-                        clinvar_accession=row.accession,
-                        clinvar_conditions=row.conditions,
-                        matched_by="rsid",
-                    )
+                candidates.setdefault(row.rsid, []).append(row)
+
+            for rsid, cand_rows in candidates.items():
+                if rsid in results:
+                    continue
+                genotype = genotype_by_rsid.get(rsid) if genotype_by_rsid else None
+                row = _pick_clinvar_row(cand_rows, genotype)
+                results[rsid] = ClinVarAnnotation(
+                    rsid=rsid,
+                    clinvar_significance=row.significance,
+                    clinvar_review_stars=row.review_stars or 0,
+                    clinvar_accession=row.accession,
+                    clinvar_conditions=row.conditions,
+                    matched_by="rsid",
+                    ref=row.ref,
+                    alt=row.alt,
+                )
 
     return results
 
@@ -699,6 +744,8 @@ def lookup_clinvar_by_rsids(
 def lookup_clinvar_by_positions(
     positions: list[tuple[str, int, str]],
     reference_engine: sa.Engine,
+    *,
+    genotype_by_rsid: dict[str, str] | None = None,
 ) -> dict[str, ClinVarAnnotation]:
     """Look up ClinVar annotations by (chrom, pos) for unmatched variants.
 
@@ -710,6 +757,9 @@ def lookup_clinvar_by_positions(
         positions: List of (chrom, pos, rsid) tuples. The rsid is the
             sample variant's rsid, used as the key in the result dict.
         reference_engine: SQLAlchemy engine for reference.db.
+        genotype_by_rsid: Optional map of sample rsid → genotype enabling
+            carriage-aware record selection at multi-allelic positions. When
+            omitted selection is by review_stars only (backward-compatible).
 
     Returns:
         Dict mapping sample rsid → ClinVarAnnotation for position-matched variants.
@@ -741,6 +791,8 @@ def lookup_clinvar_by_positions(
                     clinvar_variants.c.review_stars,
                     clinvar_variants.c.accession,
                     clinvar_variants.c.conditions,
+                    clinvar_variants.c.ref,
+                    clinvar_variants.c.alt,
                 )
                 .where(sa.or_(*conditions))
                 .order_by(
@@ -752,18 +804,18 @@ def lookup_clinvar_by_positions(
 
             rows = conn.execute(stmt).fetchall()
 
-            # Build a lookup by (chrom, pos) → best ClinVar row
-            pos_lookup: dict[tuple[str, int], sa.Row] = {}
+            # Group candidate records per (chrom, pos), preserving review_stars
+            # order, then choose carriage-aware per sample variant below.
+            pos_candidates: dict[tuple[str, int], list[sa.Row]] = {}
             for row in rows:
-                key = (row.chrom, row.pos)
-                if key not in pos_lookup:
-                    pos_lookup[key] = row
+                pos_candidates.setdefault((row.chrom, row.pos), []).append(row)
 
             # Map back to sample rsids
             for chrom, pos, sample_rsid in batch:
                 key = (chrom, pos)
-                if key in pos_lookup and sample_rsid not in results:
-                    row = pos_lookup[key]
+                if key in pos_candidates and sample_rsid not in results:
+                    genotype = genotype_by_rsid.get(sample_rsid) if genotype_by_rsid else None
+                    row = _pick_clinvar_row(pos_candidates[key], genotype)
                     results[sample_rsid] = ClinVarAnnotation(
                         rsid=sample_rsid,
                         clinvar_significance=row.significance,
@@ -771,6 +823,8 @@ def lookup_clinvar_by_positions(
                         clinvar_accession=row.accession,
                         clinvar_conditions=row.conditions,
                         matched_by="chrom_pos",
+                        ref=row.ref,
+                        alt=row.alt,
                     )
 
     return results
@@ -814,16 +868,23 @@ def annotate_sample_clinvar(
     # Build lookup structures
     all_rsids = [r.rsid for r in raw_rows]
     raw_by_rsid = {r.rsid: r for r in raw_rows}
+    # Genotypes drive carriage-aware ClinVar record selection at multi-allelic
+    # sites (so the sample is scored against the allele it actually carries).
+    genotype_by_rsid = {r.rsid: r.genotype for r in raw_rows}
 
     # 2. Primary match: by rsid
-    rsid_matches = lookup_clinvar_by_rsids(all_rsids, reference_engine)
+    rsid_matches = lookup_clinvar_by_rsids(
+        all_rsids, reference_engine, genotype_by_rsid=genotype_by_rsid
+    )
     result.matched_by_rsid = len(rsid_matches)
 
     # 3. Fallback: by (chrom, pos) for unmatched variants
     unmatched_positions = [
         (r.chrom, r.pos, r.rsid) for r in raw_rows if r.rsid not in rsid_matches
     ]
-    pos_matches = lookup_clinvar_by_positions(unmatched_positions, reference_engine)
+    pos_matches = lookup_clinvar_by_positions(
+        unmatched_positions, reference_engine, genotype_by_rsid=genotype_by_rsid
+    )
     result.matched_by_position = len(pos_matches)
 
     # 4. Merge all matches
@@ -834,12 +895,21 @@ def annotate_sample_clinvar(
     rows_to_upsert = []
     for rsid, annot in all_matches.items():
         raw = raw_by_rsid[rsid]
+        # Determine whether the sample's genotype actually carries the ClinVar
+        # ALT allele. Without this, every chip probe that overlaps a ClinVar
+        # record is mislabelled with that record's significance even when the
+        # individual is homozygous reference (the carriage bug downstream
+        # modules relied on). ``None`` means unscoreable (indel/no-call/strand).
+        zygosity = classify_zygosity(raw.genotype, annot.ref, annot.alt)
         rows_to_upsert.append(
             {
                 "rsid": rsid,
                 "chrom": raw.chrom,
                 "pos": raw.pos,
+                "ref": annot.ref,
+                "alt": annot.alt,
                 "genotype": raw.genotype,
+                "zygosity": zygosity,
                 "clinvar_significance": annot.clinvar_significance,
                 "clinvar_review_stars": annot.clinvar_review_stars,
                 "clinvar_accession": annot.clinvar_accession,
@@ -857,6 +927,9 @@ def annotate_sample_clinvar(
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["rsid"],
                     set_={
+                        "ref": stmt.excluded.ref,
+                        "alt": stmt.excluded.alt,
+                        "zygosity": stmt.excluded.zygosity,
                         "clinvar_significance": stmt.excluded.clinvar_significance,
                         "clinvar_review_stars": stmt.excluded.clinvar_review_stars,
                         "clinvar_accession": stmt.excluded.clinvar_accession,

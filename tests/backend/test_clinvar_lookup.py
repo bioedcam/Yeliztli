@@ -115,6 +115,55 @@ class TestLookupByRsids:
         assert result["rs100"].clinvar_significance == "Pathogenic"
         assert result["rs100"].clinvar_review_stars == 3
 
+    def test_genotype_aware_selection_at_multiallelic_site(
+        self, reference_engine: sa.Engine
+    ) -> None:
+        """At a multi-allelic site, the record whose ALT the sample carries is
+        preferred over a higher-star record it does not carry."""
+        with reference_engine.begin() as conn:
+            conn.execute(
+                clinvar_variants.insert(),
+                [
+                    {
+                        "rsid": "rs_multi",
+                        "chrom": "1",
+                        "pos": 2000,
+                        "ref": "C",
+                        "alt": "G",
+                        "significance": "Pathogenic",
+                        "review_stars": 3,
+                        "accession": "VCV000000010",
+                        "conditions": "Condition G",
+                        "gene_symbol": "GENE1",
+                        "variation_id": 10,
+                    },
+                    {
+                        "rsid": "rs_multi",
+                        "chrom": "1",
+                        "pos": 2000,
+                        "ref": "C",
+                        "alt": "T",
+                        "significance": "Pathogenic",
+                        "review_stars": 2,
+                        "accession": "VCV000000011",
+                        "conditions": "Condition T",
+                        "gene_symbol": "GENE1",
+                        "variation_id": 11,
+                    },
+                ],
+            )
+
+        # No genotype → highest review_stars wins (alt G).
+        res = lookup_clinvar_by_rsids(["rs_multi"], reference_engine)
+        assert res["rs_multi"].alt == "G"
+
+        # Genotype CT carries the alt T record (lower stars) → it is chosen.
+        res2 = lookup_clinvar_by_rsids(
+            ["rs_multi"], reference_engine, genotype_by_rsid={"rs_multi": "CT"}
+        )
+        assert res2["rs_multi"].alt == "T"
+        assert res2["rs_multi"].clinvar_conditions == "Condition T"
+
     def test_large_batch_exceeding_sqlite_limit(self, seeded_reference_engine: sa.Engine) -> None:
         """Test with >500 rsids to verify batching logic."""
         # Generate 600 fake rsids, but include known seed rsids
@@ -232,6 +281,140 @@ class TestAnnotateSampleClinvar:
         assert row.chrom == "19"
         assert row.pos == 44908684
         assert row.genotype == "TC"
+
+    def test_zygosity_and_alleles_populated(
+        self,
+        sample_with_variants: sa.Engine,
+        seeded_reference_engine: sa.Engine,
+    ) -> None:
+        """Annotation records ClinVar ref/alt and a computed zygosity so
+        downstream modules can gate on actual carriage (carriage-bug fix)."""
+        annotate_sample_clinvar(sample_with_variants, seeded_reference_engine)
+
+        with sample_with_variants.connect() as conn:
+            rows = {
+                r.rsid: r
+                for r in conn.execute(
+                    sa.select(
+                        annotated_variants.c.rsid,
+                        annotated_variants.c.ref,
+                        annotated_variants.c.alt,
+                        annotated_variants.c.zygosity,
+                    )
+                ).fetchall()
+            }
+
+        # rs429358: genotype "TC" vs ClinVar ref T / alt C → carrier (het).
+        assert rows["rs429358"].ref == "T"
+        assert rows["rs429358"].alt == "C"
+        assert rows["rs429358"].zygosity == "het"
+        # rs7412: genotype "CC" vs ClinVar ref C / alt T → homozygous reference
+        # (does NOT carry the variant — must not surface as a finding).
+        assert rows["rs7412"].zygosity == "hom_ref"
+        # rs12345: genotype "AA" vs ClinVar ref A / alt G → homozygous reference.
+        assert rows["rs12345"].zygosity == "hom_ref"
+
+    def test_indel_match_has_null_zygosity(
+        self,
+        sample_engine: sa.Engine,
+        reference_engine: sa.Engine,
+    ) -> None:
+        """An indel ClinVar record (multi-base ref) is unscoreable on a chip,
+        so zygosity is NULL even though the position matches."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                raw_variants.insert(),
+                [{"rsid": "rs777", "chrom": "5", "pos": 500, "genotype": "II"}],
+            )
+        with reference_engine.begin() as conn:
+            conn.execute(
+                clinvar_variants.insert(),
+                [
+                    {
+                        "rsid": "rs777",
+                        "chrom": "5",
+                        "pos": 500,
+                        "ref": "CTC",
+                        "alt": "C",
+                        "significance": "Pathogenic",
+                        "review_stars": 3,
+                        "accession": "VCV000000777",
+                        "conditions": "Some condition",
+                        "gene_symbol": "APC",
+                        "variation_id": 777,
+                    }
+                ],
+            )
+
+        annotate_sample_clinvar(sample_engine, reference_engine)
+
+        with sample_engine.connect() as conn:
+            row = conn.execute(
+                sa.select(annotated_variants.c.zygosity, annotated_variants.c.ref).where(
+                    annotated_variants.c.rsid == "rs777"
+                )
+            ).first()
+
+        assert row is not None
+        assert row.ref == "CTC"  # alleles still recorded
+        assert row.zygosity is None  # but carriage is unscoreable
+
+    def test_multiallelic_carriage_aware_annotation(
+        self,
+        sample_engine: sa.Engine,
+        reference_engine: sa.Engine,
+    ) -> None:
+        """End-to-end: at a multi-allelic site the sample is annotated against
+        the allele it carries, not merely the highest-star record."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                raw_variants.insert(),
+                [{"rsid": "rs_multi", "chrom": "1", "pos": 2000, "genotype": "CT"}],
+            )
+        with reference_engine.begin() as conn:
+            conn.execute(
+                clinvar_variants.insert(),
+                [
+                    {
+                        "rsid": "rs_multi",
+                        "chrom": "1",
+                        "pos": 2000,
+                        "ref": "C",
+                        "alt": "G",  # NOT carried, higher stars
+                        "significance": "Pathogenic",
+                        "review_stars": 3,
+                        "accession": "VCV000000010",
+                        "conditions": "Condition G",
+                        "gene_symbol": "GENE1",
+                        "variation_id": 10,
+                    },
+                    {
+                        "rsid": "rs_multi",
+                        "chrom": "1",
+                        "pos": 2000,
+                        "ref": "C",
+                        "alt": "T",  # carried by genotype "CT"
+                        "significance": "Pathogenic",
+                        "review_stars": 2,
+                        "accession": "VCV000000011",
+                        "conditions": "Condition T",
+                        "gene_symbol": "GENE1",
+                        "variation_id": 11,
+                    },
+                ],
+            )
+
+        annotate_sample_clinvar(sample_engine, reference_engine)
+
+        with sample_engine.connect() as conn:
+            row = conn.execute(
+                sa.select(annotated_variants).where(annotated_variants.c.rsid == "rs_multi")
+            ).first()
+
+        assert row is not None
+        assert row.alt == "T"  # scored against the carried allele
+        assert row.zygosity == "het"
+        assert row.clinvar_conditions == "Condition T"
 
     def test_annotation_coverage_bitmask(
         self,
