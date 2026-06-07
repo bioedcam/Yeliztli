@@ -34,6 +34,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from backend.analysis.zygosity import classify_zygosity
 from backend.annotation.http_download import stream_download
 from backend.db.tables import annotated_variants, clinvar_variants, raw_variants
 
@@ -619,6 +620,11 @@ class ClinVarAnnotation:
     clinvar_accession: str | None
     clinvar_conditions: str | None
     matched_by: str  # "rsid" or "chrom_pos"
+    # Reference/alternate alleles from the matched ClinVar record. Needed to
+    # determine whether the sample's genotype actually carries the ALT allele
+    # (zygosity) — a chip genotypes every probe regardless of carriage.
+    ref: str | None = None
+    alt: str | None = None
 
 
 @dataclass
@@ -670,6 +676,8 @@ def lookup_clinvar_by_rsids(
                     clinvar_variants.c.review_stars,
                     clinvar_variants.c.accession,
                     clinvar_variants.c.conditions,
+                    clinvar_variants.c.ref,
+                    clinvar_variants.c.alt,
                 )
                 .where(clinvar_variants.c.rsid.in_(batch))
                 .order_by(
@@ -691,6 +699,8 @@ def lookup_clinvar_by_rsids(
                         clinvar_accession=row.accession,
                         clinvar_conditions=row.conditions,
                         matched_by="rsid",
+                        ref=row.ref,
+                        alt=row.alt,
                     )
 
     return results
@@ -741,6 +751,8 @@ def lookup_clinvar_by_positions(
                     clinvar_variants.c.review_stars,
                     clinvar_variants.c.accession,
                     clinvar_variants.c.conditions,
+                    clinvar_variants.c.ref,
+                    clinvar_variants.c.alt,
                 )
                 .where(sa.or_(*conditions))
                 .order_by(
@@ -771,6 +783,8 @@ def lookup_clinvar_by_positions(
                         clinvar_accession=row.accession,
                         clinvar_conditions=row.conditions,
                         matched_by="chrom_pos",
+                        ref=row.ref,
+                        alt=row.alt,
                     )
 
     return results
@@ -834,12 +848,21 @@ def annotate_sample_clinvar(
     rows_to_upsert = []
     for rsid, annot in all_matches.items():
         raw = raw_by_rsid[rsid]
+        # Determine whether the sample's genotype actually carries the ClinVar
+        # ALT allele. Without this, every chip probe that overlaps a ClinVar
+        # record is mislabelled with that record's significance even when the
+        # individual is homozygous reference (the carriage bug downstream
+        # modules relied on). ``None`` means unscoreable (indel/no-call/strand).
+        zygosity = classify_zygosity(raw.genotype, annot.ref, annot.alt)
         rows_to_upsert.append(
             {
                 "rsid": rsid,
                 "chrom": raw.chrom,
                 "pos": raw.pos,
+                "ref": annot.ref,
+                "alt": annot.alt,
                 "genotype": raw.genotype,
+                "zygosity": zygosity,
                 "clinvar_significance": annot.clinvar_significance,
                 "clinvar_review_stars": annot.clinvar_review_stars,
                 "clinvar_accession": annot.clinvar_accession,
@@ -857,6 +880,9 @@ def annotate_sample_clinvar(
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["rsid"],
                     set_={
+                        "ref": stmt.excluded.ref,
+                        "alt": stmt.excluded.alt,
+                        "zygosity": stmt.excluded.zygosity,
                         "clinvar_significance": stmt.excluded.clinvar_significance,
                         "clinvar_review_stars": stmt.excluded.clinvar_review_stars,
                         "clinvar_accession": stmt.excluded.clinvar_accession,

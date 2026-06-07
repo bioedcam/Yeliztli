@@ -233,6 +233,83 @@ class TestAnnotateSampleClinvar:
         assert row.pos == 44908684
         assert row.genotype == "TC"
 
+    def test_zygosity_and_alleles_populated(
+        self,
+        sample_with_variants: sa.Engine,
+        seeded_reference_engine: sa.Engine,
+    ) -> None:
+        """Annotation records ClinVar ref/alt and a computed zygosity so
+        downstream modules can gate on actual carriage (carriage-bug fix)."""
+        annotate_sample_clinvar(sample_with_variants, seeded_reference_engine)
+
+        with sample_with_variants.connect() as conn:
+            rows = {
+                r.rsid: r
+                for r in conn.execute(
+                    sa.select(
+                        annotated_variants.c.rsid,
+                        annotated_variants.c.ref,
+                        annotated_variants.c.alt,
+                        annotated_variants.c.zygosity,
+                    )
+                ).fetchall()
+            }
+
+        # rs429358: genotype "TC" vs ClinVar ref T / alt C → carrier (het).
+        assert rows["rs429358"].ref == "T"
+        assert rows["rs429358"].alt == "C"
+        assert rows["rs429358"].zygosity == "het"
+        # rs7412: genotype "CC" vs ClinVar ref C / alt T → homozygous reference
+        # (does NOT carry the variant — must not surface as a finding).
+        assert rows["rs7412"].zygosity == "hom_ref"
+        # rs12345: genotype "AA" vs ClinVar ref A / alt G → homozygous reference.
+        assert rows["rs12345"].zygosity == "hom_ref"
+
+    def test_indel_match_has_null_zygosity(
+        self,
+        sample_engine: sa.Engine,
+        reference_engine: sa.Engine,
+    ) -> None:
+        """An indel ClinVar record (multi-base ref) is unscoreable on a chip,
+        so zygosity is NULL even though the position matches."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                raw_variants.insert(),
+                [{"rsid": "rs777", "chrom": "5", "pos": 500, "genotype": "II"}],
+            )
+        with reference_engine.begin() as conn:
+            conn.execute(
+                clinvar_variants.insert(),
+                [
+                    {
+                        "rsid": "rs777",
+                        "chrom": "5",
+                        "pos": 500,
+                        "ref": "CTC",
+                        "alt": "C",
+                        "significance": "Pathogenic",
+                        "review_stars": 3,
+                        "accession": "VCV000000777",
+                        "conditions": "Some condition",
+                        "gene_symbol": "APC",
+                        "variation_id": 777,
+                    }
+                ],
+            )
+
+        annotate_sample_clinvar(sample_engine, reference_engine)
+
+        with sample_engine.connect() as conn:
+            row = conn.execute(
+                sa.select(annotated_variants.c.zygosity, annotated_variants.c.ref).where(
+                    annotated_variants.c.rsid == "rs777"
+                )
+            ).first()
+
+        assert row is not None
+        assert row.ref == "CTC"  # alleles still recorded
+        assert row.zygosity is None  # but carriage is unscoreable
+
     def test_annotation_coverage_bitmask(
         self,
         sample_with_variants: sa.Engine,

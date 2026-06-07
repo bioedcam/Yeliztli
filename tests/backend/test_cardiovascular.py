@@ -543,6 +543,106 @@ class TestExtractCardiovascularVariants:
         rsids = {v.rsid for v in result.variants}
         assert "rs999777" not in rsids  # VUS
 
+    def test_excludes_non_carried_zygosity(
+        self, panel: CardiovascularPanel, sample_engine: sa.Engine
+    ) -> None:
+        """A P/LP variant in a panel gene must NOT be reported when the
+        individual does not carry the ALT allele (carriage-bug fix)."""
+        variants = [
+            {
+                "rsid": "rs_ldlr_het",
+                "chrom": "19",
+                "pos": 11200000,
+                "ref": "C",
+                "alt": "T",
+                "genotype": "CT",
+                "zygosity": "het",
+                "gene_symbol": "LDLR",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 3,
+                "clinvar_conditions": "Familial hypercholesterolemia",
+                "annotation_coverage": 2,
+            },
+            {
+                "rsid": "rs_ldlr_homref",
+                "chrom": "19",
+                "pos": 11200100,
+                "ref": "C",
+                "alt": "T",
+                "genotype": "CC",
+                "zygosity": "hom_ref",
+                "gene_symbol": "LDLR",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 4,
+                "clinvar_conditions": "Familial hypercholesterolemia",
+                "annotation_coverage": 2,
+            },
+            {
+                "rsid": "rs_myh7_indel",
+                "chrom": "14",
+                "pos": 23900000,
+                "ref": "CTC",
+                "alt": "C",
+                "genotype": "II",
+                "zygosity": None,
+                "gene_symbol": "MYH7",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 3,
+                "clinvar_conditions": "Hypertrophic cardiomyopathy",
+                "annotation_coverage": 2,
+            },
+        ]
+        with sample_engine.begin() as conn:
+            conn.execute(sa.insert(annotated_variants), variants)
+
+        result = extract_cardiovascular_variants(panel, sample_engine)
+        kept = {v.rsid for v in result.variants}
+        assert kept == {"rs_ldlr_het"}
+
+    def test_fh_status_negative_when_only_homozygous_reference(
+        self, panel: CardiovascularPanel, sample_engine: sa.Engine
+    ) -> None:
+        """The dangerous false-positive: hom-ref LDLR/APOB/PCSK9 probes must
+        NOT yield an FH 'Positive' status."""
+        variants = [
+            {
+                "rsid": "rs_ldlr_homref_1",
+                "chrom": "19",
+                "pos": 11210000,
+                "ref": "G",
+                "alt": "A",
+                "genotype": "GG",
+                "zygosity": "hom_ref",
+                "gene_symbol": "LDLR",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 4,
+                "clinvar_conditions": "Familial hypercholesterolemia",
+                "annotation_coverage": 2,
+            },
+            {
+                "rsid": "rs_apob_homref",
+                "chrom": "2",
+                "pos": 21000000,
+                "ref": "C",
+                "alt": "T",
+                "genotype": "CC",
+                "zygosity": "hom_ref",
+                "gene_symbol": "APOB",
+                "clinvar_significance": "Likely pathogenic",
+                "clinvar_review_stars": 2,
+                "clinvar_conditions": "Familial hypercholesterolemia",
+                "annotation_coverage": 2,
+            },
+        ]
+        with sample_engine.begin() as conn:
+            conn.execute(sa.insert(annotated_variants), variants)
+
+        result = extract_cardiovascular_variants(panel, sample_engine)
+        fh = determine_fh_status(result)
+        assert result.pathogenic_count == 0
+        assert fh.status == FH_STATUS_NEGATIVE
+        assert fh.is_positive is False
+
     def test_ldlr_golden_fixture(
         self, panel: CardiovascularPanel, sample_with_cv_variants: sa.Engine
     ) -> None:

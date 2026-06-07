@@ -335,6 +335,88 @@ class TestExtractCancerVariants:
         assert result.variants == []
         assert result.panel_genes_checked == 28
 
+    def test_excludes_non_carried_zygosity(
+        self, panel: CancerPanel, sample_engine: sa.Engine
+    ) -> None:
+        """A P/LP variant in a panel gene must NOT be reported when the
+        individual does not carry the ALT allele (carriage-bug fix).
+
+        A 23andMe chip genotypes every probe regardless of carriage, so only
+        het / hom_alt rows are clinically relevant; hom_ref and unscoreable
+        (NULL zygosity) rows are excluded.
+        """
+        variants = [
+            # APC Pathogenic — carrier (het) → kept
+            {
+                "rsid": "rs_apc_het",
+                "chrom": "5",
+                "pos": 112175000,
+                "ref": "C",
+                "alt": "T",
+                "genotype": "CT",
+                "zygosity": "het",
+                "gene_symbol": "APC",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 2,
+                "clinvar_conditions": "Familial adenomatous polyposis",
+                "annotation_coverage": 2,
+            },
+            # APC Pathogenic — homozygous reference (NOT carried) → excluded
+            {
+                "rsid": "rs_apc_homref",
+                "chrom": "5",
+                "pos": 112175100,
+                "ref": "C",
+                "alt": "T",
+                "genotype": "CC",
+                "zygosity": "hom_ref",
+                "gene_symbol": "APC",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 4,
+                "clinvar_conditions": "Familial adenomatous polyposis",
+                "annotation_coverage": 2,
+            },
+            # APC Pathogenic — unscoreable indel (NULL zygosity) → excluded
+            {
+                "rsid": "rs_apc_indel",
+                "chrom": "5",
+                "pos": 112175200,
+                "ref": "CTC",
+                "alt": "C",
+                "genotype": "II",
+                "zygosity": None,
+                "gene_symbol": "APC",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 3,
+                "clinvar_conditions": "Familial adenomatous polyposis",
+                "annotation_coverage": 2,
+            },
+            # MUTYH hom_alt — affected homozygote → kept
+            {
+                "rsid": "rs_mutyh_homalt",
+                "chrom": "1",
+                "pos": 45797000,
+                "ref": "G",
+                "alt": "A",
+                "genotype": "AA",
+                "zygosity": "hom_alt",
+                "gene_symbol": "MUTYH",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 2,
+                "clinvar_conditions": "Familial adenomatous polyposis 2",
+                "annotation_coverage": 2,
+            },
+        ]
+        with sample_engine.begin() as conn:
+            conn.execute(sa.insert(annotated_variants), variants)
+
+        result = extract_cancer_variants(panel, sample_engine)
+
+        kept = {v.rsid for v in result.variants}
+        assert kept == {"rs_apc_het", "rs_mutyh_homalt"}
+        assert "rs_apc_homref" not in kept
+        assert "rs_apc_indel" not in kept
+
 
 # ── Findings storage tests ───────────────────────────────────────────────
 
