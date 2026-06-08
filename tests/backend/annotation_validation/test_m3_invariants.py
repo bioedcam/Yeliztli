@@ -96,8 +96,6 @@ def test_inv2_snv_with_source_alleles_has_zygosity(build_live_run) -> None:
 # ── inv3 — no biallelic genotype is carried for two distinct ALTs (F37) ────
 
 
-@pytest.mark.xfail(strict=True, reason="F37: classify_zygosity double-carries at "
-                   "palindromic sites; fixed by Phase D3")
 def test_inv3_no_double_carry_at_palindrome() -> None:
     """A biallelic genotype cannot carry two distinct ALTs at one (chrom,pos,ref).
 

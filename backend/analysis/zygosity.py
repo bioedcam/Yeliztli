@@ -138,13 +138,25 @@ def classify_zygosity(genotype: str | None, ref: str | None, alt: str | None) ->
     if any(a not in _COMPLEMENT for a in alleles):  # non-ACGT (e.g. "-")
         return None
 
-    # Reference-strand comparison.
+    # Reference-strand comparison (always trusted).
     if alleles <= {ref, alt}:
         return _zygosity_from_alleles(alleles, ref, alt)
-    # Reverse-strand fallback.
-    cref, calt = _COMPLEMENT[ref], _COMPLEMENT[alt]
-    if alleles <= {cref, calt}:
-        return _zygosity_from_alleles(alleles, cref, calt)
-    # Alleles explained by neither strand (e.g. a different/triallelic variant):
-    # carriage of the ClinVar ALT cannot be confirmed.
+    # Reverse-strand fallback — only for HETEROZYGOUS genotypes (F37).
+    #
+    # A heterozygous call carries both the ref-complement and the alt-complement,
+    # which pins a single unambiguous reverse-strand interpretation. A
+    # *homozygous* call ``XX`` does not: ``X`` could be the forward ALT of one
+    # variant or the reverse complement of a different ALT at the same locus, so
+    # trusting the complement there lets one genotype be "carried" for two
+    # distinct ALTs (the F37 double-carry, e.g. ``CC`` vs ref ``T`` matching both
+    # ALT=C on the + strand and ALT=G via complement). When the forward strand
+    # cannot explain a homozygous call we leave carriage undetermined rather than
+    # guess a strand — the conservative choice, since reverse-strand ultra-rare
+    # homozygous calls are a classic probe/strand-artifact signature.
+    if len(alleles) == 2:
+        cref, calt = _COMPLEMENT[ref], _COMPLEMENT[alt]
+        if alleles <= {cref, calt}:
+            return _zygosity_from_alleles(alleles, cref, calt)
+    # Alleles explained by neither strand (a different/triallelic variant, or a
+    # strand-ambiguous homozygous reverse call): carriage cannot be confirmed.
     return None

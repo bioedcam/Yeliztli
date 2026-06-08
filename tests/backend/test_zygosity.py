@@ -44,18 +44,45 @@ class TestClassifyZygosityReferenceStrand:
 
 
 class TestClassifyZygosityStrandFlip:
-    """23andMe probes reported on the reverse strand resolve via complement."""
+    """Reverse-strand probes resolve via complement — but only for heterozygotes.
+
+    A heterozygous reverse-strand call carries both the ref-complement and the
+    alt-complement, pinning a single unambiguous interpretation. A *homozygous*
+    reverse-strand call is strand-ambiguous: its single allele could equally be a
+    forward ALT of a different variant at the same locus, so trusting the
+    complement there would let one genotype be "carried" for two distinct ALTs
+    (the F37 double-carry, guarded by ``test_no_double_carry_at_locus``). Such
+    homozygous calls are therefore left undetermined (``None``) — the
+    conservative choice, since reverse-strand ultra-rare homozygous calls are a
+    classic probe/strand-artifact signature.
+    """
 
     def test_reverse_strand_heterozygous(self) -> None:
-        # ref C / alt T → complement ref G / alt A; "GA" carries both.
+        # ref C / alt T → complement ref G / alt A; "GA" carries both → het.
         assert classify_zygosity("GA", "C", "T") == ZYG_HET
 
-    def test_reverse_strand_homozygous_alt(self) -> None:
-        # "AA" is the complement of the alt (T) → hom_alt.
-        assert classify_zygosity("AA", "C", "T") == ZYG_HOM_ALT
+    def test_reverse_strand_homozygous_alt_is_undetermined(self) -> None:
+        # "AA" matches the complemented alt, but a homozygous call is
+        # strand-ambiguous, so carriage is left undetermined (F37 guard).
+        assert classify_zygosity("AA", "C", "T") is None
 
-    def test_reverse_strand_homozygous_ref(self) -> None:
-        assert classify_zygosity("GG", "C", "T") == ZYG_HOM_REF
+    def test_reverse_strand_homozygous_ref_is_undetermined(self) -> None:
+        assert classify_zygosity("GG", "C", "T") is None
+
+    def test_no_double_carry_at_locus(self) -> None:
+        """No biallelic genotype is 'carried' for two distinct ALTs at one ref.
+
+        The F37 invariant as a unit property: for ref ``T`` and genotype ``CC``,
+        the old unconditional complement fallback marked both ALT=C (forward) and
+        ALT=G (complement) as carried.
+        """
+        ref, genotype = "T", "CC"
+        carried = [
+            alt
+            for alt in ("A", "C", "G")
+            if classify_zygosity(genotype, ref, alt) in CARRIED_ZYGOSITIES
+        ]
+        assert carried == ["C"], f"genotype {genotype!r} carries multiple ALTs: {carried}"
 
 
 class TestClassifyZygosityPalindromic:
