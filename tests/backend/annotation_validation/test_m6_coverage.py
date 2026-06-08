@@ -99,8 +99,6 @@ def test_coverage_bit_implies_source_column(build_live_run) -> None:
 # ── F18: deprecated rsids are recovered (resolution rate > 0) ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F18: dbSNP merges not reconciled on the "
-                   "live path; fixed by Phase C2")
 def test_merged_rsids_are_recovered(build_live_run) -> None:
     """Both deprecated rsids resolve to their current id and get annotated."""
     run = build_live_run(

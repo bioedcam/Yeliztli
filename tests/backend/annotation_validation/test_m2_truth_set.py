@@ -214,8 +214,6 @@ def test_monogenic_cancer_finding_surfaces_for_carrier(build_live_run) -> None:
 # ── F18: merged rsid resolved to its current id ───────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F18: dbSNP merge not reconciled on the "
-                   "live path; fixed by Phase C2")
 def test_merged_rsid_resolved(build_live_run) -> None:
     """An old rsid whose ClinVar record lives under the current id is annotated."""
     run = build_live_run(

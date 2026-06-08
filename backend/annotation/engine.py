@@ -405,6 +405,25 @@ def _lookup_gene_phenotype(
 # ── Merge + bitmask ──────────────────────────────────────────────────────
 
 
+def _rekey_to_original(
+    data_by_query: dict[str, dict],
+    lookup_key: dict[str, str],
+) -> dict[str, dict]:
+    """Re-key source-lookup results from the queried rsid back to the sample's.
+
+    Source lookups are issued under the *current* (merge-resolved) rsid, so a
+    deprecated chip rsid recovers the record filed under its replacement (F18).
+    Results come back keyed by the current rsid; map each back to the original
+    sample rsid so the annotated row stays keyed by what the chip reported.
+    """
+    out: dict[str, dict] = {}
+    for original, query in lookup_key.items():
+        match = data_by_query.get(query)
+        if match is not None:
+            out[original] = match
+    return out
+
+
 def _merge_annotations(
     raw_rows: list[sa.Row],
     vep_data: dict[str, dict],
@@ -412,14 +431,20 @@ def _merge_annotations(
     gnomad_data: dict[str, dict],
     dbnsfp_data: dict[str, dict],
     gene_phenotype_data: dict[str, dict] | None = None,
+    merged_rsid_map: dict[str, str] | None = None,
 ) -> list[dict]:
     """Merge all annotation sources into upsert-ready dicts.
 
     For each raw variant, merges columns from whichever sources matched
-    and computes the ``annotation_coverage`` bitmask.
+    and computes the ``annotation_coverage`` bitmask. ``merged_rsid_map`` (F18)
+    maps a deprecated sample rsid to the current rsid its annotations were
+    recovered under; it is recorded in ``dbsnp_rsid_current`` (no coverage bit —
+    rsid-merge resolution is a cross-reference, not one of the six sources).
     """
     if gene_phenotype_data is None:
         gene_phenotype_data = {}
+    if merged_rsid_map is None:
+        merged_rsid_map = {}
 
     merged: list[dict] = []
 
@@ -433,6 +458,10 @@ def _merge_annotations(
             "pos": raw.pos,
             "genotype": raw.genotype,
         }
+
+        current_rsid = merged_rsid_map.get(rsid)
+        if current_rsid:
+            row_data["dbsnp_rsid_current"] = current_rsid
 
         if rsid in vep_data:
             row_data.update(vep_data[rsid])
@@ -513,6 +542,8 @@ _UPSERT_COLUMNS = [
     "clinvar_review_stars",
     "clinvar_accession",
     "clinvar_conditions",
+    # dbSNP merge reconciliation (F18) — current rsid a deprecated id resolved to
+    "dbsnp_rsid_current",
     # gnomAD
     "gnomad_af_global",
     "gnomad_af_afr",
@@ -892,6 +923,17 @@ def run_annotation(
     gnomad_engine = _check_engine_available(lambda: registry.gnomad_engine, "gnomad")
     dbnsfp_engine = _check_engine_available(lambda: registry.dbnsfp_engine, "dbnsfp")
 
+    # 3b. dbSNP merge reconciliation (F18): a chip may carry a deprecated rsid
+    # whose ClinVar/gnomAD/dbNSFP record now lives under its current rsid. Build
+    # old→current once so every per-source lookup queries the current id and the
+    # recovered record is re-keyed back to the rsid the chip actually reported.
+    from backend.annotation.dbsnp import lookup_merged_rsids
+
+    merge_records = lookup_merged_rsids([r.rsid for r in raw_rows], reference_engine)
+    current_by_old = {
+        old: rec.current_rsid for old, rec in merge_records.items() if rec.current_rsid
+    }
+
     # 4. Process in batches
     # Reuse a single ThreadPoolExecutor across all batches to avoid
     # repeated thread creation/teardown overhead (P4-22 optimization).
@@ -918,6 +960,19 @@ def run_annotation(
             batch_rsids = [r.rsid for r in batch_rows]
             raw_by_rsid = {r.rsid: r for r in batch_rows}
 
+            # Resolve deprecated rsids to their current id for the source lookups
+            # (F18), keeping ``lookup_key`` so results re-key to the original
+            # sample rsid. ``raw_by_query`` carries the genotype/position under
+            # the queried id; a directly-genotyped current rsid keeps its own row
+            # (self-map wins over a merged old→current contribution).
+            lookup_key = {r: current_by_old.get(r, r) for r in batch_rsids}
+            query_rsids = list(dict.fromkeys(lookup_key.values()))
+            raw_by_query: dict[str, sa.Row] = {}
+            for r in batch_rsids:
+                q = lookup_key[r]
+                if q == r or q not in raw_by_query:
+                    raw_by_query[q] = raw_by_rsid[r]
+
             # 5. Concurrent lookups across annotation sources
             vep_data: dict[str, dict] = {}
             clinvar_data: dict[str, dict] = {}
@@ -935,8 +990,8 @@ def run_annotation(
                     executor.submit(
                         _timed_lookup,
                         _lookup_vep,
-                        batch_rsids,
-                        raw_by_rsid,
+                        query_rsids,
+                        raw_by_query,
                         vep_engine,
                         source_timings=source_timings,
                         source_name="vep",
@@ -947,8 +1002,8 @@ def run_annotation(
                 executor.submit(
                     _timed_lookup,
                     _lookup_clinvar,
-                    batch_rsids,
-                    raw_by_rsid,
+                    query_rsids,
+                    raw_by_query,
                     reference_engine,
                     source_timings=source_timings,
                     source_name="clinvar",
@@ -960,8 +1015,8 @@ def run_annotation(
                     executor.submit(
                         _timed_lookup,
                         _lookup_gnomad,
-                        batch_rsids,
-                        raw_by_rsid,
+                        query_rsids,
+                        raw_by_query,
                         gnomad_engine,
                         source_timings=source_timings,
                         source_name="gnomad",
@@ -973,8 +1028,8 @@ def run_annotation(
                     executor.submit(
                         _timed_lookup,
                         _lookup_dbnsfp,
-                        batch_rsids,
-                        raw_by_rsid,
+                        query_rsids,
+                        raw_by_query,
                         dbnsfp_engine,
                         source_timings=source_timings,
                         source_name="dbnsfp",
@@ -1000,6 +1055,15 @@ def run_annotation(
                         extra={"source": source, "error": str(exc)},
                     )
                     result.errors.append(msg)
+
+            # Re-key merge-resolved lookups back to the sample's original rsids
+            # (F18) before any downstream use (coord fallback, telemetry, merge).
+            # A no-op when nothing in this batch was a deprecated rsid.
+            if current_by_old:
+                vep_data = _rekey_to_original(vep_data, lookup_key)
+                clinvar_data = _rekey_to_original(clinvar_data, lookup_key)
+                gnomad_data = _rekey_to_original(gnomad_data, lookup_key)
+                dbnsfp_data = _rekey_to_original(dbnsfp_data, lookup_key)
 
             # Accumulate per-source timings
             result.timing_vep_s += source_timings.get("vep", 0.0)
@@ -1071,7 +1135,13 @@ def run_annotation(
             # 6. Merge results and compute bitmask
             t_merge = time.perf_counter()
             merged = _merge_annotations(
-                batch_rows, vep_data, clinvar_data, gnomad_data, dbnsfp_data, gene_phenotype_data
+                batch_rows,
+                vep_data,
+                clinvar_data,
+                gnomad_data,
+                dbnsfp_data,
+                gene_phenotype_data,
+                merged_rsid_map=current_by_old,
             )
 
             # 6b. Ensemble pathogenicity flag (P2-13)
