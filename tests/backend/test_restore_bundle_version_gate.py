@@ -113,7 +113,7 @@ def _build_archive(sample_paths: list[Path], include_config: bool = True) -> byt
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         if include_config:
-            cfg = b'[genomeinsight]\ndata_dir = "/tmp/test"\n'
+            cfg = b'[yeliztli]\ndata_dir = "/tmp/test"\n'
             info = tarfile.TarInfo(name="config.toml")
             info.size = len(cfg)
             tf.addfile(info, io.BytesIO(cfg))

@@ -48,7 +48,7 @@ const DISCORDANT_POS = 45411941
 const SAMPLE_23ANDME = {
   id: SAMPLE_1_ID,
   name: '23andMe Sample',
-  db_path: '/tmp/.genomeinsight/samples/sample_1.db',
+  db_path: '/tmp/.yeliztli/samples/sample_1.db',
   file_format: '23andme_v5',
   file_hash: 'a'.repeat(64),
   notes: null,
@@ -63,7 +63,7 @@ const SAMPLE_23ANDME = {
 const SAMPLE_ANCESTRYDNA = {
   id: SAMPLE_2_ID,
   name: 'AncestryDNA Sample',
-  db_path: '/tmp/.genomeinsight/samples/sample_2.db',
+  db_path: '/tmp/.yeliztli/samples/sample_2.db',
   file_format: 'ancestrydna_v2.0',
   file_hash: 'b'.repeat(64),
   notes: null,
@@ -78,7 +78,7 @@ const SAMPLE_ANCESTRYDNA = {
 const SAMPLE_MERGED = {
   id: MERGED_SAMPLE_ID,
   name: 'Family Tree (merged)',
-  db_path: `/tmp/.genomeinsight/samples/sample_${MERGED_SAMPLE_ID}.db`,
+  db_path: `/tmp/.yeliztli/samples/sample_${MERGED_SAMPLE_ID}.db`,
   file_format: 'merged_v1',
   file_hash: 'c'.repeat(64),
   notes: null,
@@ -192,7 +192,7 @@ async function setupRoutes(page: Page, state: MergeState): Promise<void> {
     await route.fulfill(
       jsonRoute({
         disclaimer_accepted: true,
-        data_dir: '/tmp/.genomeinsight',
+        data_dir: '/tmp/.yeliztli',
         needs_setup: false,
         has_databases: true,
         has_samples: true,

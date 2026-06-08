@@ -5,7 +5,7 @@ reference.db, vep_bundle.db, gnomad_af.db, dbnsfp.db, cached downloads,
 literature cache. Full reset to fresh install / setup wizard state.
 
 Removes the entire contents of the configured data directory
-(``~/.genomeinsight/`` by default).
+(``~/.yeliztli/`` by default).
 
     DELETE /api/data/nuclear — Wipe all data and return to setup wizard
 """

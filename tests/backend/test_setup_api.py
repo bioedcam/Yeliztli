@@ -321,7 +321,7 @@ def _create_backup_archive(
             tf.addfile(info, io.BytesIO(content))
 
         if include_config:
-            config_content = b'[genomeinsight]\ntheme = "dark"\n'
+            config_content = b'[yeliztli]\ntheme = "dark"\n'
             info = tarfile.TarInfo(name="config.toml")
             info.size = len(config_content)
             tf.addfile(info, io.BytesIO(config_content))
@@ -361,7 +361,7 @@ class TestDetectExisting:
 
     def test_detect_config_toml(self, setup_client: TestClient, tmp_data_dir: Path) -> None:
         """Should detect existing config.toml."""
-        (tmp_data_dir / "config.toml").write_text("[genomeinsight]")
+        (tmp_data_dir / "config.toml").write_text("[yeliztli]")
 
         resp = setup_client.get("/api/setup/detect-existing")
         data = resp.json()
@@ -390,7 +390,7 @@ class TestDetectExisting:
 
     def test_detect_full_install(self, setup_client: TestClient, tmp_data_dir: Path) -> None:
         """Should detect a complete existing installation."""
-        (tmp_data_dir / "config.toml").write_text("[genomeinsight]")
+        (tmp_data_dir / "config.toml").write_text("[yeliztli]")
         (tmp_data_dir / "gnomad_af.db").write_text("fake")
         samples_dir = tmp_data_dir / "samples"
         samples_dir.mkdir(exist_ok=True)
@@ -510,7 +510,7 @@ class TestImportBackup:
         """Should reject archives that don't contain a samples directory."""
         archive_path = tmp_path / "no_samples.tar.gz"
         with tarfile.open(archive_path, "w:gz") as tf:
-            content = b"[genomeinsight]"
+            content = b"[yeliztli]"
             info = tarfile.TarInfo(name="config.toml")
             info.size = len(content)
             tf.addfile(info, io.BytesIO(content))
@@ -690,7 +690,7 @@ class TestSetStoragePath:
 
     def test_set_valid_path(self, setup_client: TestClient, tmp_path: Path) -> None:
         """Should successfully set a valid storage path."""
-        new_path = tmp_path / "new_genomeinsight"
+        new_path = tmp_path / "new_yeliztli"
         resp = setup_client.post(
             "/api/setup/set-storage-path",
             json={"path": str(new_path)},
@@ -724,14 +724,14 @@ class TestSetStoragePath:
         assert config_path.exists()
         content = config_path.read_text()
         assert str(new_path) in content
-        assert "[genomeinsight]" in content
+        assert "[yeliztli]" in content
 
     def test_preserves_existing_config(self, setup_client: TestClient, tmp_path: Path) -> None:
         """Should preserve other settings in existing config.toml."""
         new_path = tmp_path / "gi_preserve"
         new_path.mkdir(parents=True)
         config_path = new_path / "config.toml"
-        config_path.write_text('[genomeinsight]\ntheme = "dark"\nlog_level = "DEBUG"\n')
+        config_path.write_text('[yeliztli]\ntheme = "dark"\nlog_level = "DEBUG"\n')
 
         setup_client.post(
             "/api/setup/set-storage-path",
@@ -743,6 +743,28 @@ class TestSetStoragePath:
         assert 'log_level = "DEBUG"' in content
         assert str(new_path) in content
 
+    def test_legacy_config_section_read(self, setup_client: TestClient, tmp_path: Path) -> None:
+        """A legacy [genomeinsight] config is read via fallback and rewritten under
+        the canonical [yeliztli] table, preserving values (one-release back-compat
+        for the GenomeInsight -> Yeliztli rebrand)."""
+        new_path = tmp_path / "gi_legacy_section"
+        new_path.mkdir(parents=True)
+        config_path = new_path / "config.toml"
+        config_path.write_text('[genomeinsight]\ntheme = "dark"\nlog_level = "DEBUG"\n')
+
+        resp = setup_client.post(
+            "/api/setup/set-storage-path",
+            json={"path": str(new_path)},
+        )
+        assert resp.status_code == 200
+
+        content = config_path.read_text()
+        assert "[yeliztli]" in content  # migrated to the canonical table
+        assert "[genomeinsight]" not in content  # legacy table dropped
+        assert 'theme = "dark"' in content  # legacy values preserved
+        assert 'log_level = "DEBUG"' in content
+        assert str(new_path) in content
+
     def test_tilde_expansion(
         self,
         setup_client: TestClient,
@@ -750,7 +772,7 @@ class TestSetStoragePath:
         """Should expand ~ in the path."""
         resp = setup_client.post(
             "/api/setup/set-storage-path",
-            json={"path": "~/.genomeinsight_test_tilde"},
+            json={"path": "~/.yeliztli_test_tilde"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -771,7 +793,7 @@ class TestSetStoragePath:
         """Should reject paths that can't be written to."""
         resp = setup_client.post(
             "/api/setup/set-storage-path",
-            json={"path": "/root/genomeinsight_no_perms"},
+            json={"path": "/root/yeliztli_no_perms"},
         )
         # Should fail with 400 (permission denied)
         assert resp.status_code == 400
@@ -869,7 +891,7 @@ class TestSaveCredentials:
     ) -> None:
         """Should preserve existing config entries when saving credentials."""
         config_path = tmp_data_dir / "config.toml"
-        config_path.write_text('[genomeinsight]\ntheme = "dark"\ndata_dir = "/some/path"\n')
+        config_path.write_text('[yeliztli]\ntheme = "dark"\ndata_dir = "/some/path"\n')
 
         resp = setup_client.post(
             "/api/setup/credentials",

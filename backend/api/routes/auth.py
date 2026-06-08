@@ -27,7 +27,7 @@ from backend.auth import (
     validate_session,
     verify_password,
 )
-from backend.config import get_settings
+from backend.config import get_settings, read_config_section, write_config_section
 
 logger = structlog.get_logger(__name__)
 
@@ -125,10 +125,10 @@ def _persist_auth_settings(*, auth_enabled: bool, auth_password_hash: str) -> No
     settings.data_dir.mkdir(parents=True, exist_ok=True)
 
     existing = _read_config_toml(config_path)
-    section = existing.get("genomeinsight", {})
+    section = read_config_section(existing)
     section["auth_enabled"] = auth_enabled
     section["auth_password_hash"] = auth_password_hash
-    existing["genomeinsight"] = section
+    write_config_section(existing, section)
     _write_config_toml(config_path, existing)
 
     # Bust the lru_cache so new settings take effect

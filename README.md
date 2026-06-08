@@ -100,8 +100,8 @@ GenomeInsight/
 
 Yeliztli uses layered configuration (highest priority first):
 
-1. Environment variables (`GENOMEINSIGHT_` prefix)
-2. `~/.genomeinsight/config.toml`
+1. Environment variables (`YELIZTLI_` prefix)
+2. `~/.yeliztli/config.toml`
 3. `.env` file
 4. Built-in defaults
 

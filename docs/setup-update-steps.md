@@ -31,7 +31,7 @@ Sequential, prompt-sized steps for executing `docs/setup-update-plan.md`. Each s
 - **Read first:** `bundles/manifest.json`; `backend/utils/update_checker.py` for the existing httpx pattern.
 - **Do:**
   - Dataclasses `BundleManifestEntry`, `PipelinePinEntry`, `Manifest` (frozen).
-  - `fetch_manifest(timeout: float = 15.0) -> Manifest` with 1 h in-memory TTL cache. Honors `GENOMEINSIGHT_MANIFEST_PATH` env var for tests.
+  - `fetch_manifest(timeout: float = 15.0) -> Manifest` with 1 h in-memory TTL cache. Honors `YELIZTLI_MANIFEST_PATH` env var (deprecated alias: `GENOMEINSIGHT_MANIFEST_PATH`) for tests.
   - `get_bundle_info(name) -> BundleManifestEntry | None`, `get_pipeline_pin(name) -> PipelinePinEntry | None`.
   - Manifest URL constant: `https://raw.githubusercontent.com/bioedcam/GenomeInsight/main/bundles/manifest.json`.
 - **Tests (`tests/backend/test_manifest.py`):** local-file override path; cache TTL respected; network failure returns last good or raises a typed error (decide and assert).
@@ -226,7 +226,7 @@ Sequential, prompt-sized steps for executing `docs/setup-update-plan.md`. Each s
 
 ### Step 32 — Playwright E2E: setup wizard with LAI bundle
 - **Files:** `tests/e2e/setup-wizard-lai.spec.ts` (new) or extend the existing wizard spec.
-- **Do:** spin up the app in `GENOMEINSIGHT_HUEY_IMMEDIATE=true`. Step through the wizard with LAI checked. Use a fixture manifest pointing to a tiny tarball served from `tests/fixtures/`. Assert AncestryView shows "LAI bundle ready".
+- **Do:** spin up the app in `YELIZTLI_HUEY_IMMEDIATE=true`. Step through the wizard with LAI checked. Use a fixture manifest pointing to a tiny tarball served from `tests/fixtures/`. Assert AncestryView shows "LAI bundle ready".
 - **Tests:** runs on Chromium / Firefox / WebKit per `playwright.config.ts`.
 - **Out of scope:** UpdateManager E2E (Step 33).
 

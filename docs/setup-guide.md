@@ -136,10 +136,10 @@ services:
 
 ### Environment overrides
 
-Configure via environment variables (prefix `GENOMEINSIGHT_`):
+Configure via environment variables (prefix `YELIZTLI_`):
 
 ```bash
-GENOMEINSIGHT_PORT=9000 docker compose up -d
+YELIZTLI_PORT=9000 docker compose up -d
 ```
 
 Or add to `docker-compose.override.yml`:
@@ -148,8 +148,8 @@ Or add to `docker-compose.override.yml`:
 services:
   api:
     environment:
-      - GENOMEINSIGHT_AUTH_ENABLED=true
-      - GENOMEINSIGHT_LOG_LEVEL=DEBUG
+      - YELIZTLI_AUTH_ENABLED=true
+      - YELIZTLI_LOG_LEVEL=DEBUG
 ```
 
 ---
@@ -188,7 +188,7 @@ If you have a previous Yeliztli backup (`.tar.gz`), import it here. This restore
 
 ### Step 3: Storage Path
 
-Configure where Yeliztli stores its data. Default: `~/.genomeinsight/`. The wizard displays available disk space and warns if space is low (< 10 GB warning, < 5 GB blocks setup).
+Configure where Yeliztli stores its data. Default: `~/.yeliztli/`. The wizard displays available disk space and warns if space is low (< 10 GB warning, < 5 GB blocks setup).
 
 ### Step 4: External Services
 
@@ -220,18 +220,22 @@ Upload your 23andMe raw data file (`.txt` or `.zip`). Yeliztli auto-detects the 
 
 ## Configuration Reference
 
-Yeliztli reads configuration from `~/.genomeinsight/config.toml`. Settings can also be overridden with environment variables using the `GENOMEINSIGHT_` prefix.
+Yeliztli reads configuration from `~/.yeliztli/config.toml`. Settings can also be overridden with environment variables using the `YELIZTLI_` prefix.
 
 ### Example config.toml
 
 ```toml
+# All settings live under the [yeliztli] table (the setup wizard writes them here;
+# hand-edits must be under this header too). A legacy [genomeinsight] table is still
+# read for one release.
+[yeliztli]
 # Server
 host = "127.0.0.1"
 port = 8000
 debug = false
 
 # Paths
-data_dir = "~/.genomeinsight"
+data_dir = "~/.yeliztli"
 
 # Authentication (optional)
 auth_enabled = false
@@ -261,8 +265,8 @@ log_level = "INFO"
 Settings are resolved in this order (highest priority first):
 
 1. Constructor arguments (internal use)
-2. Environment variables (`GENOMEINSIGHT_PORT=9000`)
-3. `~/.genomeinsight/config.toml`
+2. Environment variables (`YELIZTLI_PORT=9000`)
+3. `~/.yeliztli/config.toml`
 4. `.env` file in the project directory
 5. Built-in defaults
 

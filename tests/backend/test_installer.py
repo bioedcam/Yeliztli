@@ -299,7 +299,7 @@ class TestHueyTasks:
         from backend.tasks.huey_tasks import huey
 
         assert huey is not None
-        assert huey.name == "genomeinsight"
+        assert huey.name == "yeliztli"
 
 
 # ── Repo root detection ───────────────────────────────────

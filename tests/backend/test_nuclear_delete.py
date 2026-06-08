@@ -63,7 +63,7 @@ class TestNuclearDelete:
         """Log files should be removed."""
         log_dir = tmp_data_dir / "logs"
         log_dir.mkdir(exist_ok=True)
-        (log_dir / "genomeinsight.log").write_text("log entry")
+        (log_dir / "yeliztli.log").write_text("log entry")
 
         resp = test_client.delete("/api/data/nuclear")
         assert resp.status_code == 200

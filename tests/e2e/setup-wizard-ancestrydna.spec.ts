@@ -37,7 +37,7 @@ const BUNDLE_JOB_ID = 'job-bundle-update'
 
 const SETUP_BASE = {
   disclaimer_accepted: true, // skip the disclaimer step in the wizard
-  data_dir: '/tmp/.genomeinsight',
+  data_dir: '/tmp/.yeliztli',
 }
 
 const ANCESTRYDNA_HEAD = [

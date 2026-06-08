@@ -40,7 +40,7 @@ def prefs_client(tmp_data_dir: Path) -> TestClient:
             import tomllib
 
             data = tomllib.loads(config_path.read_text())
-            section = data.get("genomeinsight", {})
+            section = data.get("yeliztli") or data.get("genomeinsight") or {}
             if "theme" in section:
                 kwargs["theme"] = section["theme"]
         return Settings(**kwargs)
@@ -117,7 +117,7 @@ class TestSetTheme:
     ) -> None:
         """Setting theme should not clobber existing config entries."""
         config_path = tmp_data_dir / "config.toml"
-        config_path.write_text('[genomeinsight]\ndata_dir = "/custom/path"\n', encoding="utf-8")
+        config_path.write_text('[yeliztli]\ndata_dir = "/custom/path"\n', encoding="utf-8")
         prefs_client.put("/api/preferences/theme", json={"theme": "light"})
         content = config_path.read_text()
         assert 'theme = "light"' in content

@@ -147,7 +147,7 @@ async function setupCommonRoutes(
         disclaimer_accepted: true,
         has_databases: true,
         has_samples: true,
-        data_dir: '/tmp/.genomeinsight',
+        data_dir: '/tmp/.yeliztli',
       }),
     })
   })

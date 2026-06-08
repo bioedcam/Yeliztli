@@ -13,7 +13,12 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from backend.config import DEFAULT_DATA_DIR, get_settings
+from backend.config import (
+    DEFAULT_DATA_DIR,
+    get_settings,
+    read_config_section,
+    write_config_section,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +96,9 @@ async def set_theme(body: ThemeRequest) -> ThemeResponse:
     with _config_lock:
         content = _read_config_toml(config_path)
 
-        section = content.get("genomeinsight", {})
-        if not isinstance(section, dict):
-            section = {}
+        section = read_config_section(content)
         section["theme"] = body.theme
-        content["genomeinsight"] = section
+        write_config_section(content, section)
 
         _write_config_toml(config_path, content)
 

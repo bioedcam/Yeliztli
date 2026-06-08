@@ -82,7 +82,7 @@ test.describe('Step 33 — UpdateManager "Update now" for LAI', () => {
           disclaimer_accepted: true,
           has_databases: true,
           has_samples: false,
-          data_dir: '/tmp/.genomeinsight',
+          data_dir: '/tmp/.yeliztli',
         }),
       })
     })

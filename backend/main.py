@@ -63,7 +63,7 @@ from backend.api.routes.variant_detail import router as variant_detail_router
 from backend.api.routes.variants import router as variants_router
 from backend.api.routes.watches import router as watches_router
 from backend.auth import AuthMiddleware
-from backend.config import get_settings
+from backend.config import get_settings, migrate_legacy_data_dir, warn_deprecated_env
 from backend.db.connection import get_registry, reset_registry
 from backend.db.db_health import recover_orphaned_downloads
 from backend.db.reference_schema import ensure_reference_schema_current
@@ -82,6 +82,13 @@ VERSION = "0.2.0"
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup / shutdown lifecycle for the FastAPI app."""
+    # One-release back-compat (must run BEFORE get_settings resolves data_dir):
+    # rename a pre-rebrand ~/.genomeinsight data dir to ~/.yeliztli (best-effort,
+    # never raises) and warn on deprecated GENOMEINSIGHT_* env vars. Note this is a
+    # defensive net — the migration normally fires earlier, at huey_tasks import
+    # time (the first code path to touch the data dir) and from installer setup.
+    migrate_legacy_data_dir()
+    warn_deprecated_env()
     # Startup: ensure data directory exists before DB initialization
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)

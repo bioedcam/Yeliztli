@@ -6,7 +6,7 @@ present locally, and the :func:`real_vep_bundle_path` gate fixture below
 short-circuits with ``pytest.skip()`` when the specific VEP bundle is
 missing. The nightly workflow (:file:`.github/workflows/nightly.yml`)
 downloads the bundle — cached by the manifest's ``sha256`` per Plan §16.5 —
-into ``~/.genomeinsight/vep_bundle.db`` before invoking ``pytest -m slow``,
+into ``~/.yeliztli/vep_bundle.db`` before invoking ``pytest -m slow``,
 at which point this class executes.
 
 Plan §13.1 ADNA-09a thresholds:

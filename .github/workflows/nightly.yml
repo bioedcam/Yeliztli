@@ -85,16 +85,16 @@ jobs:
         id: vep-cache
         uses: actions/cache@v4
         with:
-          path: ~/.genomeinsight/vep_bundle.db
+          path: ~/.yeliztli/vep_bundle.db
           key: vep-bundle-${{ steps.manifest.outputs.vep_bundle_sha256 }}
 
       - name: Download VEP bundle
         if: steps.vep-cache.outputs.cache-hit != 'true' && steps.manifest.outputs.vep_bundle_url != ''
         continue-on-error: true
         run: |
-          mkdir -p "$HOME/.genomeinsight"
+          mkdir -p "$HOME/.yeliztli"
           url='${{ steps.manifest.outputs.vep_bundle_url }}'
-          dest="$HOME/.genomeinsight/vep_bundle.db"
+          dest="$HOME/.yeliztli/vep_bundle.db"
           echo "Fetching $url"
           # Tolerate placeholder URLs / drafted releases: a download miss
           # leaves the slow-tier test dormant rather than failing the run.
@@ -108,7 +108,7 @@ jobs:
         # see a bundle staged in $HOME — gate on an explicit existence check instead.
         continue-on-error: true
         run: |
-          dest="$HOME/.genomeinsight/vep_bundle.db"
+          dest="$HOME/.yeliztli/vep_bundle.db"
           if [ ! -f "$dest" ]; then
             echo "::warning::VEP bundle not present; skipping sha256 verification."
             exit 0
@@ -119,7 +119,7 @@ jobs:
             echo "::warning::VEP manifest sha256 is the placeholder; skipping verification."
           elif [ "$actual" != "$expected" ]; then
             echo "::warning::VEP bundle sha256 mismatch (expected $expected, got $actual); removing."
-            rm -f "$HOME/.genomeinsight/vep_bundle.db"
+            rm -f "$HOME/.yeliztli/vep_bundle.db"
           else
             echo "VEP bundle sha256 OK: $actual"
           fi
@@ -129,14 +129,14 @@ jobs:
         id: lai-cache
         uses: actions/cache@v4
         with:
-          path: ~/.genomeinsight/lai_bundle
+          path: ~/.yeliztli/lai_bundle
           key: lai-bundle-${{ steps.manifest.outputs.lai_bundle_sha256 }}
 
       - name: Download + extract LAI bundle
         if: steps.lai-cache.outputs.cache-hit != 'true' && steps.manifest.outputs.lai_bundle_url != ''
         continue-on-error: true
         run: |
-          mkdir -p "$HOME/.genomeinsight"
+          mkdir -p "$HOME/.yeliztli"
           url='${{ steps.manifest.outputs.lai_bundle_url }}'
           tarball="$RUNNER_TEMP/lai_bundle.tar.gz"
           echo "Fetching $url"
@@ -163,18 +163,18 @@ jobs:
           # database_registry._extract_lai_bundle hook. Extracting straight
           # into data_dir/ would scatter the contents and validate_lai_bundle
           # would never find gnomix_models/chrN/ → "LAI bundle … incomplete".
-          mkdir -p "$HOME/.genomeinsight/lai_bundle"
-          tar -xzf "$tarball" -C "$HOME/.genomeinsight/lai_bundle"
+          mkdir -p "$HOME/.yeliztli/lai_bundle"
+          tar -xzf "$tarball" -C "$HOME/.yeliztli/lai_bundle"
           rm -f "$tarball"
 
       # ── Run slow-tier tests ────────────────────────────────────────────
       - name: Show staged bundles
         run: |
           echo "data_dir contents:"
-          ls -la "$HOME/.genomeinsight/" || true
-          if [ -d "$HOME/.genomeinsight/lai_bundle" ]; then
+          ls -la "$HOME/.yeliztli/" || true
+          if [ -d "$HOME/.yeliztli/lai_bundle" ]; then
             echo "lai_bundle entries:"
-            find "$HOME/.genomeinsight/lai_bundle/" -maxdepth 1 -printf '%f\n' | head
+            find "$HOME/.yeliztli/lai_bundle/" -maxdepth 1 -printf '%f\n' | head
           fi
 
       - name: Run slow-tier pytest

@@ -50,7 +50,7 @@ def _seed_vep_bundle_version(ref_path: Path, version: str) -> None:
 def manifest_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point manifest fetches at the in-repo manifest so the 409 payload
     is built deterministically (no network)."""
-    monkeypatch.setenv("GENOMEINSIGHT_MANIFEST_PATH", str(REPO_MANIFEST))
+    monkeypatch.setenv("YELIZTLI_MANIFEST_PATH", str(REPO_MANIFEST))
     from backend.db.manifest import reset_cache
 
     reset_cache()

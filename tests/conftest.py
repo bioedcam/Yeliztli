@@ -118,7 +118,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
-    """Create a temporary data directory mimicking ~/.genomeinsight layout.
+    """Create a temporary data directory mimicking ~/.yeliztli layout.
 
     Creates the standard subdirectories (samples, downloads, logs) so that
     Settings and DBRegistry can operate without error.

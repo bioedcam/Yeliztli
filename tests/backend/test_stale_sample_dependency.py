@@ -137,7 +137,7 @@ _REPO_MANIFEST = Path(__file__).resolve().parents[2] / "bundles" / "manifest.jso
 @pytest.fixture
 def manifest_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point manifest fetches at the in-repo manifest (deterministic, offline)."""
-    monkeypatch.setenv("GENOMEINSIGHT_MANIFEST_PATH", str(_REPO_MANIFEST))
+    monkeypatch.setenv("YELIZTLI_MANIFEST_PATH", str(_REPO_MANIFEST))
     from backend.db.manifest import reset_cache
 
     reset_cache()

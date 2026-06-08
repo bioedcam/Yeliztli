@@ -8,7 +8,7 @@ shipped bundle classified every European as CSA. This runs REAL held-out
 that each sample's top global-ancestry equals its true superpopulation.
 
 Usage:
-  GENOMEINSIGHT_DATA_DIR=<dir with lai_bundle/ extracted>  # or default ~/.genomeinsight
+  YELIZTLI_DATA_DIR=<dir with lai_bundle/ extracted>  # or default ~/.yeliztli
   python validate_heldout_superpop.py <fixtures_dir> <held_out_validation.tsv> [out.json]
 
 Each fixture: <IID>_<REGION>.adna.txt.gz, 5-col (rsid, chrom, pos, a1, a2).

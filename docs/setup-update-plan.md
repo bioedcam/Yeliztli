@@ -119,7 +119,7 @@ Functions:
 - `fetch_manifest(timeout: float = 15.0) -> Manifest` — httpx GET against `https://raw.githubusercontent.com/bioedcam/GenomeInsight/main/bundles/manifest.json`. Lazy fetch + 1 h in-memory cache (TTL).
 - `get_bundle_info(name) -> BundleManifestEntry | None`.
 - `get_pipeline_pin(name) -> PipelinePinEntry | None`.
-- Test override: `GENOMEINSIGHT_MANIFEST_PATH` env var loads from local file.
+- Test override: `YELIZTLI_MANIFEST_PATH` env var (deprecated alias: `GENOMEINSIGHT_MANIFEST_PATH`) loads from local file.
 
 ### 3.3 `backend/db/database_registry.py` changes
 

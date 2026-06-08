@@ -5,15 +5,16 @@
  * AuthGuard doesn't redirect to /setup. This runs before the web
  * servers start, so we write files directly instead of calling the API.
  *
- * The backend data_dir defaults to ~/.genomeinsight (Path.home() / ".genomeinsight").
+ * The backend data_dir defaults to ~/.yeliztli (Path.home() / ".yeliztli").
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
 
 export default async function globalSetup() {
-  const dataDir = process.env.GENOMEINSIGHT_DATA_DIR
-    ?? path.join(process.env.HOME ?? '/tmp', '.genomeinsight')
+  const dataDir = process.env.YELIZTLI_DATA_DIR
+    ?? process.env.GENOMEINSIGHT_DATA_DIR
+    ?? path.join(process.env.HOME ?? '/tmp', '.yeliztli')
   fs.mkdirSync(dataDir, { recursive: true })
 
   // Create disclaimer flag so _is_disclaimer_accepted() returns true

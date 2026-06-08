@@ -29,10 +29,10 @@ manually before tagging a release.
 
 ### 3. Data Directory
 
-- [ ] `genomeinsight-setup install --skip-pip --skip-frontend` creates `~/.genomeinsight/`
-- [ ] `~/.genomeinsight/samples/` exists
-- [ ] `~/.genomeinsight/downloads/` exists
-- [ ] `~/.genomeinsight/logs/` exists
+- [ ] `genomeinsight-setup install --skip-pip --skip-frontend` creates `~/.yeliztli/`
+- [ ] `~/.yeliztli/samples/` exists
+- [ ] `~/.yeliztli/downloads/` exists
+- [ ] `~/.yeliztli/logs/` exists
 
 ### 4. Backend
 
@@ -83,7 +83,7 @@ If systemd is not enabled in WSL2:
 ### 10. Cross-Platform-Specific Checks
 
 - [ ] File paths use forward slashes (no Windows backslash issues)
-- [ ] SQLite databases create and open correctly in `~/.genomeinsight/`
+- [ ] SQLite databases create and open correctly in `~/.yeliztli/`
 - [ ] WAL mode works (no locking issues with WSL2 filesystem)
 - [ ] No permission errors on file creation/deletion in home directory
 - [ ] localhost binding works from both WSL2 and Windows browser

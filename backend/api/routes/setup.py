@@ -29,7 +29,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
 
-from backend.config import get_settings
+from backend.config import get_settings, read_config_section, write_config_section
 from backend.disclaimers import (
     GLOBAL_DISCLAIMER_ACCEPT_LABEL,
     GLOBAL_DISCLAIMER_TEXT,
@@ -245,7 +245,7 @@ async def accept_disclaimer() -> AcceptDisclaimerResponse:
 async def detect_existing() -> DetectExistingResponse:
     """Auto-detect an existing Yeliztli installation.
 
-    Checks if ~/.genomeinsight/ already has data (config.toml, samples, DBs).
+    Checks if ~/.yeliztli/ already has data (config.toml, samples, DBs).
     If config.toml exists but DBs are missing, the frontend should resume
     the wizard at the download step.
     """
@@ -830,9 +830,9 @@ def _write_config_toml(
     if content is None:
         content = _read_config_toml(config_path)
         if data_dir is not None:
-            section = content.get("genomeinsight", {})
+            section = read_config_section(content)
             section["data_dir"] = data_dir
-            content["genomeinsight"] = section
+            write_config_section(content, section)
 
     # Write TOML manually (tomllib is read-only, avoid tomli_w dependency)
     lines: list[str] = []
@@ -910,13 +910,13 @@ async def save_credentials(body: SaveCredentialsRequest) -> SaveCredentialsRespo
 
     # Read existing config and update credentials
     existing_content = _read_config_toml(config_path)
-    section = existing_content.get("genomeinsight", {})
+    section = read_config_section(existing_content)
     section["pubmed_email"] = body.pubmed_email
     # Config key is pubmed_api_key (matching Settings/Entrez naming);
     # API field is ncbi_api_key for end-user clarity.
     section["pubmed_api_key"] = body.ncbi_api_key
     section["omim_api_key"] = body.omim_api_key
-    existing_content["genomeinsight"] = section
+    write_config_section(existing_content, section)
 
     _write_config_toml(config_path, existing_content)
 

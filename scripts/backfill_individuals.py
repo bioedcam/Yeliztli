@@ -28,7 +28,7 @@ whether to relink — never auto-executed.
 Usage::
 
     python scripts/backfill_individuals.py
-    python scripts/backfill_individuals.py --data-dir ~/.genomeinsight
+    python scripts/backfill_individuals.py --data-dir ~/.yeliztli
     python scripts/backfill_individuals.py --output suggestions.json
     python scripts/backfill_individuals.py --name-threshold 0.90
     python scripts/backfill_individuals.py --date-window-days 7

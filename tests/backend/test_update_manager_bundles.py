@@ -3,7 +3,7 @@
 Step 18 of docs/setup-update-steps.md adds ``check_lai_bundle_update`` and
 ``check_ancestry_pca_update``, plus the ``CHECK_FNS`` dispatch dict used by
 the scheduler refactor in later steps. Each bundle check reads from
-``bundles/manifest.json`` (via the ``GENOMEINSIGHT_MANIFEST_PATH`` override
+``bundles/manifest.json`` (via the ``YELIZTLI_MANIFEST_PATH`` override
 for tests) and compares the manifest version against the
 ``database_versions`` row.
 """

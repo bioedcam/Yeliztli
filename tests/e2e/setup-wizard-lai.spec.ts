@@ -31,7 +31,7 @@ const SETUP_BASE = {
   disclaimer_accepted: true, // skip the disclaimer step in the wizard
   has_databases: false,
   has_samples: false,
-  data_dir: '/tmp/.genomeinsight',
+  data_dir: '/tmp/.yeliztli',
 }
 
 const DB_LIST_INITIAL = {

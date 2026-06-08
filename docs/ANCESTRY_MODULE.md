@@ -98,8 +98,8 @@ Internal model order `[CSA, AFR, OCE, EUR, MID, AMR, EAS]` is remapped to canoni
 
 | Setting | Env Variable | Default | Description |
 |---------|-------------|---------|-------------|
-| `lai_bundle_path` | `GENOMEINSIGHT_LAI_BUNDLE_PATH` | `~/.genomeinsight/lai_bundle/` | Path to LAI bundle directory |
-| `lai_java_mem` | `GENOMEINSIGHT_LAI_JAVA_MEM` | `4g` | JVM memory for Beagle phasing |
+| `lai_bundle_path` | `YELIZTLI_LAI_BUNDLE_PATH` | `~/.yeliztli/lai_bundle/` | Path to LAI bundle directory |
+| `lai_java_mem` | `YELIZTLI_LAI_JAVA_MEM` | `4g` | JVM memory for Beagle phasing |
 
 LAI availability is auto-derived at runtime from bundle presence + Java detection. There is no manual enable/disable toggle.
 

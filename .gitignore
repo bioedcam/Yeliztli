@@ -45,14 +45,14 @@ credentials.json
 .DS_Store
 Thumbs.db
 
-# GenomeInsight runtime data (not curated panels)
+# Yeliztli runtime data (not curated panels)
 data/
 !backend/data/
 !backend/data/**
 # ...but never the build artifacts the broad negation above would otherwise re-include
 backend/data/**/__pycache__/
 downloads/
-.genomeinsight/
+.yeliztli/
 logs/
 
 # Coverage & test artifacts
@@ -77,7 +77,7 @@ gero.md
 /amv2.md
 /stup.md
 /prd.md
-/GenomeInsight_Spec.md
+/Yeliztli_Spec.md
 /docs/AncestryDNA_Implementation_Steps.md
 /docs/AncestryDNA_Integration_Plan.md
 /docs/bundle-v2.0.0-build-plan.md

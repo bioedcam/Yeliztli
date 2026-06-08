@@ -1,7 +1,7 @@
 """Tests for manifest-driven pipeline-DB update checks (Steps 19–24).
 
 Each ``check_<db>_update`` function reads its URL + ``last_known_version``
-from ``bundles/manifest.json`` via the ``GENOMEINSIGHT_MANIFEST_PATH``
+from ``bundles/manifest.json`` via the ``YELIZTLI_MANIFEST_PATH``
 override, then performs an HTTP HEAD on the pinned URL to confirm
 reachability and pull a download-size estimate. The result is compared
 against ``database_versions`` — newer manifest pin → :class:`VersionInfo`,

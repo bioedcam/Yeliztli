@@ -19,9 +19,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from backend.config import migrate_legacy_data_dir, warn_deprecated_env
+
 # ── Constants ──────────────────────────────────────────────
 
-DATA_DIR = Path.home() / ".genomeinsight"
+DATA_DIR = Path.home() / ".yeliztli"
 
 LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 LAUNCHD_LABELS = ("com.genomeinsight.api", "com.genomeinsight.huey")
@@ -74,7 +76,14 @@ def _run(cmd: list[str], check: bool = True, **kwargs) -> subprocess.CompletedPr
 
 
 def ensure_data_dir() -> None:
-    """Create the ~/.genomeinsight directory structure."""
+    """Create the ~/.yeliztli directory structure.
+
+    First-boot back-compat: rename a pre-rebrand ~/.genomeinsight data dir to
+    ~/.yeliztli before creating anything, so an upgrade keeps existing data
+    (best-effort; never raises). Also warns on deprecated GENOMEINSIGHT_* env vars.
+    """
+    migrate_legacy_data_dir()
+    warn_deprecated_env()
     dirs = [
         DATA_DIR,
         DATA_DIR / "samples",
@@ -439,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     p_uninstall.add_argument(
         "--remove-data",
         action="store_true",
-        help="Also remove ~/.genomeinsight data directory",
+        help="Also remove ~/.yeliztli data directory",
     )
     p_uninstall.set_defaults(func=cmd_uninstall)
 
