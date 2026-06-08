@@ -1,7 +1,7 @@
 {
   "module": "cancer",
-  "version": "1.0.0",
-  "description": "Cancer PRS weight sets for breast, prostate, colorectal, and melanoma. Weights derived from published large-scale GWAS meta-analyses. Displayed as population percentile with bootstrap CI — never as raw PRS or absolute lifetime risk.",
+  "version": "1.1.0",
+  "description": "Cancer PRS weight sets for breast, prostate, colorectal, and melanoma. Weights derived from published large-scale GWAS meta-analyses. Displayed as population percentile with bootstrap CI — never as raw PRS or absolute lifetime risk. Each weight may include an optional 'other_allele' (the non-effect allele); when present, the PRS engine harmonizes strand (reverse-strand flip resolution and strand-ambiguous-palindrome dropping). When absent, the effect allele is counted literally (legacy behaviour).",
   "weight_sets": [
     {
       "name": "Breast cancer (BCAC)",

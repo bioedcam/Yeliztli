@@ -132,6 +132,7 @@ def load_cancer_prs_weights(
                     rsid=w["rsid"],
                     effect_allele=w["effect_allele"],
                     weight=w["weight"],
+                    other_allele=w.get("other_allele"),
                 )
                 for w in ws_data["weights"]
             ]

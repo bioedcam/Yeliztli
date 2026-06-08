@@ -11,7 +11,9 @@ from __future__ import annotations
 import pytest
 
 from backend.analysis.zygosity import (
+    _COMPLEMENT,
     CARRIED_ZYGOSITIES,
+    COMPLEMENT,
     ZYG_HET,
     ZYG_HOM_ALT,
     ZYG_HOM_REF,
@@ -114,3 +116,9 @@ class TestModuleConstants:
     def test_is_no_call_still_works(self) -> None:
         assert is_no_call("--") is True
         assert is_no_call("CT") is False
+
+    def test_complement_public_alias_is_same_object(self) -> None:
+        # allele_match.py imports COMPLEMENT from here; the public alias must
+        # stay the same object as the internal map so they cannot diverge.
+        assert COMPLEMENT is _COMPLEMENT
+        assert COMPLEMENT == {"A": "T", "T": "A", "C": "G", "G": "C"}

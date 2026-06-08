@@ -56,8 +56,16 @@ import numpy as np
 import sqlalchemy as sa
 import structlog
 
+from backend.analysis.allele_match import (
+    AMBIGUOUS_DROPPED,
+    MATCHED_FLIP,
+    MATCHED_REF,
+    MISSING_FREQ,
+    NO_CALL,
+    UNRESOLVED,
+    match_effect_allele_dosage,
+)
 from backend.analysis.evidence import PRS_EVIDENCE_LEVEL
-from backend.analysis.zygosity import is_no_call
 from backend.db.tables import annotated_variants, findings
 
 logger = structlog.get_logger(__name__)
@@ -67,11 +75,20 @@ logger = structlog.get_logger(__name__)
 
 @dataclass
 class PRSSNPWeight:
-    """A single SNP weight entry in a PRS weight set."""
+    """A single SNP weight entry in a PRS weight set.
+
+    ``other_allele`` is the non-effect allele of the SNP. It is **optional** for
+    back-compatibility with legacy curated weight sets that only recorded the
+    effect allele; when present it enables strand harmonization (reverse-strand
+    flip resolution and strand-ambiguous-palindrome dropping). When absent, the
+    effect allele is counted literally with no strand attempt — identical to the
+    historical behaviour (see :func:`backend.analysis.allele_match`).
+    """
 
     rsid: str
     effect_allele: str
     weight: float
+    other_allele: str | None = None
 
 
 @dataclass
@@ -127,6 +144,8 @@ class PRSSNPContribution:
     genotype: str | None
     dosage: int  # 0, 1, or 2 copies of effect allele
     contribution: float  # weight * dosage
+    match_status: str = MATCHED_REF  # allele_match status (matched_ref/flip/no_call/…)
+    strand: str = "ref"  # "ref" | "flip" | "n/a"
 
 
 @dataclass
@@ -169,6 +188,13 @@ class PRSResult:
     snps_used: int = 0
     snps_total: int = 0
     coverage_fraction: float = 0.0
+    # Harmonization disclosure (EXPANSION_STRATEGY.md §10): weight SNPs present
+    # in the sample but excluded from / adjusted in the score, surfaced rather
+    # than silently dropped.
+    snps_no_call: int = 0  # present but unscoreable genotype
+    snps_ambiguous_dropped: int = 0  # strand-ambiguous palindrome near MAF 0.5
+    snps_strand_flipped: int = 0  # resolved on the complemented strand
+    snps_unresolved: int = 0  # alleles fit neither strand
     contributions: list[PRSSNPContribution] = field(default_factory=list)
     bootstrap_ci_lower: float | None = None
     bootstrap_ci_upper: float | None = None
@@ -195,10 +221,14 @@ class PRSResult:
 
 
 def _count_effect_allele(genotype: str | None, effect_allele: str) -> int:
-    """Count copies of the effect allele in a genotype string.
+    """Count copies of the effect allele in a genotype string (legacy shim).
 
-    Genotypes are encoded as two-character strings (e.g. "AG", "AA", "CC").
-    For indels or missing data, returns 0.
+    Retained for back-compatibility (and imported by tests). Delegates to the
+    shared :func:`backend.analysis.allele_match.match_effect_allele_dosage` with
+    no other allele / frequency, which reproduces the historical literal-count
+    contract exactly: case-insensitive, no-call/single-char → 0, capped at 2, no
+    strand handling. Strand-aware scoring lives in :func:`compute_prs`, which
+    passes the weight's ``other_allele`` and the variant's gnomAD MAF.
 
     Args:
         genotype: Two-character genotype string, or None/empty.
@@ -207,16 +237,7 @@ def _count_effect_allele(genotype: str | None, effect_allele: str) -> int:
     Returns:
         0, 1, or 2 — the dosage of the effect allele.
     """
-    if is_no_call(genotype):
-        return 0
-    if len(genotype) < 2:
-        return 0
-
-    count = 0
-    for allele in genotype:
-        if allele.upper() == effect_allele.upper():
-            count += 1
-    return min(count, 2)
+    return match_effect_allele_dosage(genotype, effect_allele, None, None).dosage or 0
 
 
 # ── Core PRS computation ────────────────────────────────────────────────
@@ -240,30 +261,57 @@ def compute_prs(
     """
     rsids = list(weight_set.rsid_set())
 
-    # Fetch genotypes for all weight set SNPs in one query
+    # Fetch genotype + gnomAD MAF for all weight set SNPs in one query. The MAF
+    # (already annotated on the same row) is needed only to drop strand-ambiguous
+    # palindromes near 0.5 during harmonization.
     with sample_engine.connect() as conn:
         stmt = sa.select(
             annotated_variants.c.rsid,
             annotated_variants.c.genotype,
+            annotated_variants.c.gnomad_af_global,
         ).where(annotated_variants.c.rsid.in_(rsids))
         rows = conn.execute(stmt).fetchall()
 
     genotype_map = {row.rsid: row.genotype for row in rows}
+    af_map = {row.rsid: row.gnomad_af_global for row in rows}
 
     contributions: list[PRSSNPContribution] = []
     raw_score = 0.0
     snps_used = 0
+    snps_no_call = 0
+    snps_ambiguous_dropped = 0
+    snps_strand_flipped = 0
+    snps_unresolved = 0
 
     for w in weight_set.weights:
         genotype = genotype_map.get(w.rsid)
-        dosage = _count_effect_allele(genotype, w.effect_allele)
+        present = w.rsid in genotype_map and genotype is not None
+        match = match_effect_allele_dosage(
+            genotype, w.effect_allele, w.other_allele, af_map.get(w.rsid)
+        )
+
+        # A SNP contributes to the score only when it resolved to a real dosage
+        # (matched on the reference or complemented strand). No-call /
+        # ambiguous-dropped / unresolved are excluded from raw_score and
+        # snps_used — identical to the historical "missing" treatment — and
+        # disclosed via the counters below.
+        scored = match.status in (MATCHED_REF, MATCHED_FLIP) and match.dosage is not None
+        dosage = match.dosage if scored else 0
         contribution = w.weight * dosage
 
-        # Only count as "used" if we found the variant in the sample
-        has_data = w.rsid in genotype_map and genotype is not None
-        if has_data:
+        if scored:
             snps_used += 1
             raw_score += contribution
+            if match.status == MATCHED_FLIP:
+                snps_strand_flipped += 1
+        elif present:
+            # Present in the sample but not scored → tally why.
+            if match.status == NO_CALL:
+                snps_no_call += 1
+            elif match.status in (AMBIGUOUS_DROPPED, MISSING_FREQ):
+                snps_ambiguous_dropped += 1
+            elif match.status == UNRESOLVED:
+                snps_unresolved += 1
 
         contributions.append(
             PRSSNPContribution(
@@ -271,8 +319,10 @@ def compute_prs(
                 effect_allele=w.effect_allele,
                 weight=w.weight,
                 genotype=genotype,
-                dosage=dosage if has_data else 0,
-                contribution=contribution if has_data else 0.0,
+                dosage=dosage,
+                contribution=contribution if scored else 0.0,
+                match_status=match.status,
+                strand=match.strand,
             )
         )
 
@@ -286,6 +336,10 @@ def compute_prs(
         snps_used=snps_used,
         snps_total=snps_total,
         coverage=round(coverage_fraction, 3),
+        no_call=snps_no_call,
+        ambiguous_dropped=snps_ambiguous_dropped,
+        strand_flipped=snps_strand_flipped,
+        unresolved=snps_unresolved,
     )
 
     return PRSResult(
@@ -300,6 +354,10 @@ def compute_prs(
         snps_used=snps_used,
         snps_total=snps_total,
         coverage_fraction=coverage_fraction,
+        snps_no_call=snps_no_call,
+        snps_ambiguous_dropped=snps_ambiguous_dropped,
+        snps_strand_flipped=snps_strand_flipped,
+        snps_unresolved=snps_unresolved,
         contributions=contributions,
     )
 
@@ -388,8 +446,15 @@ def compute_prs_bootstrap_ci(
         result.bootstrap_iterations = 0
         return result
 
-    # Extract contributions from SNPs that had data
-    used_contributions = [c for c in result.contributions if c.genotype is not None]
+    # Extract contributions from SNPs that were actually scored (resolved to a
+    # real dosage). No-call / strand-ambiguous-dropped / unresolved SNPs carry a
+    # non-None genotype but contributed 0 to the score, so they must not dilute
+    # the bootstrap resample.
+    used_contributions = [
+        c
+        for c in result.contributions
+        if c.match_status in (MATCHED_REF, MATCHED_FLIP) and c.genotype is not None
+    ]
     if not used_contributions:
         result.bootstrap_ci_lower = result.percentile
         result.bootstrap_ci_upper = result.percentile
@@ -599,6 +664,10 @@ def store_prs_findings(
             "snps_used": r.snps_used,
             "snps_total": r.snps_total,
             "coverage_fraction": r.coverage_fraction,
+            "snps_no_call": r.snps_no_call,
+            "snps_ambiguous_dropped": r.snps_ambiguous_dropped,
+            "snps_strand_flipped": r.snps_strand_flipped,
+            "snps_unresolved": r.snps_unresolved,
             "z_score": r.z_score,
             "bootstrap_ci_lower": r.bootstrap_ci_lower,
             "bootstrap_ci_upper": r.bootstrap_ci_upper,

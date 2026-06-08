@@ -949,6 +949,197 @@ class TestStorePRSFindings:
         assert "12345678" in pmids
 
 
+# ── Strand harmonization tests (EXPANSION_STRATEGY.md §10 / PR-0) ─────────
+
+
+def _harmonized_weight_set(weights: list[PRSSNPWeight]) -> PRSWeightSet:
+    return PRSWeightSet(
+        name="Harmonization test",
+        trait="test",
+        module="cancer",
+        source_ancestry="EUR",
+        source_study="Test",
+        source_pmid="111",
+        sample_size=1000,
+        weights=weights,
+        reference_mean=0.0,
+        reference_std=1.0,
+    )
+
+
+class TestStrandHarmonization:
+    """compute_prs resolves reverse strands, drops ambiguous palindromes, and
+    discloses no-calls — only activated when the weight carries other_allele."""
+
+    def test_reverse_strand_flip_scores_correctly(self, sample_engine: sa.Engine) -> None:
+        """A minus-strand genotype that the old code scored 0 now scores 2."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [
+                    {
+                        "rsid": "rsFLIP",
+                        "chrom": "1",
+                        "pos": 1,
+                        "genotype": "GG",  # reverse strand of effect C / other T
+                        "gnomad_af_global": 0.20,
+                        "annotation_coverage": 4,
+                    }
+                ],
+            )
+        ws = _harmonized_weight_set(
+            [PRSSNPWeight(rsid="rsFLIP", effect_allele="C", other_allele="T", weight=0.5)]
+        )
+        result = compute_prs(ws, sample_engine)
+
+        assert result.raw_score == pytest.approx(1.0)  # 0.5 * dosage 2
+        assert result.snps_strand_flipped == 1
+        c = result.contributions[0]
+        assert c.dosage == 2
+        assert c.match_status == "matched_flip"
+        assert c.strand == "flip"
+
+    def test_palindrome_near_half_dropped_and_disclosed(self, sample_engine: sa.Engine) -> None:
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [
+                    {
+                        "rsid": "rsPAL",
+                        "chrom": "1",
+                        "pos": 2,
+                        "genotype": "AT",
+                        "gnomad_af_global": 0.50,
+                        "annotation_coverage": 4,
+                    }
+                ],
+            )
+        ws = _harmonized_weight_set(
+            [PRSSNPWeight(rsid="rsPAL", effect_allele="A", other_allele="T", weight=0.9)]
+        )
+        result = compute_prs(ws, sample_engine)
+
+        assert result.raw_score == 0.0  # excluded from the score
+        assert result.snps_ambiguous_dropped == 1
+        assert result.snps_used == 0  # not counted as covered
+        assert result.contributions[0].match_status == "ambiguous_dropped"
+
+    def test_palindrome_away_from_half_scored(self, sample_engine: sa.Engine) -> None:
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [
+                    {
+                        "rsid": "rsPAL2",
+                        "chrom": "1",
+                        "pos": 3,
+                        "genotype": "AA",
+                        "gnomad_af_global": 0.04,
+                        "annotation_coverage": 4,
+                    }
+                ],
+            )
+        ws = _harmonized_weight_set(
+            [PRSSNPWeight(rsid="rsPAL2", effect_allele="A", other_allele="T", weight=0.3)]
+        )
+        result = compute_prs(ws, sample_engine)
+
+        assert result.raw_score == pytest.approx(0.6)  # 0.3 * dosage 2
+        assert result.snps_ambiguous_dropped == 0
+        assert result.snps_used == 1
+
+    def test_no_call_disclosed_not_counted(self, sample_engine: sa.Engine) -> None:
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [
+                    {
+                        "rsid": "rsNC",
+                        "chrom": "1",
+                        "pos": 4,
+                        "genotype": "--",
+                        "gnomad_af_global": 0.2,
+                        "annotation_coverage": 4,
+                    }
+                ],
+            )
+        ws = _harmonized_weight_set(
+            [PRSSNPWeight(rsid="rsNC", effect_allele="C", other_allele="T", weight=0.5)]
+        )
+        result = compute_prs(ws, sample_engine)
+
+        assert result.snps_no_call == 1
+        assert result.snps_used == 0
+        assert result.raw_score == 0.0
+        assert result.contributions[0].match_status == "no_call"
+
+    def test_disclosure_counters_in_detail_json(self, sample_engine: sa.Engine) -> None:
+        """store_prs_findings surfaces the harmonization counters."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [
+                    {
+                        "rsid": "rsFLIP",
+                        "chrom": "1",
+                        "pos": 1,
+                        "genotype": "GG",
+                        "gnomad_af_global": 0.2,
+                        "annotation_coverage": 4,
+                    },
+                    {
+                        "rsid": "rsPAL",
+                        "chrom": "1",
+                        "pos": 2,
+                        "genotype": "AT",
+                        "gnomad_af_global": 0.5,
+                        "annotation_coverage": 4,
+                    },
+                ],
+            )
+        ws = _harmonized_weight_set(
+            [
+                PRSSNPWeight(rsid="rsFLIP", effect_allele="C", other_allele="T", weight=0.5),
+                PRSSNPWeight(rsid="rsPAL", effect_allele="A", other_allele="T", weight=0.5),
+            ]
+        )
+        result = run_prs(ws, sample_engine, inferred_ancestry="EUR", n_bootstrap=50, rng_seed=1)
+        store_prs_findings([result], sample_engine, module="cancer")
+
+        with sample_engine.connect() as conn:
+            row = conn.execute(sa.select(findings).where(findings.c.category == "prs")).fetchone()
+        detail = json.loads(row.detail_json)
+        assert detail["snps_strand_flipped"] == 1
+        assert detail["snps_ambiguous_dropped"] == 1
+        assert detail["snps_no_call"] == 0
+        assert detail["snps_unresolved"] == 0
+
+    def test_legacy_weights_unchanged_without_other_allele(self, sample_engine: sa.Engine) -> None:
+        """Without other_allele, a reverse-strand genotype keeps the old (0) score
+        — harmonization must not silently activate and change legacy results."""
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [
+                    {
+                        "rsid": "rsLEG",
+                        "chrom": "1",
+                        "pos": 5,
+                        "genotype": "GG",
+                        "gnomad_af_global": 0.2,
+                        "annotation_coverage": 4,
+                    }
+                ],
+            )
+        ws = _harmonized_weight_set(
+            [PRSSNPWeight(rsid="rsLEG", effect_allele="C", weight=0.5)]  # no other_allele
+        )
+        result = compute_prs(ws, sample_engine)
+        assert result.raw_score == 0.0
+        assert result.snps_strand_flipped == 0
+        assert result.snps_used == 1  # legacy path still counts it as covered (dosage 0)
+
+
 # ── Weight set data class tests ─────────────────────────────────────────
 
 
