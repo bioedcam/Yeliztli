@@ -166,6 +166,12 @@ class GenotypeModel:
     primary_rsid: str | None = None  # gene/rsid attribution; defaults to first match key
     recessive: bool = False
     modifier: dict[str, Any] | None = None
+    # For a total_risk_dosage model: a disclosure emitted when the model is one
+    # risk allele short of firing AND an untyped contributing locus could push it
+    # over the threshold (e.g. one APOL1 G1 allele typed, the G2 indel off-chip).
+    # Block: {risk_classification, evidence_stars, finding_text}. Never asserts
+    # low-risk — it states the genotype is indeterminate / partial.
+    partial_disclosure: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -299,6 +305,7 @@ def load_risk_panel(path: str | Path) -> RiskPanel:
                 primary_rsid=m.get("primary_rsid"),
                 recessive=m.get("recessive", False),
                 modifier=modifier,
+                partial_disclosure=m.get("partial_disclosure"),
             )
         )
 
@@ -615,6 +622,92 @@ def _apply_modifier(
     return call
 
 
+def _maybe_partial_disclosure(
+    panel: RiskPanel,
+    dosages: dict[str, int | None],
+    readouts: dict[str, ProbeReadout],
+    sex: str | None,
+) -> RiskCall | None:
+    """Emit an indeterminate disclosure for a recessive model that is one risk
+    allele short of firing because a contributing locus is untyped.
+
+    Fires only when at least one risk allele is *confirmed* (``total_known >= 1``),
+    the model has not reached its threshold, and an untyped contributing locus
+    could still push it over (so the genotype is genuinely indeterminate — e.g.
+    one APOL1 G1 allele typed with the G2 indel off-chip). Never asserts low-risk.
+    Returns ``None`` when there is nothing to disclose (all loci typed, or no
+    confirmed risk allele at all).
+    """
+    for model in panel.genotype_models:
+        cond = model.match.get(TOTAL_RISK_DOSAGE_KEY)
+        pd = model.partial_disclosure
+        if not cond or not pd:
+            continue
+        rsids = cond.get("rsids", [])
+        dmin = cond.get("dosage_min", 0)
+        total_known = sum(d for r in rsids if (d := dosages.get(r)) is not None)
+        untyped = [r for r in rsids if dosages.get(r) is None]
+        if not untyped:
+            continue
+        # Confirmed at least one risk allele, below threshold, and the untyped
+        # loci could still reach it → indeterminate.
+        if 1 <= total_known < dmin and total_known + 2 * len(untyped) >= dmin:
+            return _render_partial(model, pd, panel, dosages, readouts, sex, untyped)
+    return None
+
+
+def _render_partial(
+    model: GenotypeModel,
+    pd: dict[str, Any],
+    panel: RiskPanel,
+    dosages: dict[str, int | None],
+    readouts: dict[str, ProbeReadout],
+    sex: str | None,
+    untyped: list[str],
+) -> RiskCall:
+    match_rsids = _model_rsids(model)
+    primary = model.primary_rsid or match_rsids[0]
+    primary_locus = panel.locus(primary)
+    gene_symbol = primary_locus.gene_symbol if primary_locus else ""
+
+    genotype_calls = {
+        rsid: (readouts[rsid].genotype if rsid in readouts else None) for rsid in match_rsids
+    }
+    genotype_text = "; ".join(
+        f"{rsid} {genotype_calls.get(rsid) or 'n/a'}" for rsid in match_rsids
+    )
+    note = (
+        f"Indeterminate genotype — {', '.join(untyped)} was not typed on this array, "
+        f"so a recessive (two-risk-allele) result cannot be ruled out."
+    )
+    resolved_caveats = [CAVEAT_REGISTRY[k] for k in model.caveats] + [note]
+    finding_text = pd["finding_text"].format_map(_SafeDict({"genotype": genotype_text}))
+
+    detail = {
+        "model_id": f"{model.id}_partial",
+        "classification": pd["risk_classification"],
+        "genotype_calls": genotype_calls,
+        "dosages": {rsid: dosages.get(rsid) for rsid in match_rsids},
+        "evidence_stars": pd.get("evidence_stars", 1),
+        "indeterminate": True,
+        "partial_genotype": True,
+        "untyped_loci": untyped,
+        "caveats": resolved_caveats,
+        "sex_used": sex,
+    }
+    return RiskCall(
+        model_id=f"{model.id}_partial",
+        gene_symbol=gene_symbol,
+        rsid=",".join(match_rsids),
+        risk_classification=pd["risk_classification"],
+        evidence_stars=pd.get("evidence_stars", 1),
+        finding_text=finding_text,
+        zygosity=None,
+        detail=detail,
+        pmids=model.pmids,
+    )
+
+
 def classify(
     panel: RiskPanel,
     dosages: dict[str, int | None],
@@ -652,6 +745,14 @@ def classify(
         call = _apply_partial_guardrail(call, m, dosages)
         call = _apply_modifier(call, m, dosages)
         calls.append(call)
+
+    # No model fired, but a recessive total_risk_dosage model may be one risk
+    # allele short with an untyped contributing locus that could reach the
+    # threshold — surface an indeterminate/partial disclosure (never low-risk).
+    if not calls:
+        indeterminate = _maybe_partial_disclosure(panel, dosages, readouts, sex)
+        if indeterminate is not None:
+            calls = [indeterminate]
 
     # Ancestry gate (e.g. APOL1): suppress or caveat calls outside the validated
     # ancestry so risk is never overstated for non-target populations.

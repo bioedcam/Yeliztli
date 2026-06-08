@@ -52,6 +52,7 @@ _FULLY_GATED_MODULES = frozenset(
         "ancestry",
         "annotations_api",
         "apoe",
+        "apol1",
         "cancer",
         "cardiovascular",
         "carrier",

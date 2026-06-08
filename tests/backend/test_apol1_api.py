@@ -74,6 +74,7 @@ def _env(tmp_path: Path) -> Generator[sa.Engine, None, None]:
     registry = DBRegistry(settings)
     with patch("backend.api.routes.risk_common.get_registry", return_value=registry):
         yield sample_engine
+    registry.dispose_all()
     reset_registry()
 
 

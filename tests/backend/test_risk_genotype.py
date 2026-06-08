@@ -248,7 +248,7 @@ class TestLoadRiskPanelGuards:
 # ── Engine extensions for APOL1 (recessive / total_risk_dosage / indel / modifier) ──
 
 
-def _recessive_panel(**kwargs) -> RiskPanel:
+def _recessive_panel(*, partial: bool = False, **kwargs) -> RiskPanel:
     """A 3-locus APOL1-shaped panel: G1 (snv), G2 (indel), modifier (snv)."""
     high_risk = GenotypeModel(
         id="high_risk",
@@ -269,6 +269,15 @@ def _recessive_panel(**kwargs) -> RiskPanel:
                 "finding_text": "Attenuated by the modifier.",
             },
         },
+        partial_disclosure=(
+            {
+                "risk_classification": "Indeterminate (partial genotype)",
+                "evidence_stars": 1,
+                "finding_text": "Indeterminate: one risk allele ({genotype}); a locus untyped.",
+            }
+            if partial
+            else None
+        ),
     )
     return RiskPanel(
         module="apol1test",
@@ -349,6 +358,52 @@ class TestTotalRiskDosageRecessive:
         _seed(sample_engine, [{"rsid": "rsG1", "chrom": "22", "pos": 1, "genotype": "AG"}])
         a = _assess(_recessive_panel(), sample_engine)
         assert a.calls == []
+
+
+class TestPartialDisclosure:
+    def test_one_allele_plus_untyped_locus_is_indeterminate(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        # One confirmed risk allele + the other contributing locus off-chip ->
+        # genuinely indeterminate (could be high-risk), so disclose, not silence.
+        _seed(sample_engine, [{"rsid": "rsG1", "chrom": "22", "pos": 1, "genotype": "AG"}])
+        a = _assess(_recessive_panel(partial=True), sample_engine)
+        assert len(a.calls) == 1
+        call = a.calls[0]
+        assert "indeterminate" in call.risk_classification.lower()
+        assert call.detail["indeterminate"] is True
+        assert "rsG2" in call.detail["untyped_loci"]
+        assert call.evidence_stars == 1
+
+    def test_one_allele_with_other_typed_ref_is_low_risk_no_finding(
+        self, sample_engine: sa.Engine
+    ) -> None:
+        # G1 het + G2 confirmed reference -> genuinely low-risk, no disclosure.
+        _seed(
+            sample_engine,
+            [
+                {"rsid": "rsG1", "chrom": "22", "pos": 1, "genotype": "AG"},
+                {"rsid": "rsG2", "chrom": "22", "pos": 2, "genotype": "II"},
+            ],
+        )
+        a = _assess(_recessive_panel(partial=True), sample_engine)
+        assert a.calls == []
+
+    def test_zero_alleles_untyped_no_disclosure(self, sample_engine: sa.Engine) -> None:
+        # No confirmed risk allele at all -> not "indeterminate", just no data.
+        _seed(sample_engine, [{"rsid": "rsG1", "chrom": "22", "pos": 1, "genotype": "GG"}])
+        a = _assess(_recessive_panel(partial=True), sample_engine)
+        assert a.calls == []
+
+    def test_indeterminate_suppressed_off_target_ancestry(self, sample_engine: sa.Engine) -> None:
+        _seed(sample_engine, [{"rsid": "rsG1", "chrom": "22", "pos": 1, "genotype": "AG"}])
+        panel = _recessive_panel(
+            partial=True,
+            ancestry_gate={"required_ancestry": "AFR", "mode": "suppress", "min_fraction": 0.5},
+        )
+        a = _assess(panel, sample_engine, inferred_ancestry="EUR")
+        assert a.calls == []
+        assert a.ancestry_suppressed is True
 
 
 class TestPartialGuardrail:

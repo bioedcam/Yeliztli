@@ -91,10 +91,35 @@ class TestHighRiskAFR:
         assert "high-risk" in a.calls[0].risk_classification.lower()
 
     def test_single_g1_allele_low_risk_no_finding(self, panel, sample_engine: sa.Engine) -> None:
+        # G2 confirmed reference -> genuinely low-risk (one allele, recessive).
         _seed_ancestry(sample_engine, "AFR")
         _seed(sample_engine, [_g1("AG"), _g2("II"), _n264k("CC")])
         a = assess_apol1(panel, sample_engine)
         assert a.calls == []  # one risk allele is not high-risk (recessive)
+
+    def test_single_g1_allele_g2_off_chip_is_indeterminate(
+        self, panel, sample_engine: sa.Engine
+    ) -> None:
+        # One G1 allele typed, the G2 6-bp deletion off-chip -> the recessive
+        # status cannot be determined; disclose a partial genotype, never silent.
+        _seed_ancestry(sample_engine, "AFR")
+        _seed(sample_engine, [_g1("AG")])  # G2 (rs71785313) absent
+        a = assess_apol1(panel, sample_engine)
+        assert len(a.calls) == 1
+        call = a.calls[0]
+        assert "indeterminate" in call.risk_classification.lower()
+        assert call.detail["indeterminate"] is True
+        assert "rs71785313" in call.detail["untyped_loci"]
+        assert "not a low-risk result" in call.finding_text.lower()
+
+    def test_indeterminate_suppressed_for_non_african_ancestry(
+        self, panel, sample_engine: sa.Engine
+    ) -> None:
+        _seed_ancestry(sample_engine, "EUR")
+        _seed(sample_engine, [_g1("AG")])  # G2 off-chip, but EUR -> not actionable
+        a = assess_apol1(panel, sample_engine)
+        assert a.calls == []
+        assert a.ancestry_suppressed is True
 
 
 class TestAncestryGate:
@@ -148,7 +173,7 @@ class TestStorageAndGuardrails:
             row = conn.execute(sa.select(findings).where(findings.c.module == "apol1")).fetchone()
         assert row.clinvar_significance is None
         assert row.gene_symbol == "APOL1"
-        assert row.evidence_level <= 3
+        assert row.evidence_level == 3  # high-risk recessive model is 3 stars
 
     def test_suppressed_stores_nothing(self, panel, sample_engine: sa.Engine) -> None:
         _seed_ancestry(sample_engine, "EUR")
