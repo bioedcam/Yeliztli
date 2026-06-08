@@ -37,9 +37,6 @@ def _annotated_count(sample_engine: sa.Engine) -> int:
 # ── F28: a crash mid-re-annotation must not destroy the prior result ──────
 
 
-@pytest.mark.xfail(strict=True, reason="F28: _delete_all_annotations commits "
-                   "before the batch loop, so a mid-run crash empties the table; "
-                   "fixed by Phase E3 (annotate-to-staging + atomic swap)")
 def test_crash_during_reannotation_preserves_prior(build_live_run, monkeypatch) -> None:
     run = build_live_run(variants=_VARIANTS, clinvar=_CLINVAR)
     before = _annotated_count(run.sample_engine)

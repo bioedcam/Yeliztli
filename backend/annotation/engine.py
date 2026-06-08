@@ -588,11 +588,58 @@ _UPSERT_COLUMNS = [
 ]
 
 
+# ── Atomic-swap staging (F28) ─────────────────────────────────────────────
+# Crash recovery used to delete ``annotated_variants`` up front and re-annotate
+# in place, so a crash mid-run left the table empty — the prior good annotation
+# gone, with no transaction protecting it. Instead we annotate into a staging
+# clone and swap it into ``annotated_variants`` in a single transaction at the
+# end: a crash before the swap leaves the prior annotation untouched, and the
+# swap itself is all-or-nothing.
+_STAGING_NAME = "annotated_variants_staging"
+_STAGING_METADATA = sa.MetaData()
+annotated_variants_staging = annotated_variants.to_metadata(
+    _STAGING_METADATA, name=_STAGING_NAME
+)
+# Drop the copied secondary indexes: SQLite index names are database-global so
+# they would collide with the live table's, and a write-once staging table
+# needs no read indexes. The ``rsid`` primary key (and its ON CONFLICT support)
+# is part of the table definition and is preserved.
+annotated_variants_staging.indexes.clear()
+
+
+def _reset_staging_table(sample_engine: sa.Engine) -> None:
+    """Drop and recreate an empty staging table (clears any crashed-run remnant)."""
+    with sample_engine.begin() as conn:
+        annotated_variants_staging.drop(conn, checkfirst=True)
+        annotated_variants_staging.create(conn)
+
+
+def _swap_staging_into_place(sample_engine: sa.Engine) -> None:
+    """Atomically replace ``annotated_variants`` with the staged annotation.
+
+    The delete-then-insert-select runs in a single transaction, so a crash
+    during the swap rolls back and leaves the prior good annotation intact; a
+    crash *before* the swap never touches the live table at all (F28).
+    """
+    cols = ", ".join(c.name for c in annotated_variants.c)
+    with sample_engine.begin() as conn:
+        conn.execute(annotated_variants.delete())
+        conn.execute(
+            sa.text(
+                f"INSERT INTO annotated_variants ({cols}) "
+                f"SELECT {cols} FROM {_STAGING_NAME}"
+            )
+        )
+    with sample_engine.begin() as conn:
+        annotated_variants_staging.drop(conn, checkfirst=True)
+
+
 def _bulk_upsert(
     sample_engine: sa.Engine,
     rows: list[dict],
+    target: sa.Table = annotated_variants,
 ) -> int:
-    """Upsert merged annotation rows into annotated_variants.
+    """Upsert merged annotation rows into *target* (live table or staging).
 
     Uses SQLite INSERT ... ON CONFLICT DO UPDATE to merge columns.
     The annotation_coverage bitmask is ORed with existing values.
@@ -621,7 +668,7 @@ def _bulk_upsert(
         for i in range(0, len(normalised), upsert_batch_size):
             batch = normalised[i : i + upsert_batch_size]
 
-            stmt = sqlite_insert(annotated_variants).values(batch)
+            stmt = sqlite_insert(target).values(batch)
 
             # Build the SET clause: update all annotation columns from incoming row
             set_clause: dict = {}
@@ -631,11 +678,11 @@ def _bulk_upsert(
             # OR the bitmask into existing coverage
             set_clause["annotation_coverage"] = sa.case(
                 (
-                    annotated_variants.c.annotation_coverage.is_(None),
+                    target.c.annotation_coverage.is_(None),
                     stmt.excluded.annotation_coverage,
                 ),
                 else_=(
-                    annotated_variants.c.annotation_coverage.op("|")(
+                    target.c.annotation_coverage.op("|")(
                         stmt.excluded.annotation_coverage
                     )
                 ),
@@ -939,8 +986,10 @@ def run_annotation(
     if not raw_rows:
         return result
 
-    # 2. Crash recovery: delete partial results from any previous run
-    _delete_all_annotations(sample_engine)
+    # 2. Crash recovery (F28): annotate into a fresh staging table, not in place.
+    # The prior good annotation in ``annotated_variants`` is left untouched until
+    # the atomic swap at the very end, so a crash mid-run loses nothing.
+    _reset_staging_table(sample_engine)
 
     # 3. Detect available annotation sources
     vep_engine = _check_engine_available(lambda: registry.vep_engine, "vep", result)
@@ -1178,7 +1227,7 @@ def run_annotation(
 
             # 7. Bulk upsert
             t_upsert = time.perf_counter()
-            written = _bulk_upsert(sample_engine, merged)
+            written = _bulk_upsert(sample_engine, merged, target=annotated_variants_staging)
             result.timing_upsert_s += time.perf_counter() - t_upsert
             total_written += written
 
@@ -1196,6 +1245,12 @@ def run_annotation(
                 progress_callback(variants_done, len(raw_rows))
 
     result.rows_written = total_written
+
+    # 8b. Atomic swap (F28): every batch staged successfully, so replace the
+    # prior annotation with the staged one in a single transaction. Reached only
+    # on full success — a crash in any batch above propagates out before here,
+    # leaving ``annotated_variants`` (the prior good run) intact.
+    _swap_staging_into_place(sample_engine)
 
     # 9. Coverage telemetry (Plan §5.6). `vep_matched` aggregates both rsid
     # and (chrom, pos) hits; subtract the coord-fallback subset so the
