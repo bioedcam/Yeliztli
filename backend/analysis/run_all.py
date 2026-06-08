@@ -67,6 +67,7 @@ def _get_modules() -> list[tuple[str, Callable]]:
         ("cancer", _run_cancer),
         ("carrier_status", _run_carrier),
         ("cardiovascular", _run_cardiovascular),
+        ("hemochromatosis", _run_hemochromatosis),
         ("pharmacogenomics", _run_pharma),
         ("nutrigenomics", _run_nutrigenomics),
         ("traits", _run_traits),
@@ -177,6 +178,18 @@ def _run_traits(sample_engine: Engine, registry: DBRegistry) -> int:
     panel = load_traits_panel()
     result = score_traits_pathways(panel, sample_engine, registry.reference_engine)
     return store_traits_findings(result, sample_engine)
+
+
+def _run_hemochromatosis(sample_engine: Engine, registry: DBRegistry) -> int:
+    from backend.analysis.hemochromatosis import (
+        assess_hemochromatosis,
+        load_hemochromatosis_panel,
+        store_hemochromatosis_findings,
+    )
+
+    panel = load_hemochromatosis_panel()
+    assessment = assess_hemochromatosis(panel, sample_engine)
+    return store_hemochromatosis_findings(assessment, sample_engine)
 
 
 def _run_apoe(sample_engine: Engine, registry: DBRegistry) -> int:

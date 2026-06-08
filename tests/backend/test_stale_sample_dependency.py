@@ -59,6 +59,7 @@ _FULLY_GATED_MODULES = frozenset(
         "fitness",
         "gene_health",
         "genes",
+        "hemochromatosis",
         "igv_tracks",
         "liftover",
         "methylation",
@@ -92,6 +93,10 @@ _FULLY_OPT_OUT_MODULES = frozenset(
         "ingest",
         "nuclear",
         "preferences",
+        # Shared risk-genotype router *factory* (make_risk_router). It exports no
+        # router of its own — the gated /findings + /run routes it builds live on
+        # the consuming risk modules, which are in _FULLY_GATED_MODULES.
+        "risk_common",
         "saved_queries",
         "setup",
         "updates",

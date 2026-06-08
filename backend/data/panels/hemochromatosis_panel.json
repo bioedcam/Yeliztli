@@ -1,0 +1,92 @@
+{
+  "module": "hemochromatosis",
+  "version": "1.0.0",
+  "category": "risk_genotype",
+  "description": "Hereditary haemochromatosis HFE risk-genotype panel. Directly-typed C282Y (rs1800562) and H63D (rs1799945). Genotype-combination-specific calls with sex-stratified penetrance. Treatable by phlebotomy — high value. EXPANSION_STRATEGY.md §6 / roadmap #23.",
+  "evaluation": "first_match",
+  "sex_stratified": true,
+  "ancestry_gate": null,
+  "disclaimer_key": "HEMOCHROMATOSIS",
+  "loci": [
+    {
+      "rsid": "rs1800562",
+      "gene_symbol": "HFE",
+      "label": "C282Y",
+      "risk_allele": "A",
+      "ref_allele": "G",
+      "canonical_strand": "plus",
+      "off_chip_risk": "low"
+    },
+    {
+      "rsid": "rs1799945",
+      "gene_symbol": "HFE",
+      "label": "H63D",
+      "risk_allele": "G",
+      "ref_allele": "C",
+      "canonical_strand": "plus",
+      "off_chip_risk": "low"
+    }
+  ],
+  "genotype_models": [
+    {
+      "id": "c282y_homozygous",
+      "match": {"rs1800562": {"dosage": 2}},
+      "risk_classification": "C282Y homozygous",
+      "zygosity": "hom_alt",
+      "evidence_stars": 3,
+      "penetrance": {
+        "by_sex": {
+          "XY": "In men, cumulative haemochromatosis diagnosis reached 56.4% by age 80 (liver disease ~20.3%).",
+          "XX": "In women, cumulative haemochromatosis diagnosis reached 40.5% by age 80 (liver disease ~8.3%)."
+        }
+      },
+      "finding_text": "HFE C282Y homozygous ({genotype}) — the genotype most strongly associated with hereditary haemochromatosis (iron overload). {penetrance_text} Penetrance is reduced and sex-dependent, and most C282Y homozygotes are undiagnosed (~88% of men, ~97% of women at enrolment in UK Biobank). The condition is treatable by phlebotomy; discuss ferritin and transferrin-saturation testing with a clinician.",
+      "caveats": ["reduced_penetrance", "ancestry_european", "negative_not_clear", "confirm_clinically"],
+      "pmids": ["38479735", "30651232"]
+    },
+    {
+      "id": "compound_heterozygous",
+      "match": {"rs1800562": {"dosage": 1}, "rs1799945": {"dosage": 1}},
+      "risk_classification": "Compound heterozygous (C282Y/H63D)",
+      "zygosity": "het",
+      "evidence_stars": 2,
+      "penetrance": "Compound heterozygotes (one C282Y, one H63D) have low penetrance; most never develop clinically significant iron overload.",
+      "finding_text": "HFE compound heterozygous C282Y/H63D ({genotype}). {penetrance_text} This is a low-penetrance genotype — the large majority of compound heterozygotes do not develop iron-overload disease. Routine iron studies may be discussed with a clinician.",
+      "caveats": ["reduced_penetrance", "ancestry_european", "negative_not_clear"],
+      "pmids": ["30651232", "21149639"]
+    },
+    {
+      "id": "c282y_heterozygous",
+      "match": {"rs1800562": {"dosage": 1}},
+      "risk_classification": "C282Y heterozygous (carrier)",
+      "zygosity": "het",
+      "evidence_stars": 2,
+      "penetrance": "A single C282Y allele carries low risk of iron overload on its own.",
+      "finding_text": "HFE C282Y heterozygous ({genotype}) — you carry one C282Y allele. {penetrance_text} Single C282Y carriers are typically unaffected; the genotype is mainly relevant for family planning and when combined with a second HFE variant.",
+      "caveats": ["reduced_penetrance", "ancestry_european", "negative_not_clear"],
+      "pmids": ["30651232"]
+    },
+    {
+      "id": "h63d_homozygous",
+      "match": {"rs1799945": {"dosage": 2}},
+      "risk_classification": "H63D homozygous",
+      "zygosity": "hom_alt",
+      "evidence_stars": 1,
+      "penetrance": "H63D homozygosity is of low clinical significance and rarely causes iron overload by itself.",
+      "finding_text": "HFE H63D homozygous ({genotype}). {penetrance_text} This genotype is of limited clinical significance in isolation.",
+      "caveats": ["reduced_penetrance", "negative_not_clear"],
+      "pmids": ["21149639"]
+    },
+    {
+      "id": "h63d_heterozygous",
+      "match": {"rs1799945": {"dosage": 1}},
+      "risk_classification": "H63D heterozygous (carrier)",
+      "zygosity": "het",
+      "evidence_stars": 1,
+      "penetrance": "A single H63D allele is of minimal clinical significance.",
+      "finding_text": "HFE H63D heterozygous ({genotype}) — you carry one H63D allele. {penetrance_text} Mainly relevant for family planning or in combination with a C282Y allele.",
+      "caveats": ["negative_not_clear"],
+      "pmids": ["21149639"]
+    }
+  ]
+}

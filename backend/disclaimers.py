@@ -283,3 +283,40 @@ management recommendations.
 - American Heart Association: https://www.heart.org/en/health-topics/cholesterol
 - National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
 """
+
+
+# ── Hereditary haemochromatosis (HFE) module ─────────────────────────────────
+
+HEMOCHROMATOSIS_DISCLAIMER_TITLE = "About Hereditary Haemochromatosis Results"
+
+HEMOCHROMATOSIS_DISCLAIMER_TEXT = """\
+This section reports the HFE genotype (C282Y / H63D) associated with hereditary \
+haemochromatosis — a treatable disorder of iron metabolism.
+
+**Please understand the following before reviewing:**
+
+1. **Genotype is not diagnosis, and penetrance is reduced and sex-dependent.** \
+Even C282Y homozygotes — the highest-risk genotype — do not all develop disease. \
+Cumulative haemochromatosis diagnosis by age 80 was ~56% in men and ~41% in \
+women, and most homozygotes are undiagnosed. Compound C282Y/H63D and single \
+carriers are low-penetrance.
+
+2. **It is treatable.** When iron overload does occur, it is managed effectively \
+with phlebotomy. A pathogenic genotype is a reason to discuss iron studies \
+(ferritin, transferrin saturation) with a clinician — not a reason to assume disease.
+
+3. **Ancestry context.** Prevalence and penetrance figures come from \
+European-ancestry populations; C282Y is near-absent in East Asian and \
+sub-Saharan African ancestry.
+
+4. **A negative result does not rule out iron overload.** The array tests only \
+C282Y and H63D; rare HFE and non-HFE iron-overload variants are not interrogated.
+
+5. **Professional guidance.** Discuss results with your physician or a genetic \
+counselor before any medical action; confirm in a CLIA/accredited laboratory.
+
+**Resources:**
+- American Hemochromatosis Society: https://www.americanhs.org/
+- Iron Disorders Institute: https://irondisorders.org/
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
+"""
