@@ -69,10 +69,14 @@ def test_harness_runs_live_pipeline(build_live_run) -> None:
 
     # The engine wrote rows.
     assert run.annot_result.rows_written > 0
-    # The ClinVar annotation landed on the live path.
+    # The ClinVar annotation landed on the live path...
     brca2 = run.annotated_by_rsid("rs_brca2")
     assert brca2 is not None
     assert brca2.clinvar_significance == "Pathogenic"
+    # ...with carriage computed from the ClinVar ref/alt (GA vs G>A ⇒ het). A
+    # connectivity-only smoke test would miss the genotype-agnostic defect, so
+    # assert the zygosity is actually populated, not merely that ClinVar matched.
+    assert brca2.zygosity == "het"
     # run_all produced a findings table (a dict of module -> count/err).
     assert isinstance(run.analysis_result, dict)
     assert run.analysis_result  # at least one module ran

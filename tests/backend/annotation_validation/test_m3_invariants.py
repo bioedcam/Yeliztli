@@ -25,10 +25,15 @@ _PATHOGENIC_CATEGORIES = ("clinvar_pathogenic", "ensemble_pathogenic", "rare")
 
 
 def test_inv1_no_homref_in_pathogenic_findings(build_live_run) -> None:
-    """No rare/pathogenic finding carries an explicit hom_ref zygosity label.
+    """Every rare/pathogenic finding carries a CARRIED zygosity; none is hom_ref.
 
-    A regression guard: even once zygosity is populated, a hom-ref variant must
-    never reach the rare/pathogenic finding surfaces.
+    Stronger than a literal-``'hom_ref'`` filter: it also fails on a
+    genotype-agnostic regression. A genotype-agnostic engine leaves ``zygosity``
+    NULL, which makes the carriage gate drop *every* finding — so asserting the
+    het carrier **does** surface (and that every surfaced pathogenic finding has
+    a non-NULL CARRIED zygosity) trips on both the hom-ref-leak regression *and*
+    the NULL-zygosity regression. (The doc's M3 invariant #1 — "violated 30k+
+    times" — is the recomputed-carriage view; this is its live-finding analogue.)
     """
     run = build_live_run(
         variants=[
@@ -40,12 +45,20 @@ def test_inv1_no_homref_in_pathogenic_findings(build_live_run) -> None:
             clinvar_row("rs_homref", "7", 300, "G", "A", "Pathogenic", 3),
         ],
     )
-    offenders = [
-        f
-        for f in run.findings_in(*_PATHOGENIC_CATEGORIES)
-        if f.zygosity == "hom_ref"
-    ]
-    assert offenders == []
+    pathogenic = run.findings_in(*_PATHOGENIC_CATEGORIES)
+    # The het carrier must surface — else carriage was never computed and the
+    # gate silently zeroed the finding set (the genotype-agnostic regression).
+    assert any(f.rsid == "rs_het" for f in pathogenic), (
+        "het carrier was not surfaced — zygosity likely NULL (genotype-agnostic)"
+    )
+    # The hom-ref non-carrier must not surface.
+    assert all(f.rsid != "rs_homref" for f in pathogenic)
+    # Every surfaced pathogenic finding carries het/hom_alt, never hom_ref/NULL.
+    offenders = [f for f in pathogenic if f.zygosity not in CARRIED_ZYGOSITIES]
+    assert offenders == [], (
+        f"pathogenic findings with non-carried zygosity: "
+        f"{[(f.rsid, f.zygosity) for f in offenders]}"
+    )
 
 
 # ── inv2 — every carriable SNV gets a zygosity (F1) ───────────────────────

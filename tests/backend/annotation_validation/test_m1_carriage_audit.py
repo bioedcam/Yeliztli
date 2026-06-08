@@ -83,7 +83,13 @@ def test_no_homref_in_pathogenic_findings_alarm(build_live_run) -> None:
     """The live-path carriage gate: zero hom-ref findings in pathogenic categories."""
     run = build_live_run(variants=_VARIANTS, clinvar=_CLINVAR)
     report = audit_carriage(run.sample_engine, run.registry.reference_engine)
-    hom_ref_total = report.overall().hom_ref
-    assert hom_ref_total == 0, (
-        f"{hom_ref_total} hom-ref variant(s) surfaced as findings: {report.as_dict()}"
+    overall = report.overall()
+    assert overall.hom_ref == 0, (
+        f"{overall.hom_ref} hom-ref variant(s) surfaced as findings: {report.as_dict()}"
+    )
+    # Lower bound: the het + hom-alt carriers must actually surface. Without
+    # this, a genotype-agnostic engine that surfaced *only* undetermined
+    # (indel/no-call) findings — carried==0, hom_ref==0 — would pass vacuously.
+    assert overall.carried >= 2, (
+        f"expected the het + hom-alt carriers to surface; got {report.as_dict()}"
     )

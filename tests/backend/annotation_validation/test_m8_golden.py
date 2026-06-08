@@ -69,6 +69,11 @@ def test_snapshot_builder_runs(build_live_run) -> None:
     snapshot = _build_snapshot(_golden_run(build_live_run))
     assert "findings_counts" in snapshot
     assert "carriage_table" in snapshot
+    # Guard the snapshot *shape*, not just key presence — a malformed builder
+    # (e.g. counts as a list) would otherwise pass and then fail opaquely on the
+    # golden diff once the snapshot is locked in Phase G.
+    assert isinstance(snapshot["findings_counts"], dict)
+    assert isinstance(snapshot["carriage_table"], dict)
 
 
 @pytest.mark.xfail(strict=True, reason="Golden encodes post-remediation output; "

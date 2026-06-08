@@ -26,28 +26,61 @@ def test_cpic_bit_distinct_from_gene_phenotype_bit() -> None:
 
 
 def test_coverage_bit_implies_source_column(build_live_run) -> None:
-    """If a source's coverage bit is set, that source's column is populated."""
+    """A set coverage bit implies the corresponding source column is populated.
+
+    inv5 across **all** annotation sources (not just ClinVar/gnomAD): a bit must
+    never be set without data behind it — the "claims coverage it doesn't have"
+    failure mode. The single variant is seeded into every source so each bit is
+    genuinely exercised, then the implication is checked on every annotated row.
+    """
     run = build_live_run(
         variants=[{"rsid": "rs_cov", "chrom": "7", "pos": 100, "genotype": "GA"}],
-        clinvar=[clinvar_row("rs_cov", "7", 100, "G", "A", "Pathogenic", 3)],
+        clinvar=[clinvar_row("rs_cov", "7", 100, "G", "A", "Pathogenic", 3, gene="GENEX")],
         gnomad=[
-            {
-                "rsid": "rs_cov",
-                "chrom": "7",
-                "pos": 100,
-                "ref": "G",
-                "alt": "A",
-                "af_global": 0.002,
-            }
+            {"rsid": "rs_cov", "chrom": "7", "pos": 100, "ref": "G", "alt": "A",
+             "af_global": 0.002}
+        ],
+        vep=[
+            {"rsid": "rs_cov", "chrom": "7", "pos": 100, "ref": "G", "alt": "A",
+             "gene_symbol": "GENEX", "consequence": "missense_variant"}
+        ],
+        dbnsfp_rows=[
+            {"#chr": "7", "pos(1-based)": "100", "ref": "G", "alt": "A",
+             "rs_dbSNP": "rs_cov", "CADD_phred": "25.0", "REVEL_score": "0.7"}
+        ],
+        gene_phenotype_rows=[
+            {"gene_symbol": "GENEX", "disease_name": "GENEX-related disorder",
+             "disease_id": "MONDO:0000001", "hpo_terms": "[]", "source": "mondo_hpo",
+             "inheritance": "Autosomal dominant"}
         ],
         run_analyses=False,
     )
+    # inv5: for every annotated row, a set bit implies a populated column.
     for row in run.annotated:
         cov = row.annotation_coverage or 0
+        if cov & engine_mod.VEP_BIT:
+            assert row.gene_symbol is not None
         if cov & engine_mod.CLINVAR_BIT:
             assert row.clinvar_significance is not None
         if cov & engine_mod.GNOMAD_BIT:
             assert row.gnomad_af_global is not None
+        if cov & engine_mod.DBNSFP_BIT:
+            assert row.cadd_phred is not None
+        if cov & engine_mod.GENE_PHENOTYPE_BIT:
+            assert row.disease_name is not None
+    # ...and the fully-seeded variant must actually exercise all five bits, so
+    # the implication above is not satisfied vacuously.
+    row = run.annotated_by_rsid("rs_cov")
+    assert row is not None
+    cov = row.annotation_coverage or 0
+    for bit in (
+        engine_mod.VEP_BIT,
+        engine_mod.CLINVAR_BIT,
+        engine_mod.GNOMAD_BIT,
+        engine_mod.DBNSFP_BIT,
+        engine_mod.GENE_PHENOTYPE_BIT,
+    ):
+        assert cov & bit, f"expected coverage bit {bit} set for the fully-seeded variant"
 
 
 # ── F18: deprecated rsids are recovered (resolution rate > 0) ─────────────

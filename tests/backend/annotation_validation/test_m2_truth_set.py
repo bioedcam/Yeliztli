@@ -57,28 +57,40 @@ def test_homref_pathogenic_snv_not_surfaced(build_live_run) -> None:
 
 
 def test_het_carrier_zygosity(build_live_run) -> None:
+    """A het carrier: zygosity=het AND the finding surfaces end-to-end.
+
+    Drives the full ``run_all_analyses`` so the *positive control* is exercised —
+    the carriage gate must **admit** carriers, not merely exclude hom-ref. (M2
+    §4 requires the actual ``run_annotation + run_all_analyses`` path, and a
+    genotype-agnostic regression would zero the gate, dropping this finding.)
+    """
     run = build_live_run(
         variants=[{"rsid": "rs_het", "chrom": "7", "pos": 200, "genotype": "GA"}],
         clinvar=[_clinvar("rs_het", "7", 200, "G", "A", "Pathogenic", 3)],
-        run_analyses=False,
     )
     annotated = run.annotated_by_rsid("rs_het")
     assert annotated is not None
     assert annotated.zygosity == "het"
+    assert any(
+        f.category == "clinvar_pathogenic" for f in run.findings_for_rsid("rs_het")
+    ), "het carrier of a Pathogenic SNV did not surface a finding"
 
 
 # ── F3/F7: hom-alt ────────────────────────────────────────────────────────
 
 
 def test_hom_alt_zygosity(build_live_run) -> None:
+    """A hom-alt carrier: zygosity=hom_alt AND the finding surfaces end-to-end."""
     run = build_live_run(
         variants=[{"rsid": "rs_homalt", "chrom": "7", "pos": 300, "genotype": "AA"}],
         clinvar=[_clinvar("rs_homalt", "7", 300, "G", "A", "Likely pathogenic", 2)],
-        run_analyses=False,
     )
     annotated = run.annotated_by_rsid("rs_homalt")
     assert annotated is not None
     assert annotated.zygosity == "hom_alt"
+    assert any(
+        f.category == "clinvar_pathogenic" for f in run.findings_for_rsid("rs_homalt")
+    ), "hom-alt carrier of a Likely-pathogenic SNV did not surface a finding"
 
 
 # ── F17: reverse-strand het ───────────────────────────────────────────────
@@ -90,11 +102,14 @@ def test_reverse_strand_het(build_live_run) -> None:
         # ClinVar G>A; the sample reports the reverse-strand complement C/T.
         variants=[{"rsid": "rs_revstrand", "chrom": "7", "pos": 400, "genotype": "CT"}],
         clinvar=[_clinvar("rs_revstrand", "7", 400, "G", "A", "Pathogenic", 2)],
-        run_analyses=False,
     )
     annotated = run.annotated_by_rsid("rs_revstrand")
     assert annotated is not None
     assert annotated.zygosity == "het"
+    assert any(
+        f.category == "clinvar_pathogenic"
+        for f in run.findings_for_rsid("rs_revstrand")
+    ), "reverse-strand het carrier did not surface a finding"
 
 
 # ── F37: palindromic site, vendor declares + strand ───────────────────────
@@ -106,11 +121,13 @@ def test_palindromic_homozygous_ancestrydna(build_live_run) -> None:
         file_format="ancestrydna_v2.0",
         variants=[{"rsid": "rs_palin", "chrom": "7", "pos": 500, "genotype": "TT"}],
         clinvar=[_clinvar("rs_palin", "7", 500, "A", "T", "Pathogenic", 2)],
-        run_analyses=False,
     )
     annotated = run.annotated_by_rsid("rs_palin")
     assert annotated is not None
     assert annotated.zygosity == "hom_alt"
+    assert any(
+        f.category == "clinvar_pathogenic" for f in run.findings_for_rsid("rs_palin")
+    ), "palindromic hom-alt carrier did not surface a finding"
 
 
 # ── F10: multi-allelic, carry ALT#2 ───────────────────────────────────────
@@ -153,6 +170,47 @@ def test_indel_not_confident_pathogenic(build_live_run) -> None:
     assert high_conf == []
 
 
+# ── F6/F7: monogenic clinical modules surface carriers (un-suppression) ────
+
+
+def test_monogenic_cancer_finding_surfaces_for_carrier(build_live_run) -> None:
+    """A het carrier of a panel cancer-gene P/LP variant surfaces a cancer finding.
+
+    This is the *false-negative* half of the core defect (F6/F7): cancer /
+    cardiovascular / carrier modules gate on ``zygosity IN CARRIED_ZYGOSITIES``
+    (cancer.py), so a genotype-agnostic engine (NULL zygosity) silently
+    suppresses **all** of them — the most clinically actionable surface. The
+    ``module="cancer"`` finding only appears once carriage is wired (C1) and the
+    gene symbol is attached (VEP). The hom-ref control proves the gate still
+    excludes non-carriers.
+    """
+    run = build_live_run(
+        variants=[
+            # het carrier of a BRCA1-panel P/LP variant — must surface
+            {"rsid": "rs80357906", "chrom": "17", "pos": 43_094_000, "genotype": "GA"},
+            # hom-ref at another BRCA1-panel P/LP variant — must NOT surface
+            {"rsid": "rs80357713", "chrom": "17", "pos": 43_095_000, "genotype": "GG"},
+        ],
+        clinvar=[
+            _clinvar("rs80357906", "17", 43_094_000, "G", "A", "Pathogenic", 3, gene="BRCA1"),
+            _clinvar("rs80357713", "17", 43_095_000, "G", "A", "Pathogenic", 3, gene="BRCA1"),
+        ],
+        vep=[
+            {"rsid": "rs80357906", "chrom": "17", "pos": 43_094_000, "ref": "G",
+             "alt": "A", "gene_symbol": "BRCA1", "consequence": "stop_gained"},
+            {"rsid": "rs80357713", "chrom": "17", "pos": 43_095_000, "ref": "G",
+             "alt": "A", "gene_symbol": "BRCA1", "consequence": "stop_gained"},
+        ],
+    )
+    cancer_rsids = {f.rsid for f in run.findings_for_module("cancer")}
+    assert "rs80357906" in cancer_rsids, (
+        "het carrier of a cancer-panel P/LP variant was suppressed (F6/F7)"
+    )
+    assert "rs80357713" not in cancer_rsids, (
+        "hom-ref non-carrier leaked into cancer findings"
+    )
+
+
 # ── F18: merged rsid resolved to its current id ───────────────────────────
 
 
@@ -166,12 +224,15 @@ def test_merged_rsid_resolved(build_live_run) -> None:
         dbsnp_merge_rows=[
             {"old_rsid": "rs_old", "current_rsid": "rs_new", "build_id": 151}
         ],
-        run_analyses=False,
     )
     annotated = run.annotated_by_rsid("rs_old")
     assert annotated is not None
     assert annotated.clinvar_significance == "Pathogenic"
     assert annotated.zygosity == "hom_alt"
+    # ...and the recovered Pathogenic call surfaces a finding (end-to-end gate).
+    assert any(
+        f.category == "clinvar_pathogenic" for f in run.findings_for_rsid("rs_old")
+    ), "recovered merged-rsid carrier did not surface a finding"
 
 
 # ── F8: chrY finding on an XX sample is biologically impossible ────────────
