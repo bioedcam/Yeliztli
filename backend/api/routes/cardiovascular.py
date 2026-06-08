@@ -306,7 +306,9 @@ def run_cardiovascular_analysis(
     # Monogenic extraction (P3-19)
     panel = load_cardiovascular_panel()
     result = extract_cardiovascular_variants(panel, sample_engine)
-    count = store_cardiovascular_findings(result, sample_engine)
+    # Pass the reference engine so findings gain the gnomAD gene-constraint
+    # context badge (roadmap #12), matching the run_all dashboard path.
+    count = store_cardiovascular_findings(result, sample_engine, get_registry().reference_engine)
 
     # FH status reporting (P3-20)
     fh_status = determine_fh_status(result)

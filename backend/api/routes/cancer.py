@@ -351,7 +351,9 @@ def run_cancer_analysis(
     # Monogenic extraction (P3-13)
     panel = load_cancer_panel()
     result = extract_cancer_variants(panel, sample_engine)
-    count = store_cancer_findings(result, sample_engine)
+    # Pass the reference engine so findings gain the gnomAD gene-constraint
+    # context badge (roadmap #12), matching the run_all dashboard path.
+    count = store_cancer_findings(result, sample_engine, get_registry().reference_engine)
 
     # PRS computation (P3-15) with ancestry mismatch check (P3-16)
     from backend.analysis.ancestry import get_inferred_ancestry, get_top_ancestry_fraction

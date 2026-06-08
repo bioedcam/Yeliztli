@@ -370,6 +370,27 @@ gwas_associations = sa.Table(
     sa.Column("sample_size", sa.Integer),
 )
 
+# ── gnomAD gene constraint (LOEUF / pLI / missense-z) ─────────────────
+# gnomAD v2.1.1 (GRCh37, CC0) lof_metrics.by_gene. Powers a gene-level
+# "doesn't tolerate loss-of-function" context badge on monogenic findings
+# (EXPANSION_STRATEGY.md §7 / roadmap #12). Context only — never auto-upgrades
+# an ACMG classification. lof_constrained is computed at lookup
+# (loeuf < 0.35 or pli > 0.9), not stored, so the table holds raw metrics.
+
+gnomad_gene_constraint = sa.Table(
+    "gnomad_gene_constraint",
+    reference_metadata,
+    sa.Column("gene_symbol", sa.Text, primary_key=True),
+    sa.Column("transcript", sa.Text),
+    sa.Column("oe_lof", sa.Float, comment="observed/expected LoF point estimate"),
+    sa.Column("loeuf", sa.Float, comment="oe_lof_upper — the LOEUF score"),
+    sa.Column("pli", sa.Float, comment="prob. of loss-of-function intolerance"),
+    sa.Column("mis_z", sa.Float, comment="missense constraint Z-score"),
+    sa.Column("syn_z", sa.Float, comment="synonymous Z-score (QC sanity)"),
+)
+
+sa.Index("idx_gnomad_constraint_loeuf", gnomad_gene_constraint.c.loeuf)
+
 # ── HLA Proxy Lookup ─────────────────────────────────────────────────
 
 hla_proxy_lookup = sa.Table(

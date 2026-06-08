@@ -25,6 +25,7 @@ from backend.db.tables import (
     cpic_guidelines,
     dbsnp_merges,
     gene_phenotype,
+    gnomad_gene_constraint,
     gwas_associations,
     raw_variants,
     reference_metadata,
@@ -459,6 +460,39 @@ SEED_SAMPLE = {
     "file_hash": "abc123deadbeef",
 }
 
+# gnomAD gene-constraint mini bundle (gnomAD v2.1.1, GRCh37). Representative real
+# values: APC/SCN5A are strongly LoF-constrained; PCSK9 is not. lof_constrained
+# (loeuf < 0.35 or pli > 0.9) is derived at lookup, so only raw metrics are stored.
+SEED_GENE_CONSTRAINT = [
+    {
+        "gene_symbol": "APC",
+        "transcript": "ENST00000257430",
+        "oe_lof": 0.10,
+        "loeuf": 0.16,
+        "pli": 1.0,
+        "mis_z": 3.06,
+        "syn_z": 0.40,
+    },
+    {
+        "gene_symbol": "SCN5A",
+        "transcript": "ENST00000333535",
+        "oe_lof": 0.10,
+        "loeuf": 0.18,
+        "pli": 1.0,
+        "mis_z": 5.07,
+        "syn_z": 0.45,
+    },
+    {
+        "gene_symbol": "PCSK9",
+        "transcript": "ENST00000302118",
+        "oe_lof": 0.55,
+        "loeuf": 0.66,
+        "pli": 0.0,
+        "mis_z": 1.10,
+        "syn_z": -0.20,
+    },
+]
+
 
 @pytest.fixture
 def seeded_reference_engine(reference_engine: sa.Engine) -> sa.Engine:
@@ -476,6 +510,7 @@ def seeded_reference_engine(reference_engine: sa.Engine) -> sa.Engine:
         conn.execute(cpic_guidelines.insert(), SEED_CPIC_GUIDELINES)
         conn.execute(gwas_associations.insert(), SEED_GWAS)
         conn.execute(dbsnp_merges.insert(), SEED_DBSNP_MERGES)
+        conn.execute(gnomad_gene_constraint.insert(), SEED_GENE_CONSTRAINT)
         conn.execute(samples.insert(), [SEED_SAMPLE])
     return reference_engine
 

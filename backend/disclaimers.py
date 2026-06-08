@@ -537,3 +537,15 @@ INSILICO_ACMG_EVIDENCE_ONLY = (
     "evidence tag only, NOT a clinical classification. It does not change the "
     "variant's ClinVar significance or this finding's evidence level."
 )
+
+
+# ── gnomAD gene-constraint context-only disclosure ───────────────────────────
+# Attached to the gene-constraint badge (backend.analysis.gene_constraint) added
+# to cancer/cardiovascular findings. The badge is background on how a gene
+# tolerates loss-of-function — it never auto-upgrades an ACMG classification.
+
+GENE_CONSTRAINT_CONTEXT_ONLY = (
+    "Gene-level loss-of-function constraint from gnomAD v2.1.1 (context only). "
+    "A constraint badge does NOT change this finding's classification or evidence "
+    "level — it is background on how the gene tolerates loss-of-function variation."
+)

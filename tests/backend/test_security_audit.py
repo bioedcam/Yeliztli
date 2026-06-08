@@ -173,6 +173,7 @@ class TestNoOutboundVariantData:
         "annotation/dbsnp.py": "reference DB download",
         "annotation/encode_ccres.py": "reference DB download",
         "annotation/gnomad.py": "reference DB download (build-script VCF URL; no runtime httpx)",
+        "annotation/gnomad_constraint.py": "reference DB download (gnomAD constraint TSV)",
         "annotation/gwas.py": "reference DB download",
         "annotation/http_download.py": "generic resumable reference DB downloader",
         "annotation/mondo_hpo.py": "reference DB download",

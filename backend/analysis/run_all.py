@@ -108,7 +108,7 @@ def _run_cancer(sample_engine: Engine, registry: DBRegistry) -> int:
 
     panel = load_cancer_panel()
     result = extract_cancer_variants(panel, sample_engine)
-    count = store_cancer_findings(result, sample_engine)
+    count = store_cancer_findings(result, sample_engine, registry.reference_engine)
 
     from backend.analysis.ancestry import get_top_ancestry_fraction
 
@@ -146,7 +146,7 @@ def _run_cardiovascular(sample_engine: Engine, registry: DBRegistry) -> int:
 
     panel = load_cardiovascular_panel()
     result = extract_cardiovascular_variants(panel, sample_engine)
-    return store_cardiovascular_findings(result, sample_engine)
+    return store_cardiovascular_findings(result, sample_engine, registry.reference_engine)
 
 
 def _run_pharma(sample_engine: Engine, registry: DBRegistry) -> int:

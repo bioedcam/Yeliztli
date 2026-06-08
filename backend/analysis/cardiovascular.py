@@ -49,6 +49,7 @@ import sqlalchemy as sa
 import structlog
 
 from backend.analysis.evidence import assign_clinvar_evidence_level
+from backend.analysis.gene_constraint import lookup_gene_constraints
 from backend.analysis.insilico_tiers import insilico_block
 from backend.analysis.zygosity import CARRIED_ZYGOSITIES
 from backend.db.tables import annotated_variants, findings
@@ -393,6 +394,7 @@ def extract_cardiovascular_variants(
 def store_cardiovascular_findings(
     result: CardiovascularAnalysisResult,
     sample_engine: sa.Engine,
+    reference_engine: sa.Engine | None = None,
 ) -> int:
     """Store cardiovascular findings in the sample database.
 
@@ -403,11 +405,21 @@ def store_cardiovascular_findings(
     Args:
         result: CardiovascularAnalysisResult from extract_cardiovascular_variants.
         sample_engine: SQLAlchemy engine for the sample database.
+        reference_engine: Optional reference.db engine. When given, each finding
+            gains a ``detail_json['gene_constraint']`` context block (gnomAD
+            LOEUF/pLI). Omitted entirely when ``None`` (back-compatible). The
+            badge is context only and never alters evidence_level/classification.
 
     Returns:
         Number of findings inserted.
     """
     rows: list[dict] = []
+
+    constraints: dict = {}
+    if reference_engine is not None:
+        constraints = lookup_gene_constraints(
+            reference_engine, [v.gene_symbol for v in result.variants]
+        )
 
     for v in result.variants:
         # Build human-readable finding text
@@ -429,6 +441,9 @@ def store_cardiovascular_findings(
             # Never mutates evidence_level / clinvar_significance below.
             "insilico": insilico_block(v.revel, v.consequence),
         }
+        # Optional gnomAD gene-constraint context (only when reference_engine given).
+        if reference_engine is not None:
+            detail["gene_constraint"] = constraints.get(v.gene_symbol)
 
         rows.append(
             {

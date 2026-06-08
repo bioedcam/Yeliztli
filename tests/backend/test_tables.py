@@ -31,7 +31,7 @@ class TestReferenceMetadata:
     """Verify reference_metadata contains all expected tables."""
 
     def test_reference_table_count(self):
-        assert len(reference_metadata.tables) == 23
+        assert len(reference_metadata.tables) == 24
 
     def test_reference_table_names(self):
         expected = {
@@ -58,6 +58,7 @@ class TestReferenceMetadata:
             "hla_proxy_lookup",
             "custom_panels",
             "overlay_configs",
+            "gnomad_gene_constraint",
         }
         assert set(reference_metadata.tables.keys()) == expected
 
