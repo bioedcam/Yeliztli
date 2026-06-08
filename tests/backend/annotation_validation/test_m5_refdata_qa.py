@@ -74,7 +74,6 @@ def test_mutpred2_column_has_coverage(build_live_run) -> None:
 # ── F21: obsolete MONDO terms must not reach the user ─────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F21: no obsolete-term filter; fixed by Phase F3")
 def test_obsolete_mondo_terms_filtered(build_live_run) -> None:
     run = build_live_run(
         variants=[{"rsid": "rs_tp53", "chrom": "17", "pos": 7_676_000, "genotype": "GA"}],
@@ -111,8 +110,6 @@ def test_obsolete_mondo_terms_filtered(build_live_run) -> None:
 # ── F14: dominant genes must not be mislabelled recessive ─────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F14: gene-wide inheritance stamped from "
-                   "first-in-file; fixed by Phase F3 curated override")
 def test_dominant_gene_inheritance(build_live_run) -> None:
     run = build_live_run(
         variants=[{"rsid": "rs_brca1", "chrom": "17", "pos": 43_094_000, "genotype": "GA"}],
@@ -151,7 +148,6 @@ def test_dominant_gene_inheritance(build_live_run) -> None:
 # ── F26: AF=0 (monomorphic) is not the same as observed-ultra-rare ────────
 
 
-@pytest.mark.xfail(strict=True, reason="F26: AF=0 treated as ultra-rare; fixed by Phase F1")
 def test_af_zero_is_not_ultra_rare() -> None:
     """A variant never observed in gnomAD (AF=0) must not be flagged ultra-rare."""
     _rare, ultra_rare = compute_rare_flags(0.0)

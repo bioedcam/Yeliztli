@@ -531,8 +531,8 @@ class TestRareVariantFlags:
         assert annot.rare_flag is True
         assert annot.ultra_rare_flag is False
 
-    def test_zero_af_is_ultra_rare(self, gnomad_engine: sa.Engine):
-        """AF of 0.0 is both rare and ultra-rare (monomorphic in gnomAD)."""
+    def test_zero_af_is_not_rare(self, gnomad_engine: sa.Engine):
+        """AF of 0.0 is monomorphic reference, not observed-rare/ultra-rare (F26)."""
         with gnomad_engine.begin() as conn:
             conn.execute(
                 sa.text(
@@ -542,8 +542,8 @@ class TestRareVariantFlags:
             )
         results = lookup_gnomad_by_rsids(["rs_zero"], gnomad_engine)
         annot = results["rs_zero"]
-        assert annot.rare_flag is True
-        assert annot.ultra_rare_flag is True
+        assert annot.rare_flag is False
+        assert annot.ultra_rare_flag is False
 
     def test_null_af_is_not_flagged(self, gnomad_engine: sa.Engine):
         """NULL AF (no frequency data) produces no rare flags."""
@@ -703,8 +703,8 @@ class TestComputeRareFlags:
         assert compute_rare_flags(0.001) == (True, False)
 
     def test_zero_af(self):
-        """AF of 0.0 → (True, True)."""
-        assert compute_rare_flags(0.0) == (True, True)
+        """AF of 0.0 → (False, False): monomorphic reference, not ultra-rare (F26)."""
+        assert compute_rare_flags(0.0) == (False, False)
 
 
 # ── Database index tests for rare flags (P2-10) ─────────────────────────

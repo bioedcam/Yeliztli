@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import csv
+import functools
 import gzip
 import hashlib
 import json
@@ -43,6 +44,34 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = structlog.get_logger(__name__)
+
+
+# ── Gene-phenotype hygiene (validation strategy F14, F21) ─────────────────
+
+
+@functools.lru_cache(maxsize=1)
+def _load_inheritance_overrides() -> dict[str, str]:
+    """Load curated gene→inheritance overrides (F14).
+
+    The MONDO/HPO export stamps one gene-wide inheritance value (first-in-file)
+    onto every disease, mislabelling classic dominant genes (BRCA1/2, LMNA, …)
+    as recessive. These overrides assert the established mode of inheritance for
+    the well-characterised genes the audit named. Returns ``{}`` if the file is
+    missing/malformed (no override applied — falls back to the source value).
+    """
+    path = Path(__file__).resolve().parent.parent / "data" / "gene_inheritance_overrides.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("gene_inheritance_overrides_unavailable", path=str(path))
+        return {}
+    return {str(k).upper(): v for k, v in data.get("overrides", {}).items()}
+
+
+def _is_obsolete_disease(name: str | None) -> bool:
+    """Whether a disease label is an ``obsolete *`` MONDO term (F21)."""
+    return bool(name) and name.strip().lower().startswith("obsolete")
+
 
 # ── Data source URLs ─────────────────────────────────────────────────────
 
@@ -669,18 +698,30 @@ def lookup_gene_phenotypes(
             if source_filter:
                 conditions.append(gene_phenotype.c.source == source_filter)
 
-            stmt = sa.select(
-                gene_phenotype.c.gene_symbol,
-                gene_phenotype.c.disease_name,
-                gene_phenotype.c.disease_id,
-                gene_phenotype.c.hpo_terms,
-                gene_phenotype.c.source,
-                gene_phenotype.c.inheritance,
-            ).where(sa.and_(*conditions))
+            stmt = (
+                sa.select(
+                    gene_phenotype.c.gene_symbol,
+                    gene_phenotype.c.disease_name,
+                    gene_phenotype.c.disease_id,
+                    gene_phenotype.c.hpo_terms,
+                    gene_phenotype.c.source,
+                    gene_phenotype.c.inheritance,
+                )
+                .where(sa.and_(*conditions))
+                # Deterministic order so "first record per gene" (the engine's
+                # primary association) is reproducible, not MIN(id)=insertion
+                # order (F23).
+                .order_by(gene_phenotype.c.gene_symbol, gene_phenotype.c.disease_id)
+            )
 
             rows = conn.execute(stmt).fetchall()
 
+            overrides = _load_inheritance_overrides()
             for row in rows:
+                # Drop obsolete MONDO terms so they never reach the user (F21).
+                if _is_obsolete_disease(row.disease_name):
+                    continue
+
                 hpo_terms: list[str] = []
                 if row.hpo_terms:
                     try:
@@ -688,13 +729,18 @@ def lookup_gene_phenotypes(
                     except (json.JSONDecodeError, TypeError):
                         pass
 
+                # Curated inheritance override for known-mislabelled genes (F14).
+                inheritance = overrides.get(
+                    (row.gene_symbol or "").upper(), row.inheritance
+                )
+
                 annot = GenePhenotypeAnnotation(
                     gene_symbol=row.gene_symbol,
                     disease_name=row.disease_name,
                     disease_id=row.disease_id,
                     hpo_terms=hpo_terms,
                     source=row.source,
-                    inheritance=row.inheritance,
+                    inheritance=inheritance,
                 )
                 results.setdefault(row.gene_symbol, []).append(annot)
 

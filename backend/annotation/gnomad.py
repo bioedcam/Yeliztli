@@ -218,6 +218,13 @@ def compute_rare_flags(af_global: float | None) -> tuple[bool, bool]:
     """
     if af_global is None:
         return False, False
+    # AF == 0 means the ALT was never observed in gnomAD — a monomorphic
+    # reference site, NOT an observed ultra-rare allele (F26). Treating it as
+    # rare/ultra-rare conflates "absent from the cohort" with "vanishingly rare
+    # but seen". The rare-variant finder still surfaces a *carried* AF=0 variant
+    # via its own AF predicate; these column flags must not mislabel it.
+    if af_global == 0:
+        return False, False
     return af_global < RARE_AF_THRESHOLD, af_global < ULTRA_RARE_AF_THRESHOLD
 
 
