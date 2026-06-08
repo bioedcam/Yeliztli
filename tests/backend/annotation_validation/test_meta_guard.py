@@ -16,16 +16,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import backend.annotation.engine as engine_mod
 
 _ENGINE_SRC = Path(engine_mod.__file__).read_text(encoding="utf-8")
 _SUITE_DIR = Path(__file__).resolve().parent
 
 
-@pytest.mark.xfail(strict=True, reason="F1: the live engine does not yet compute "
-                   "carriage; fixed by Phase C1")
 def test_live_engine_computes_carriage() -> None:
     """``run_annotation``'s module must use the carriage classifier."""
     assert "classify_zygosity" in _ENGINE_SRC or "CARRIED_ZYGOSITIES" in _ENGINE_SRC

@@ -42,8 +42,6 @@ def _clinvar(rsid, chrom, pos, ref, alt, sig, stars, *, gene="GENEX"):
 # ── F3/F6: hom-ref negative control ───────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F3: rare-variant finder is ungated; "
-                   "fixed by Phase C carriage wiring + Phase D rare gate")
 def test_homref_pathogenic_snv_not_surfaced(build_live_run) -> None:
     """A hom-ref call at a ClinVar P/LP SNV must surface NO finding."""
     run = build_live_run(
@@ -58,8 +56,6 @@ def test_homref_pathogenic_snv_not_surfaced(build_live_run) -> None:
 # ── F3/F7: het carrier ────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F1: engine never computes zygosity; "
-                   "fixed by Phase C1")
 def test_het_carrier_zygosity(build_live_run) -> None:
     run = build_live_run(
         variants=[{"rsid": "rs_het", "chrom": "7", "pos": 200, "genotype": "GA"}],
@@ -74,8 +70,6 @@ def test_het_carrier_zygosity(build_live_run) -> None:
 # ── F3/F7: hom-alt ────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F1: engine never computes zygosity; "
-                   "fixed by Phase C1")
 def test_hom_alt_zygosity(build_live_run) -> None:
     run = build_live_run(
         variants=[{"rsid": "rs_homalt", "chrom": "7", "pos": 300, "genotype": "AA"}],
@@ -90,8 +84,6 @@ def test_hom_alt_zygosity(build_live_run) -> None:
 # ── F17: reverse-strand het ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F1/F17: zygosity (incl. strand) dead "
-                   "on the live path; fixed by Phase C1 + Phase D3")
 def test_reverse_strand_het(build_live_run) -> None:
     """Genotype on the opposite strand still resolves to the carried zygosity."""
     run = build_live_run(
@@ -108,8 +100,6 @@ def test_reverse_strand_het(build_live_run) -> None:
 # ── F37: palindromic site, vendor declares + strand ───────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F1/F37: palindrome handling dead on the "
-                   "live path; fixed by Phase C1 + Phase D3")
 def test_palindromic_homozygous_ancestrydna(build_live_run) -> None:
     """At a palindromic A/T site an AncestryDNA (+ strand) hom call is hom_alt."""
     run = build_live_run(
@@ -126,8 +116,6 @@ def test_palindromic_homozygous_ancestrydna(build_live_run) -> None:
 # ── F10: multi-allelic, carry ALT#2 ───────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F10: engine picks the highest-star "
-                   "ClinVar row, not the carried allele; fixed by Phase C1")
 def test_multiallelic_picks_carried_allele(build_live_run) -> None:
     """Genotype carries the lower-star ALT; its significance must win."""
     run = build_live_run(
@@ -152,8 +140,6 @@ def test_multiallelic_picks_carried_allele(build_live_run) -> None:
 # ── F16: indel (I/D) is unscoreable, not confident-Pathogenic ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F16: indel no-call surfaced as confident "
-                   "Pathogenic; fixed by Phase D2 unscoreable gate")
 def test_indel_not_confident_pathogenic(build_live_run) -> None:
     run = build_live_run(
         variants=[{"rsid": "rs_indel", "chrom": "7", "pos": 700, "genotype": "II"}],

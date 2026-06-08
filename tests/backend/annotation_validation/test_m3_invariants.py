@@ -51,8 +51,6 @@ def test_inv1_no_homref_in_pathogenic_findings(build_live_run) -> None:
 # ── inv2 — every carriable SNV gets a zygosity (F1) ───────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="F1: live engine never computes zygosity; "
-                   "fixed by Phase C1")
 def test_inv2_snv_with_source_alleles_has_zygosity(build_live_run) -> None:
     """Every annotated SNV that a source supplied ref/alt for has non-NULL zygosity.
 
@@ -151,8 +149,6 @@ def test_inv6_raw_annotated_reconciliation(build_live_run) -> None:
 # ── inv7 — no-call/indel sentinel genotype is never high-confidence (F16) ──
 
 
-@pytest.mark.xfail(strict=True, reason="F16: indel/no-call sentinels surfaced as "
-                   "confident Pathogenic; fixed by Phase D2")
 def test_inv7_nocall_indel_not_high_confidence(build_live_run) -> None:
     run = build_live_run(
         variants=[

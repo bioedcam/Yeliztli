@@ -43,6 +43,7 @@ import sqlalchemy as sa
 import structlog
 
 from backend.analysis.evidence import assign_clinvar_evidence_level
+from backend.analysis.zygosity import CARRIED_ZYGOSITIES
 from backend.annotation.vep_bundle import CONSEQUENCE_SEVERITY
 from backend.db.tables import annotated_variants, findings
 
@@ -116,6 +117,11 @@ class RareVariantFilter:
     clinvar_significance: list[str] | None = None
     include_novel: bool = True  # Include variants with no gnomAD AF (novel)
     zygosity: str | None = None  # "het", "hom_alt", or None for any
+    # When True, surface only variants the individual actually carries
+    # (zygosity in {het, hom_alt}). A genotyping chip reports a call at every
+    # probe, so without this the finder dumps homozygous-reference and
+    # unscoreable (indel/no-call) calls as findings. ``run_all`` sets it.
+    carried_only: bool = False
 
 
 @dataclass
@@ -306,6 +312,12 @@ def find_rare_variants(
     # Zygosity filter
     if filters.zygosity:
         conditions.append(av.c.zygosity == filters.zygosity)
+
+    # Carriage gate: restrict to variants the individual actually carries.
+    # NULL zygosity (unscoreable: indel/no-call/strand-ambiguous) is excluded
+    # by the IN clause, so unscoreable calls never surface as confident findings.
+    if filters.carried_only:
+        conditions.append(av.c.zygosity.in_(list(CARRIED_ZYGOSITIES)))
 
     if conditions:
         stmt = stmt.where(sa.and_(*conditions))

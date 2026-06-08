@@ -277,5 +277,7 @@ def _run_rare_variants(sample_engine: Engine, registry: DBRegistry) -> int:
         store_rare_variant_findings,
     )
 
-    result = find_rare_variants(RareVariantFilter(), sample_engine)
+    # Carriage-gate the live finder: only surface variants the individual
+    # actually carries (a chip genotypes every probe regardless of carriage).
+    result = find_rare_variants(RareVariantFilter(carried_only=True), sample_engine)
     return store_rare_variant_findings(result, sample_engine)

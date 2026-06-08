@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from backend.analysis.zygosity import classify_zygosity
 from backend.annotation.dbnsfp import (
     ENSEMBLE_PATHOGENIC_THRESHOLD,
     DbNSFPAnnotation,
@@ -170,10 +171,21 @@ def _lookup_clinvar(
     raw_by_rsid: dict[str, sa.Row],
     reference_engine: sa.Engine,
 ) -> dict[str, dict]:
-    """Look up ClinVar annotations for a batch of rsids."""
+    """Look up ClinVar annotations for a batch of rsids.
+
+    Passes the sample genotypes so multi-allelic sites are scored against the
+    allele the sample actually carries (``_pick_clinvar_row``), and keeps the
+    matched record's ``ref``/``alt`` so ``_merge_annotations`` can compute
+    carriage (zygosity). Without these two the engine is genotype-agnostic.
+    """
     from backend.annotation.clinvar import lookup_clinvar_by_rsids
 
-    matches = lookup_clinvar_by_rsids(rsids, reference_engine)
+    genotype_by_rsid = {
+        rsid: raw_by_rsid[rsid].genotype for rsid in rsids if rsid in raw_by_rsid
+    }
+    matches = lookup_clinvar_by_rsids(
+        rsids, reference_engine, genotype_by_rsid=genotype_by_rsid
+    )
 
     results: dict[str, dict] = {}
     for rsid, annot in matches.items():
@@ -182,6 +194,9 @@ def _lookup_clinvar(
             "clinvar_review_stars": annot.clinvar_review_stars,
             "clinvar_accession": annot.clinvar_accession,
             "clinvar_conditions": annot.clinvar_conditions,
+            # Carried-allele identity for zygosity computation in the merge.
+            "ref": annot.ref,
+            "alt": annot.alt,
         }
     return results
 
@@ -436,6 +451,17 @@ def _merge_annotations(
             row_data.update(gene_phenotype_data[rsid])
             bitmask |= GENE_PHENOTYPE_BIT
 
+        # Carriage: a genotyping chip reports a call at every probe regardless
+        # of whether the person carries the variant, so annotate against the
+        # allele actually carried. ``ref``/``alt`` come from the source that
+        # supplied allele identity (ClinVar today). ``classify_zygosity``
+        # returns None when carriage is indeterminate (indel / no-call /
+        # strand-ambiguous), in which case zygosity stays NULL.
+        ref = row_data.get("ref")
+        alt = row_data.get("alt")
+        if ref is not None and alt is not None:
+            row_data["zygosity"] = classify_zygosity(raw.genotype, ref, alt)
+
         if bitmask > 0:
             row_data["annotation_coverage"] = bitmask
             merged.append(row_data)
@@ -465,6 +491,10 @@ def apply_ensemble_pathogenic(merged: list[dict]) -> None:
 # ── Bulk upsert ──────────────────────────────────────────────────────────
 
 _UPSERT_COLUMNS = [
+    # Carriage (allele identity + zygosity vs the carried allele)
+    "ref",
+    "alt",
+    "zygosity",
     # VEP
     "gene_symbol",
     "transcript_id",
