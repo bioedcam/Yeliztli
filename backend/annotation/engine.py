@@ -321,8 +321,15 @@ def _lookup_dbnsfp(
     if not rsids:
         return {}
 
-    # Primary: rsid-based lookup
-    rsid_matches = lookup_dbnsfp_by_rsids(rsids, dbnsfp_engine)
+    # Primary: rsid-based lookup. Pass the genotypes so a multi-allelic site
+    # resolves to the carried-ALT row, not an arbitrary one (F11) — mirrors the
+    # ClinVar carried-allele selection.
+    genotype_by_rsid = {
+        rsid: raw_by_rsid[rsid].genotype for rsid in rsids if rsid in raw_by_rsid
+    }
+    rsid_matches = lookup_dbnsfp_by_rsids(
+        rsids, dbnsfp_engine, genotype_by_rsid=genotype_by_rsid
+    )
 
     results: dict[str, dict] = {}
     for rsid, annot in rsid_matches.items():

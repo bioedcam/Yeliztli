@@ -152,6 +152,45 @@ def test_multiallelic_picks_carried_allele(build_live_run) -> None:
     )
 
 
+# ── F11: dbNSFP multi-allelic — scores must come from the carried ALT ─────
+
+
+def test_multiallelic_dbnsfp_uses_carried_alt(build_live_run) -> None:
+    """At a multi-allelic dbNSFP site the carried ALT's scores must be stored.
+
+    Two ``dbnsfp_scores`` rows exist for the rsid — a benign ALT=A and a
+    deleterious ALT=C. The old loader kept whichever row SQLite returned last,
+    so the stored scores (and ``ensemble_pathogenic``) could come from an ALT
+    the sample does not carry (F11). Genotype ``CC`` carries G>C, so the
+    deleterious C-row must win. Crucially the carried ALT (C) sorts *after* the
+    non-carried ALT (A), so a mere deterministic-fallback (lowest-ALT) pick
+    would choose the wrong (benign A) row — only genuine carriage-based
+    selection lands on C.
+    """
+    base = {"#chr": "7", "pos(1-based)": "100", "ref": "G", "rs_dbSNP": "rs_mdb"}
+    run = build_live_run(
+        variants=[{"rsid": "rs_mdb", "chrom": "7", "pos": 100, "genotype": "CC"}],
+        dbnsfp_rows=[
+            # Non-carried ALT (A), sorts first: uniformly benign.
+            {**base, "alt": "A", "CADD_phred": "1.0", "SIFT4G_score": "0.9",
+             "Polyphen2_HVAR_score": "0.01", "REVEL_score": "0.05",
+             "MetaSVM_score": "0.0"},
+            # Carried ALT (C): uniformly deleterious → ensemble_pathogenic.
+            {**base, "alt": "C", "CADD_phred": "33.0", "SIFT4G_score": "0.0",
+             "Polyphen2_HVAR_score": "0.99", "REVEL_score": "0.95",
+             "MetaSVM_score": "0.9"},
+        ],
+        run_analyses=False,
+    )
+    row = run.annotated_by_rsid("rs_mdb")
+    assert row is not None
+    # The carried (C) row's CADD must be stored, not the non-carried (A) row's.
+    assert abs((row.cadd_phred or 0.0) - 33.0) < 1e-6, (
+        f"expected carried-ALT CADD 33.0, got {row.cadd_phred}"
+    )
+    assert row.ensemble_pathogenic, "carried deleterious ALT should be ensemble_pathogenic"
+
+
 # ── F16: indel (I/D) is unscoreable, not confident-Pathogenic ─────────────
 
 
