@@ -526,6 +526,53 @@ genetic and non-genetic factors are not captured here.
 """
 
 
+# ── MT-RNR1 aminoglycoside-ototoxicity (m.1555A>G / m.1494C>T / m.1095T>C) ──
+
+MT_RNR1_DISCLAIMER_TITLE = "About MT-RNR1 Aminoglycoside-Ototoxicity Results"
+
+MT_RNR1_DISCLAIMER_TEXT = """\
+This section reports mitochondrial MT-RNR1 (12S rRNA) variants associated with \
+aminoglycoside-induced hearing loss — m.1555A>G (rs267606617), m.1494C>T \
+(rs267606619), and m.1095T>C (rs267606618). Aminoglycosides are a class of \
+antibiotics that includes gentamicin, tobramycin, amikacin, and streptomycin.
+
+**Please understand the following before reviewing:**
+
+1. **Decision-support, not a prescription.** Where m.1555A>G or m.1494C>T is \
+detected, the 2021 CPIC guideline recommends avoiding aminoglycoside antibiotics \
+unless a severe infection and the lack of a safe, effective alternative outweigh \
+the high risk of permanent hearing loss. Yeliztli does not start, stop, or change \
+any medication — that decision belongs with your clinician or pharmacist, who can \
+weigh it against your specific situation.
+
+2. **Maternally inherited.** Mitochondrial DNA passes only from mother to child. \
+A variant here is shared with your maternal relatives but is not passed on by \
+fathers — relevant information for the wider maternal family.
+
+3. **Heteroplasmy is not measured.** Arrays give a single mitochondrial call and \
+cannot measure heteroplasmy (the proportion of mitochondrial copies carrying the \
+variant). Penetrance can depend on that proportion, which only quantitative \
+clinical mitochondrial testing can establish.
+
+4. **Evidence differs by variant.** m.1555A>G and m.1494C>T have strong, \
+family-study evidence; m.1095T>C is a weaker, preliminary association that needs \
+further study.
+
+5. **A negative result does not rule this out.** These positions are frequently \
+not present on consumer arrays. A position that was not typed is shown as \
+indeterminate, and the absence of a finding does not mean the variant is absent — \
+clinical mitochondrial testing is the way to confirm.
+
+6. **Confirm clinically.** This is a research/educational result, not a clinical \
+test. Confirm in a CLIA/accredited laboratory before any medical action, and \
+carry this information to medical encounters where antibiotics may be prescribed.
+
+**Resources:**
+- CPIC Aminoglycosides / MT-RNR1 guideline: https://cpicpgx.org/guidelines/cpic-guideline-for-aminoglycosides-and-mt-rnr1/
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
+"""
+
+
 # ── Calibrated in-silico (Pejaver PP3/BP4) evidence-only disclosure ──────────
 # Attached to the in-silico tier block (backend.analysis.insilico_tiers) that is
 # added to existing cancer/cardiovascular findings. It is an ACMG/AMP *evidence*

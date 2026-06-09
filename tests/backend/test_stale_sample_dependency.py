@@ -67,6 +67,7 @@ _FULLY_GATED_MODULES = frozenset(
         "igv_tracks",
         "liftover",
         "methylation",
+        "mt_rnr1",
         "nutrigenomics",
         "overlays",
         "pharma",

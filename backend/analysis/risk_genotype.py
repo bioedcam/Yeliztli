@@ -114,6 +114,18 @@ CAVEAT_REGISTRY: dict[str, str] = {
         "genotype is partial — this result could change if the untyped positions "
         "were sequenced."
     ),
+    "mt_maternal_inheritance": (
+        "This is a mitochondrial (mtDNA) variant. Mitochondrial DNA is inherited "
+        "only from the mother, so a variant here is shared with maternal relatives "
+        "(your mother, full siblings, and her maternal line) but is never passed on "
+        "by fathers."
+    ),
+    "mt_heteroplasmy": (
+        "Arrays report a single mitochondrial call and cannot measure heteroplasmy — "
+        "the fraction of mitochondrial copies carrying the variant. Penetrance can "
+        "depend on that fraction, which only quantitative clinical mitochondrial "
+        "testing can establish."
+    ),
 }
 
 

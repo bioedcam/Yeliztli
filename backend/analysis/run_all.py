@@ -73,6 +73,7 @@ def _get_modules() -> list[tuple[str, Callable]]:
         ("amd", _run_amd),
         ("apol1", _run_apol1),
         ("gout", _run_gout),
+        ("mt_rnr1", _run_mt_rnr1),
         ("pharmacogenomics", _run_pharma),
         ("nutrigenomics", _run_nutrigenomics),
         ("traits", _run_traits),
@@ -255,6 +256,18 @@ def _run_gout(sample_engine: Engine, registry: DBRegistry) -> int:
     panel = load_gout_panel()
     assessment = assess_gout(panel, sample_engine)
     return store_gout_findings(assessment, sample_engine)
+
+
+def _run_mt_rnr1(sample_engine: Engine, registry: DBRegistry) -> int:
+    from backend.analysis.mt_rnr1 import (
+        assess_mt_rnr1,
+        load_mt_rnr1_panel,
+        store_mt_rnr1_findings,
+    )
+
+    panel = load_mt_rnr1_panel()
+    assessment = assess_mt_rnr1(panel, sample_engine)
+    return store_mt_rnr1_findings(assessment, sample_engine)
 
 
 def _run_apoe(sample_engine: Engine, registry: DBRegistry) -> int:
