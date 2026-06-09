@@ -564,10 +564,12 @@ class TestStoreRareVariantFindings:
                 )
             ).fetchall()
         cat_map = {row.rsid: row.category for row in rows}
-        assert cat_map["rs100001"] == "clinvar_pathogenic"
+        assert cat_map["rs100001"] == "clinvar_pathogenic"  # Pathogenic, 3 stars
         assert cat_map["rs100002"] == "ensemble_pathogenic"
-        assert cat_map["rs100003"] == "clinvar_pathogenic"  # LP = pathogenic
-        assert cat_map["rs100008"] == "clinvar_pathogenic"
+        assert cat_map["rs100003"] == "clinvar_pathogenic"  # LP, 1 star
+        # F20: a 0-star P/LP (no assertion criteria) routes to the distinct
+        # low-confidence sub-tier, not the headline clinvar_pathogenic category.
+        assert cat_map["rs100008"] == "clinvar_pathogenic_low_confidence"  # LP, 0 stars
 
     def test_finding_text_contains_gene_and_rsid(
         self, sample_with_rare_variants: sa.Engine

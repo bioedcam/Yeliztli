@@ -30,7 +30,13 @@ from backend.db.tables import annotated_variants, clinvar_variants, findings, ra
 # Finding categories whose carriage we audit. These are the rare-variant-finder
 # categories that should only ever surface variants the individual carries.
 PATHOGENIC_CATEGORIES: frozenset[str] = frozenset(
-    {"clinvar_pathogenic", "ensemble_pathogenic", "rare", "novel"}
+    {
+        "clinvar_pathogenic",
+        "clinvar_pathogenic_low_confidence",  # F20 0-star sub-tier — still carriage-gated
+        "ensemble_pathogenic",
+        "rare",
+        "novel",
+    }
 )
 
 

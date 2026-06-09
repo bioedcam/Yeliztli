@@ -159,3 +159,37 @@ def test_af_zero_is_not_rare_or_ultra_rare() -> None:
     rare, ultra_rare = compute_rare_flags(0.0)
     assert rare is False
     assert ultra_rare is False
+
+
+# ── F20: 0-star ClinVar P/LP → low-confidence sub-tier, not the headline ──
+
+
+def test_zero_star_pathogenic_routed_to_low_confidence_subtier(build_live_run) -> None:
+    """A 0-star P/LP (no assertion criteria) must not inflate clinvar_pathogenic.
+
+    It surfaces in the distinct ``clinvar_pathogenic_low_confidence`` sub-tier at
+    evidence_level < 3 (so it never reaches the high-confidence card), while a
+    well-supported (>=2-star) P/LP stays in the headline category.
+    """
+    run = build_live_run(
+        variants=[
+            {"rsid": "rs_0star", "chrom": "7", "pos": 100, "genotype": "GA"},
+            {"rsid": "rs_2star", "chrom": "7", "pos": 200, "genotype": "GA"},
+        ],
+        clinvar=[
+            clinvar_row("rs_0star", "7", 100, "G", "A", "Pathogenic", 0),
+            clinvar_row("rs_2star", "7", 200, "G", "A", "Pathogenic", 2),
+        ],
+    )
+    cats_0 = {f.category for f in run.findings_for_rsid("rs_0star")}
+    cats_2 = {f.category for f in run.findings_for_rsid("rs_2star")}
+    assert "clinvar_pathogenic_low_confidence" in cats_0
+    assert "clinvar_pathogenic" not in cats_0
+    # The 0-star finding must stay below the high-confidence (evidence>=3) card.
+    assert all(
+        (f.evidence_level or 0) < 3
+        for f in run.findings_for_rsid("rs_0star")
+        if f.category == "clinvar_pathogenic_low_confidence"
+    )
+    # A >=2-star P/LP keeps the headline category.
+    assert "clinvar_pathogenic" in cats_2
