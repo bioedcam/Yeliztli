@@ -718,6 +718,19 @@ apoe_gate = sa.Table(
     sa.CheckConstraint("id = 1", name="single_row_apoe"),
 )
 
+# ── Parkinson's Gate State ─────────────────────────────────────────────
+# Mirrors apoe_gate: a single-row opt-in acknowledgment for the ethically
+# sensitive, late-onset LRRK2 G2019S Parkinson's-risk disclosure (roadmap #41).
+
+parkinsons_gate = sa.Table(
+    "parkinsons_gate",
+    sample_metadata_obj,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("acknowledged", sa.Boolean, server_default=sa.text("0")),
+    sa.Column("acknowledged_at", sa.DateTime),
+    sa.CheckConstraint("id = 1", name="single_row_parkinsons"),
+)
+
 # ── Tags ───────────────────────────────────────────────────────────────
 
 tags = sa.Table(

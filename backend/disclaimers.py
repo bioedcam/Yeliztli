@@ -100,6 +100,47 @@ APOE information each time you access this section.\
 APOE_GATE_ACCEPT_LABEL = "I Understand — Show My APOE Results"
 APOE_GATE_DECLINE_LABEL = "Not Now — Skip APOE Results"
 
+# ── Parkinson's (LRRK2 G2019S) opt-in disclosure gate ───────────────────
+
+PARKINSONS_GATE_TITLE = "Parkinson's Disease Genetic Information Disclosure"
+
+PARKINSONS_GATE_TEXT = """\
+You are about to view information about LRRK2 G2019S, the most common known \
+genetic risk factor for Parkinson's disease.
+
+**Important considerations before viewing:**
+
+- Carrying LRRK2 G2019S does NOT mean you will develop Parkinson's disease. \
+Penetrance is reduced and age-dependent — lifetime risk for carriers is \
+estimated at roughly 25-42.5% by age 80, so most carriers never develop the \
+disease. A positive result is not a diagnosis or a prediction.
+
+- There is no proven way to prevent Parkinson's disease, and a positive result \
+does not call for any specific preventive treatment. The value of knowing is \
+personal — for awareness, family planning, or research participation.
+
+- This information may cause significant emotional distress. You may wish to \
+have a support person available, or to consult a neurologist or genetic \
+counselor, before viewing.
+
+- GBA1, another Parkinson's-associated gene, is deliberately NOT reported from \
+this array: a nearby pseudogene (GBAP1) makes array-based GBA1 genotyping \
+unreliable, and we will not present an unreliable result.
+
+- This result is based on a consumer genotyping chip and is NOT a clinical \
+diagnostic test. Confirm any actionable result in a CLIA/accredited laboratory.
+
+**Resources:**
+- The Michael J. Fox Foundation (Genetics): https://www.michaeljfox.org/news/genetics-and-parkinsons
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/
+
+This gate cannot be dismissed. You must actively choose to view or skip \
+Parkinson's information each time you access this section.\
+"""
+
+PARKINSONS_GATE_ACCEPT_LABEL = "I Understand — Show My Parkinson's Results"
+PARKINSONS_GATE_DECLINE_LABEL = "Not Now — Skip Parkinson's Results"
+
 # ── Carrier status disclaimer ──────────────────────────────────────────
 
 CARRIER_STATUS_DISCLAIMER_TITLE = "About Carrier Status Results"

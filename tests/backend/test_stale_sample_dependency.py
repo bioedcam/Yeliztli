@@ -72,6 +72,7 @@ _FULLY_GATED_MODULES = frozenset(
         "mt_rnr1",
         "nutrigenomics",
         "overlays",
+        "parkinsons",
         "pharma",
         "query_builder",
         "rare_variants",

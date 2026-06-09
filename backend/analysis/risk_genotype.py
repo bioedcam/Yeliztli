@@ -126,6 +126,12 @@ CAVEAT_REGISTRY: dict[str, str] = {
         "depend on that fraction, which only quantitative clinical mitochondrial "
         "testing can establish."
     ),
+    "parkinsons_no_prevention": (
+        "There is no proven way to prevent Parkinson's disease, and a positive result "
+        "does not call for any specific preventive treatment. The value of knowing is "
+        "personal — for awareness, family planning, or research participation — and "
+        "should be weighed with a neurologist or genetic counselor."
+    ),
 }
 
 
