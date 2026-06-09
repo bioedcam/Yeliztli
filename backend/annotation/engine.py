@@ -247,6 +247,7 @@ def _annot_to_dict(annot: GnomADAnnotation) -> dict:
         "gnomad_af_fin": annot.af_fin,
         "gnomad_af_sas": annot.af_sas,
         "gnomad_homozygous_count": annot.homozygous_count,
+        "gnomad_af_popmax": annot.af_popmax,
         "rare_flag": annot.rare_flag,
         "ultra_rare_flag": annot.ultra_rare_flag,
     }
@@ -604,6 +605,7 @@ _UPSERT_COLUMNS = [
     "gnomad_af_eur",
     "gnomad_af_fin",
     "gnomad_af_sas",
+    "gnomad_af_popmax",
     "gnomad_homozygous_count",
     "rare_flag",
     "ultra_rare_flag",

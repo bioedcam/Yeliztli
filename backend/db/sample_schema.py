@@ -26,7 +26,9 @@ logger = structlog.get_logger(__name__)
 #     (AncestryDNA Plan §10.4 — multi-source sample merging)
 # v9: Add deleterious_total_assessed to annotated_variants
 #     (validation strategy F25 — k-of-present ensemble denominator)
-SAMPLE_SCHEMA_VERSION = 9
+# v10: Add gnomad_af_popmax to annotated_variants
+#      (validation strategy F15 — population-max rarity denominator)
+SAMPLE_SCHEMA_VERSION = 10
 
 
 # AncestryDNA Plan §10.4(a): merged-sample raw_variants uses (chrom, pos) PK
@@ -253,6 +255,22 @@ def _add_missing_columns(engine: sa.Engine, from_version: int) -> bool:
                     "deleterious_total_assessed_column_added",
                     from_version=from_version,
                 )
+                added = True
+
+    if from_version < 10:
+        # Validation strategy F15: store the population-max AF so rarity is
+        # judged on the most-common ancestry, not the global average. NULL on
+        # existing rows until the sample is re-annotated (the rare-variant finder
+        # falls back to gnomad_af_global when popmax is NULL).
+        inspector = sa.inspect(engine)
+        if "annotated_variants" in inspector.get_table_names():
+            existing_cols = {c["name"] for c in inspector.get_columns("annotated_variants")}
+            if "gnomad_af_popmax" not in existing_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        sa.text("ALTER TABLE annotated_variants ADD COLUMN gnomad_af_popmax REAL")
+                    )
+                logger.info("gnomad_af_popmax_column_added", from_version=from_version)
                 added = True
 
     return added

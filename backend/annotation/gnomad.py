@@ -172,6 +172,7 @@ class GnomADAnnotation:
     homozygous_count: int
     rare_flag: bool
     ultra_rare_flag: bool
+    af_popmax: float | None = None
 
 
 # ── Rarity classification ────────────────────────────────────────────────
@@ -207,25 +208,56 @@ def classify_variant_rarity(af_global: float | None) -> str:
     return "common"
 
 
-def compute_rare_flags(af_global: float | None) -> tuple[bool, bool]:
-    """Compute rare and ultra-rare boolean flags from global AF.
+def compute_af_popmax(
+    af_global: float | None,
+    af_afr: float | None = None,
+    af_amr: float | None = None,
+    af_eas: float | None = None,
+    af_eur: float | None = None,
+    af_fin: float | None = None,
+    af_sas: float | None = None,
+) -> float | None:
+    """Compute the population-maximum allele frequency (F15).
+
+    Rarity must be judged on the population where the variant is *most* common,
+    not on the global average: a variant can sit at <1% globally yet be common
+    in a single ancestry (e.g. afr ≈ 0.11), and global-AF rarity would mislabel
+    it "rare". The popmax is the max over all non-null AFs (the per-ancestry
+    values plus the global average, so popmax ≥ global); ``None`` only when no
+    gnomAD frequency is available at all.
+
+    Returns:
+        The maximum non-null allele frequency, or ``None`` if all are null.
+    """
+    present = [
+        af for af in (af_global, af_afr, af_amr, af_eas, af_eur, af_fin, af_sas) if af is not None
+    ]
+    return max(present) if present else None
+
+
+def compute_rare_flags(af_popmax: float | None) -> tuple[bool, bool]:
+    """Compute rare and ultra-rare boolean flags from the population-max AF (F15).
+
+    Pass the popmax (see :func:`compute_af_popmax`), not the global AF: a variant
+    is rare only when it is rare in *every* population, so the most-common-ancestry
+    frequency is the correct denominator.
 
     Args:
-        af_global: Global allele frequency from gnomAD.
+        af_popmax: Population-maximum allele frequency from gnomAD.
 
     Returns:
         Tuple of (rare_flag, ultra_rare_flag).
     """
-    if af_global is None:
+    if af_popmax is None:
         return False, False
     # AF == 0 means the ALT was never observed in gnomAD — a monomorphic
     # reference site, NOT an observed ultra-rare allele (F26). Treating it as
     # rare/ultra-rare conflates "absent from the cohort" with "vanishingly rare
     # but seen". The rare-variant finder still surfaces a *carried* AF=0 variant
     # via its own AF predicate; these column flags must not mislabel it.
-    if af_global == 0:
+    if af_popmax == 0:
         return False, False
-    return af_global < RARE_AF_THRESHOLD, af_global < ULTRA_RARE_AF_THRESHOLD
+    return af_popmax < RARE_AF_THRESHOLD, af_popmax < ULTRA_RARE_AF_THRESHOLD
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -770,7 +802,16 @@ def lookup_gnomad_by_rsids(
             rows = conn.execute(stmt, params).fetchall()
 
             for row in rows:
-                rare, ultra_rare = compute_rare_flags(row.af_global)
+                popmax = compute_af_popmax(
+                    row.af_global,
+                    row.af_afr,
+                    row.af_amr,
+                    row.af_eas,
+                    row.af_eur,
+                    row.af_fin,
+                    row.af_sas,
+                )
+                rare, ultra_rare = compute_rare_flags(popmax)
                 results[row.rsid] = GnomADAnnotation(
                     rsid=row.rsid,
                     af_global=row.af_global,
@@ -783,6 +824,7 @@ def lookup_gnomad_by_rsids(
                     homozygous_count=row.homozygous_count or 0,
                     rare_flag=rare,
                     ultra_rare_flag=ultra_rare,
+                    af_popmax=popmax,
                 )
 
     return results
@@ -834,7 +876,16 @@ def lookup_gnomad_by_positions(
             rows = conn.execute(stmt, params).fetchall()
 
             for row in rows:
-                rare, ultra_rare = compute_rare_flags(row.af_global)
+                popmax = compute_af_popmax(
+                    row.af_global,
+                    row.af_afr,
+                    row.af_amr,
+                    row.af_eas,
+                    row.af_eur,
+                    row.af_fin,
+                    row.af_sas,
+                )
+                rare, ultra_rare = compute_rare_flags(popmax)
                 key = (row.chrom, row.pos, row.ref, row.alt)
                 results[key] = GnomADAnnotation(
                     rsid=row.rsid,
@@ -848,6 +899,7 @@ def lookup_gnomad_by_positions(
                     homozygous_count=row.homozygous_count or 0,
                     rare_flag=rare,
                     ultra_rare_flag=ultra_rare,
+                    af_popmax=popmax,
                 )
 
     return results

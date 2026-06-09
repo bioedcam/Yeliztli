@@ -26,9 +26,9 @@ from backend.db.tables import (
 class TestPanelCoverageSchema:
     """Test panel_coverage table definition and creation."""
 
-    def test_schema_version_is_9(self) -> None:
-        """SAMPLE_SCHEMA_VERSION is 9 (v8=merge_provenance, v9=deleterious_total_assessed)."""
-        assert SAMPLE_SCHEMA_VERSION == 9
+    def test_schema_version_is_10(self) -> None:
+        """SAMPLE_SCHEMA_VERSION is 10 (v9=deleterious_total_assessed, v10=gnomad_af_popmax)."""
+        assert SAMPLE_SCHEMA_VERSION == 10
 
     def test_table_created_on_new_sample(self, sample_engine: sa.Engine) -> None:
         """panel_coverage exists in freshly created sample DBs."""
