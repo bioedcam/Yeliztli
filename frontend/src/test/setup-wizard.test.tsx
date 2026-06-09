@@ -463,7 +463,7 @@ describe('SetupWizard', () => {
 
 function mockStorageInfo(overrides: Record<string, unknown> = {}) {
   return {
-    data_dir: '/home/test/.genomeinsight',
+    data_dir: '/home/test/.yeliztli',
     free_space_bytes: 50 * 1024 * 1024 * 1024,
     free_space_gb: 50,
     total_space_bytes: 100 * 1024 * 1024 * 1024,
@@ -567,7 +567,7 @@ describe('StorageStep', () => {
       expect(screen.getByText('Default location')).toBeInTheDocument()
     })
     expect(
-      screen.getByText('/home/test/.genomeinsight'),
+      screen.getByText('/home/test/.yeliztli'),
     ).toBeInTheDocument()
   })
 

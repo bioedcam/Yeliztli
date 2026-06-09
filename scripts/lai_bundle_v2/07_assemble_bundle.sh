@@ -6,7 +6,7 @@
 #   $BUNDLE_DIR/metadata.json     — provenance per Plan §6.5
 #   $BUNDLE_DIR/README.md         — citation + build summary
 #   $BUNDLE_DIR/CHECKSUMS.md5
-#   $WORKDIR/genomeinsight_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz
+#   $WORKDIR/yeliztli_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz
 #
 # Plan §6.4 phase 7 — bundle layout unchanged from v1.1; only the per-chrom
 # panel and model sizes grow (~30% bigger total).
@@ -69,7 +69,7 @@ phase_log "generating CHECKSUMS.md5"
 find . -type f ! -name CHECKSUMS.md5 -print0 | xargs -0 md5sum > CHECKSUMS.md5
 
 phase_log "creating tarball"
-tarball="$WORKDIR/genomeinsight_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz"
+tarball="$WORKDIR/yeliztli_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz"
 tar -czf "$tarball" -C "$BUNDLE_DIR" .
 sha256sum "$tarball" > "${tarball}.sha256"
 

@@ -48,4 +48,4 @@ echo "  finish (06 07)     -> job $jid_finish (after $jid_train)"
 echo
 echo "Watch:  squeue -j ${jid_prep},${jid_train},${jid_finish}"
 echo "Logs:   $LOG_DIR/  (SLURM *.out + per-phase *.log)"
-echo "Bundle: $WORKDIR/genomeinsight_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz (after finish)"
+echo "Bundle: $WORKDIR/yeliztli_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz (after finish)"

@@ -90,5 +90,5 @@ AncestryDNAsample.txt
 AncestryDNAsample.txt:Zone.Identifier
 
 # LAI bundle artifacts — distributed via GitHub Releases, not git
-genomeinsight_lai_bundle_*.tar.gz
+yeliztli_lai_bundle_*.tar.gz
 lai_bundle_build/

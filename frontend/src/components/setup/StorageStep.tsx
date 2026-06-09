@@ -1,6 +1,6 @@
 /** Step 3: Storage path + disk space check.
  *
- * P1-19c: Lets users configure the storage path (defaults to ~/.genomeinsight).
+ * P1-19c: Lets users configure the storage path (defaults to ~/.yeliztli).
  * Checks disk space and warns/blocks per PRD §2.18:
  *   - Warn if < 10 GB free
  *   - Block if < 5 GB free
@@ -164,7 +164,7 @@ export default function StorageStep({ onNext, onBack }: StorageStepProps) {
                       type="text"
                       value={customPath}
                       onChange={(e) => setCustomPath(e.target.value)}
-                      placeholder="/path/to/genomeinsight"
+                      placeholder="/path/to/yeliztli"
                       className={cn(
                         'w-full rounded-lg border bg-background py-2.5 pl-10 pr-3 text-sm font-mono',
                         'text-foreground placeholder:text-muted-foreground',

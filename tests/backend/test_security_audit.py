@@ -1,4 +1,4 @@
-"""Security audit tests for GenomeInsight (P4-24).
+"""Security audit tests for Yeliztli (P4-24).
 
 PRD test requirements:
 - T4-24: Network traffic capture during full workflow shows zero outbound variant data

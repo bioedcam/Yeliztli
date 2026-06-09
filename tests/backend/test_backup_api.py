@@ -55,7 +55,7 @@ def _seed_data_dir(tmp_data_dir: Path, settings: Settings) -> None:
 
     # config.toml
     (tmp_data_dir / "config.toml").write_text(
-        '[genomeinsight]\ndata_dir = "/tmp/test"\npubmed_email = "test@test.com"\n',
+        '[yeliztli]\ndata_dir = "/tmp/test"\npubmed_email = "test@test.com"\n',
         encoding="utf-8",
     )
 

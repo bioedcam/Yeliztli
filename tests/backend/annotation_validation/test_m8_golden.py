@@ -7,7 +7,7 @@ live path*, it is the standing backstop that makes the orphaned-code defect
 class (F1/F17/F18) impossible to reintroduce: any regression to a
 genotype-agnostic engine shifts the carriage table and the diff fails.
 
-The golden file is generated/refreshed with ``GENOMEINSIGHT_UPDATE_GOLDEN=1``
+The golden file is generated/refreshed with ``YELIZTLI_UPDATE_GOLDEN=1``
 **after** the remediation lands (Phase G). Until then the golden encodes the
 *correct* post-fix expectation, so the snapshot diff is ``xfail(strict=True)``.
 The snapshot-builder itself is exercised on every run (it must not error).
@@ -77,12 +77,12 @@ def test_snapshot_builder_runs(build_live_run) -> None:
 def test_golden_snapshot_matches(build_live_run) -> None:
     snapshot = _build_snapshot(_golden_run(build_live_run))
 
-    if os.environ.get("GENOMEINSIGHT_UPDATE_GOLDEN") == "1":
+    if os.environ.get("YELIZTLI_UPDATE_GOLDEN") == "1":
         GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         GOLDEN_PATH.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
 
     assert GOLDEN_PATH.exists(), (
-        "golden snapshot missing — regenerate with GENOMEINSIGHT_UPDATE_GOLDEN=1 "
+        "golden snapshot missing — regenerate with YELIZTLI_UPDATE_GOLDEN=1 "
         "once the remediation has landed (Phase G)"
     )
     golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))

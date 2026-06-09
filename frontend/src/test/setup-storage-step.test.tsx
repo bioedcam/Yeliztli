@@ -25,7 +25,7 @@ afterEach(() => {
 
 function mockStorageInfo() {
   return {
-    data_dir: '/home/test/.genomeinsight',
+    data_dir: '/home/test/.yeliztli',
     free_space_bytes: 50 * 1024 * 1024 * 1024,
     free_space_gb: 50,
     total_space_bytes: 100 * 1024 * 1024 * 1024,
@@ -101,7 +101,7 @@ describe('StorageStep — Step 15 disk-space pre-check', () => {
           json: () =>
             Promise.resolve({
               status: 'ok',
-              path: '/home/test/.genomeinsight',
+              path: '/home/test/.yeliztli',
               free_space_gb: 50,
               message: 'OK',
             }),
@@ -150,8 +150,8 @@ describe('StorageStep — Step 15 disk-space pre-check', () => {
     const customInput = await screen.findByLabelText(/custom storage path/i)
     expect(customInput).toBeInTheDocument()
 
-    fireEvent.change(customInput, { target: { value: '/data/genomeinsight' } })
-    expect((customInput as HTMLInputElement).value).toBe('/data/genomeinsight')
+    fireEvent.change(customInput, { target: { value: '/data/yeliztli' } })
+    expect((customInput as HTMLInputElement).value).toBe('/data/yeliztli')
 
     // Continue stays disabled while the custom path is empty — covers the
     // (useCustomPath && !customPath.trim()) branch.

@@ -13,7 +13,7 @@ beforeEach(() => {
 const STATUS_RESPONSE = {
   version: "0.1.0",
   uptime_seconds: 3661,
-  data_dir: "/home/test/.genomeinsight",
+  data_dir: "/home/test/.yeliztli",
   active_jobs: [
     {
       job_id: "job-1",
@@ -30,7 +30,7 @@ const STATUS_RESPONSE = {
 }
 
 const DISK_RESPONSE = {
-  data_dir: "/home/test/.genomeinsight",
+  data_dir: "/home/test/.yeliztli",
   total_bytes: 500_000_000_000,
   free_bytes: 200_000_000_000,
   used_bytes: 300_000_000_000,
@@ -44,7 +44,7 @@ const DB_STATS_RESPONSE = [
   {
     name: "reference",
     display_name: "Reference DB",
-    file_path: "/home/test/.genomeinsight/reference.db",
+    file_path: "/home/test/.yeliztli/reference.db",
     file_size_bytes: 1_000_000,
     exists: true,
     row_count: null,
@@ -54,7 +54,7 @@ const DB_STATS_RESPONSE = [
   {
     name: "clinvar",
     display_name: "ClinVar",
-    file_path: "/home/test/.genomeinsight/ClinVar.db",
+    file_path: "/home/test/.yeliztli/ClinVar.db",
     file_size_bytes: 250_000_000,
     exists: true,
     row_count: 500000,
@@ -67,7 +67,7 @@ const SAMPLE_STATS_RESPONSE = [
   {
     sample_id: 1,
     name: "Test Sample",
-    db_path: "/home/test/.genomeinsight/samples/sample_1.db",
+    db_path: "/home/test/.yeliztli/samples/sample_1.db",
     file_size_bytes: 10_000_000,
     exists: true,
   },

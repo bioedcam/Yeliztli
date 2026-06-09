@@ -110,7 +110,7 @@ jobs:
           manifest_url="${{ steps.manifest.outputs.url }}"
           # Derive the asset name from the manifest URL basename so the
           # tag-verification works for any bundle (e.g. vep_bundle.db or
-          # genomeinsight_lai_bundle_v1.1.tar.gz) without hardcoding versions.
+          # yeliztli_lai_bundle_v1.1.tar.gz) without hardcoding versions.
           asset_name="${manifest_url##*/}"
           case "${{ inputs.bundle_key }}" in
             vep_bundle)  out="artifacts/vep_bundle.db" ;;

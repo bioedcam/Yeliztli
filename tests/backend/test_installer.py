@@ -50,7 +50,7 @@ class TestDetectPlatform:
 
 class TestEnsureDataDir:
     def test_creates_directories(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        data_dir = tmp_path / ".genomeinsight"
+        data_dir = tmp_path / ".yeliztli"
         monkeypatch.setattr(installer, "DATA_DIR", data_dir)
 
         installer.ensure_data_dir()
@@ -61,7 +61,7 @@ class TestEnsureDataDir:
         assert (data_dir / "logs").is_dir()
 
     def test_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        data_dir = tmp_path / ".genomeinsight"
+        data_dir = tmp_path / ".yeliztli"
         monkeypatch.setattr(installer, "DATA_DIR", data_dir)
 
         installer.ensure_data_dir()
@@ -84,10 +84,10 @@ class TestRenderPlist:
             "</dict>\n"
         )
 
-        rendered = installer._render_plist(plist, Path("/opt/genomeinsight"))
+        rendered = installer._render_plist(plist, Path("/opt/yeliztli"))
 
         assert "__INSTALL_DIR__" not in rendered
-        assert "/opt/genomeinsight" in rendered
+        assert "/opt/yeliztli" in rendered
 
     def test_expands_tilde_in_logs(self, tmp_path: Path):
         plist = tmp_path / "test.plist"
@@ -204,13 +204,13 @@ class TestInstallFlow:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """Install on Linux without systemd prints manual instructions."""
-        monkeypatch.setattr(installer, "DATA_DIR", tmp_path / ".genomeinsight")
+        monkeypatch.setattr(installer, "DATA_DIR", tmp_path / ".yeliztli")
 
         ns = argparse.Namespace(skip_pip=True, skip_frontend=True)
         result = installer.cmd_install(ns)
 
         assert result == 0
-        assert (tmp_path / ".genomeinsight").is_dir()
+        assert (tmp_path / ".yeliztli").is_dir()
 
     @patch("backend.installer._detect_platform", return_value="macos")
     @patch("subprocess.run")
@@ -222,7 +222,7 @@ class TestInstallFlow:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """Install on macOS calls launchctl load."""
-        monkeypatch.setattr(installer, "DATA_DIR", tmp_path / ".genomeinsight")
+        monkeypatch.setattr(installer, "DATA_DIR", tmp_path / ".yeliztli")
         monkeypatch.setattr(installer, "LAUNCHD_DIR", tmp_path / "LaunchAgents")
         monkeypatch.setattr(installer, "LOG_DIR_MACOS", tmp_path / "Logs")
 
@@ -253,7 +253,7 @@ class TestUninstallFlow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        data_dir = tmp_path / ".genomeinsight"
+        data_dir = tmp_path / ".yeliztli"
         data_dir.mkdir()
         monkeypatch.setattr(installer, "DATA_DIR", data_dir)
         monkeypatch.setattr(installer, "SYSTEMD_USER_DIR", tmp_path / "systemd")
@@ -274,7 +274,7 @@ class TestUninstallFlow:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        data_dir = tmp_path / ".genomeinsight"
+        data_dir = tmp_path / ".yeliztli"
         data_dir.mkdir()
         (data_dir / "reference.db").touch()
         monkeypatch.setattr(installer, "DATA_DIR", data_dir)

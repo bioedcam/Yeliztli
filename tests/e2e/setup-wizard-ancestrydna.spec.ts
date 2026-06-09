@@ -75,7 +75,7 @@ const BUNDLE_GATE_PAYLOAD = {
   required_version: 'v2.0.0',
   vendor: 'ancestrydna',
   update_url:
-    'https://github.com/example/genomeinsight/releases/download/bundle-v2.0.0/vep_bundle.db',
+    'https://github.com/example/yeliztli/releases/download/bundle-v2.0.0/vep_bundle.db',
   size_bytes: 612_345_678,
   checksum_sha256: 'b'.repeat(64),
 }

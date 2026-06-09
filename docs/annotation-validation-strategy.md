@@ -1,9 +1,9 @@
-# GenomeInsight Annotation — Validation Strategy & Findings
+# Yeliztli Annotation — Validation Strategy & Findings
 
 **Date:** 2026-06-07
 **Scope:** The live variant-annotation pipeline and the findings it produces, for DTC genotyping-chip inputs (23andMe / AncestryDNA).
 **Nature of this document:** A validation *strategy* for finding problems in the annotation approach, together with the *findings* that strategy produced. **No application code was changed.** All evidence is read-only.
-**Method:** Static code reading (`backend/annotation/*`, `backend/analysis/*`, `backend/ingestion/*`, `backend/tasks/huey_tasks.py`) + read-only empirical probing of the **real production install** at `~/.genomeinsight` (the user's own sample already run end-to-end through the live pipeline: `samples/sample_1.db`, 677,436 raw variants / 676,971 annotated), cross-checked against `reference.db`, `gnomad_af.db`, `dbnsfp.db`, `vep_bundle.db`, and `RsMergeArch.bcp.gz`. Every claimed flaw was independently re-derived by an adversarial verifier (a 28-agent multi-dimension audit) that re-ran each query and re-read each cited line; severities below are the post-verification ratings.
+**Method:** Static code reading (`backend/annotation/*`, `backend/analysis/*`, `backend/ingestion/*`, `backend/tasks/huey_tasks.py`) + read-only empirical probing of the **real production install** at `~/.yeliztli` (the user's own sample already run end-to-end through the live pipeline: `samples/sample_1.db`, 677,436 raw variants / 676,971 annotated), cross-checked against `reference.db`, `gnomad_af.db`, `dbnsfp.db`, `vep_bundle.db`, and `RsMergeArch.bcp.gz`. Every claimed flaw was independently re-derived by an adversarial verifier (a 28-agent multi-dimension audit) that re-ran each query and re-read each cited line; severities below are the post-verification ratings.
 
 ---
 
@@ -304,7 +304,7 @@ Commit a small synthetic sample + a frozen reference subset + a **golden finding
 All probes were run against the real install with `?mode=ro` URIs and never invoked the pipeline. Representative commands:
 
 ```bash
-DB=~/.genomeinsight/samples/sample_1.db; REF=~/.genomeinsight/reference.db
+DB=~/.yeliztli/samples/sample_1.db; REF=~/.yeliztli/reference.db
 RO="file:$DB?mode=ro"
 
 # F1: zygosity/ref/alt never populated

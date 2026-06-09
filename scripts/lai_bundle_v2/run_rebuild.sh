@@ -68,4 +68,4 @@ for phase in "${PHASES[@]}"; do
   log "✓ phase $phase complete in $((end - start))s"
 done
 
-log "rebuild finished — tarball at $WORKDIR/genomeinsight_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz"
+log "rebuild finished — tarball at $WORKDIR/yeliztli_lai_bundle_${LAI_BUNDLE_VERSION}.tar.gz"
