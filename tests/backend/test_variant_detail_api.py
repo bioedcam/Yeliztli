@@ -150,6 +150,37 @@ GENE_PHENOTYPE_DATA = [
     },
 ]
 
+# Reference rows that exercise the full-page hygiene path (F21/F14/F23): an
+# obsolete term that must be dropped, two real diseases that must ALL surface
+# (not one arbitrary record), all on BRCA1 — a gene the curated override
+# relabels dominant, even though the source rows are mislabelled recessive.
+HYGIENE_GENE_PHENOTYPE_DATA = [
+    {
+        "gene_symbol": "BRCA1",
+        "disease_name": "obsolete hereditary cancer predisposition",
+        "disease_id": "MONDO:0000001",
+        "hpo_terms": "[]",
+        "source": "mondo_hpo",
+        "inheritance": "AR",
+    },
+    {
+        "gene_symbol": "BRCA1",
+        "disease_name": "Hereditary breast cancer",
+        "disease_id": "MONDO:0005012",
+        "hpo_terms": '["HP:0003002"]',
+        "source": "mondo_hpo",
+        "inheritance": "AR",
+    },
+    {
+        "gene_symbol": "BRCA1",
+        "disease_name": "Breast-ovarian cancer, familial 1",
+        "disease_id": "OMIM:604370",
+        "hpo_terms": '["HP:0003002"]',
+        "source": "omim",
+        "inheritance": "AR",
+    },
+]
+
 
 @pytest.fixture
 def tmp_data_dir(tmp_path):
@@ -224,6 +255,16 @@ def client(tmp_data_dir: Path):
         tmp_data_dir,
         [SAMPLE_VARIANT_BRCA1, SAMPLE_VARIANT_VUS, SAMPLE_VARIANT_MINIMAL],
         GENE_PHENOTYPE_DATA,
+    )
+
+
+@pytest.fixture
+def hygiene_client(tmp_data_dir: Path):
+    """Client whose BRCA1 gene-phenotype rows include an obsolete + mislabelled set."""
+    yield from _setup_client(
+        tmp_data_dir,
+        [SAMPLE_VARIANT_BRCA1],
+        HYGIENE_GENE_PHENOTYPE_DATA,
     )
 
 
@@ -396,6 +437,38 @@ class TestGenePhenotypes:
         assert gps[0]["gene_symbol"] == "CFTR"
         assert gps[0]["disease_name"] == "Cystic fibrosis"
         assert gps[0]["inheritance"] == "AR"
+
+
+class TestGenePhenotypeRefDataHygiene:
+    """F23: the full-page gene-phenotype list inherits the engine's hygiene.
+
+    The list is built via ``lookup_gene_phenotypes`` (not a raw table read), so
+    obsolete MONDO terms (F21) and gene-mislabelled inheritance (F14) are
+    filtered/corrected exactly as the stored single-disease summary is, and
+    *every* non-obsolete disease surfaces rather than one arbitrary record.
+    """
+
+    def test_obsolete_terms_dropped(self, hygiene_client):
+        tc, sid = hygiene_client
+        data = tc.get(f"/api/variants/rs80357906?sample_id={sid}").json()
+        names = [gp["disease_name"].lower() for gp in data["gene_phenotypes"]]
+        assert names, "expected at least one non-obsolete disease"
+        assert not any(n.startswith("obsolete") for n in names), names
+
+    def test_all_non_obsolete_diseases_surface(self, hygiene_client):
+        # F23 core: both real diseases survive — not one arbitrary annots[0].
+        tc, sid = hygiene_client
+        data = tc.get(f"/api/variants/rs80357906?sample_id={sid}").json()
+        ids = {gp["disease_id"] for gp in data["gene_phenotypes"]}
+        assert ids == {"MONDO:0005012", "OMIM:604370"}
+
+    def test_dominant_inheritance_corrected(self, hygiene_client):
+        # F14: curated override relabels the mislabelled-recessive dominant gene.
+        tc, sid = hygiene_client
+        data = tc.get(f"/api/variants/rs80357906?sample_id={sid}").json()
+        gps = data["gene_phenotypes"]
+        assert gps, "expected gene-phenotype records"
+        assert all(gp["inheritance"] == "Autosomal dominant" for gp in gps), gps
 
 
 # ═══════════════════════════════════════════════════════════════════════

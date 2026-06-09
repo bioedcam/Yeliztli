@@ -11,7 +11,6 @@ GET  /api/variants/{rsid}  — Full variant detail with all annotations
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -20,9 +19,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.analysis.ancestry import get_ancestry_matched_af_column, get_inferred_ancestry
+from backend.annotation.mondo_hpo import lookup_gene_phenotypes
 from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
-from backend.db.tables import annotated_variants, gene_phenotype, samples
+from backend.db.tables import annotated_variants, samples
 
 logger = logging.getLogger(__name__)
 
@@ -241,40 +241,40 @@ def _fetch_all_transcripts(rsid: str) -> list[TranscriptAnnotation]:
 
 
 def _fetch_gene_phenotypes(gene_symbol: str | None) -> list[GenePhenotypeRecord]:
-    """Fetch all gene-phenotype associations from reference.db."""
+    """Fetch all gene-phenotype associations for a gene from reference.db.
+
+    Routes through :func:`lookup_gene_phenotypes` rather than reading the
+    ``gene_phenotype`` table directly so the full-page list inherits the same
+    reference-data hygiene the annotation engine applies (F23): obsolete MONDO
+    terms are dropped (F21), gene-level inheritance is corrected for the
+    known-mislabelled dominant genes (F14), and records come back
+    deterministically ordered. A raw ``SELECT *`` leaked obsolete labels and the
+    wrong inheritance that the stored single-disease summary already filters out.
+    """
     if not gene_symbol:
         return []
 
     registry = get_registry()
-    with registry.reference_engine.connect() as conn:
-        rows = conn.execute(
-            sa.select(gene_phenotype).where(gene_phenotype.c.gene_symbol == gene_symbol)
-        ).fetchall()
+    annots_by_gene = lookup_gene_phenotypes([gene_symbol], registry.reference_engine)
 
-    results = []
-    for row in rows:
-        # Parse HPO terms from JSON array
-        hpo_list: list[str] | None = None
-        if row.hpo_terms:
-            try:
-                hpo_list = json.loads(row.hpo_terms)
-            except (json.JSONDecodeError, TypeError):
-                hpo_list = None
-
+    results: list[GenePhenotypeRecord] = []
+    for annot in annots_by_gene.get(gene_symbol, []):
         # Build OMIM link if the disease_id is an OMIM ID
         omim_link: str | None = None
-        if row.disease_id and row.disease_id.startswith("OMIM:"):
-            omim_id = row.disease_id.replace("OMIM:", "")
+        if annot.disease_id and annot.disease_id.startswith("OMIM:"):
+            omim_id = annot.disease_id.replace("OMIM:", "")
             omim_link = f"https://omim.org/entry/{omim_id}"
 
         results.append(
             GenePhenotypeRecord(
-                gene_symbol=row.gene_symbol,
-                disease_name=row.disease_name,
-                disease_id=row.disease_id,
-                source=row.source,
-                hpo_terms=hpo_list,
-                inheritance=row.inheritance,
+                gene_symbol=annot.gene_symbol,
+                disease_name=annot.disease_name,
+                disease_id=annot.disease_id,
+                source=annot.source,
+                # lookup_gene_phenotypes always returns a list; normalize the
+                # empty case back to None to match the response contract.
+                hpo_terms=annot.hpo_terms or None,
+                inheritance=annot.inheritance,
                 omim_link=omim_link,
             )
         )
