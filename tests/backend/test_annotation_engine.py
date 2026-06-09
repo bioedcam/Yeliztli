@@ -1820,6 +1820,49 @@ class TestGenePhenotypeAnnotation:
         assert merged[0]["annotation_coverage"] == VEP_BIT | GENE_PHENOTYPE_BIT
         assert merged[0]["disease_name"] == "HBOC"
 
+    @pytest.mark.parametrize(
+        ("significance", "label_expected"),
+        [
+            ("Pathogenic", True),
+            ("Likely pathogenic", True),
+            ("Uncertain significance", True),  # VUS keeps gene context
+            ("risk_factor", True),
+            (None, True),  # unclassified keeps gene context
+            ("Benign", False),
+            ("Likely benign", False),
+            ("Benign/Likely benign", False),
+            ("Likely_benign", False),  # raw ClinVar VCF spelling
+            ("Benign/Likely_benign", False),  # underscore combined form
+            ("benign", False),  # lowercase fixture form
+            ("likely_benign", False),  # lowercase + underscore
+        ],
+    )
+    def test_merge_gene_phenotype_gated_on_pathogenicity(
+        self, significance: str | None, label_expected: bool
+    ) -> None:
+        """F22: a benign variant must not inherit its gene's disease label."""
+        engine = sa.create_engine("sqlite://")
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text("CREATE TABLE t (rsid TEXT, chrom TEXT, pos INTEGER, genotype TEXT)")
+            )
+            conn.execute(sa.text("INSERT INTO t VALUES ('rs1', '13', 100, 'GA')"))
+            row = conn.execute(sa.text("SELECT * FROM t")).fetchone()
+
+        vep = {"rs1": {"gene_symbol": "BRCA2"}}
+        clinvar = {"rs1": {"clinvar_significance": significance}} if significance else {}
+        gp = {"rs1": {"disease_name": "breast-ovarian cancer susceptibility 2"}}
+
+        merged = _merge_annotations([row], vep, clinvar, {}, {}, gp)
+        assert len(merged) == 1
+        has_bit = bool(merged[0]["annotation_coverage"] & GENE_PHENOTYPE_BIT)
+        if label_expected:
+            assert merged[0].get("disease_name") == "breast-ovarian cancer susceptibility 2"
+            assert has_bit
+        else:
+            assert merged[0].get("disease_name") is None
+            assert not has_bit
+
     def test_gene_phenotype_fields_in_annotated_variants(
         self,
         sample_with_variants: sa.Engine,

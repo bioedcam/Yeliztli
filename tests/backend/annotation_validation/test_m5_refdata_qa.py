@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from backend.annotation.engine import GENE_PHENOTYPE_BIT
 from backend.annotation.gnomad import compute_rare_flags
 from tests.backend.annotation_validation.conftest import clinvar_row
 
@@ -193,3 +194,74 @@ def test_zero_star_pathogenic_routed_to_low_confidence_subtier(build_live_run) -
     )
     # A >=2-star P/LP keeps the headline category.
     assert "clinvar_pathogenic" in cats_2
+
+
+# ── F22: gene→disease label must be gated on pathogenicity ────────────────
+
+
+def test_benign_variant_does_not_inherit_gene_disease_label(build_live_run) -> None:
+    """A benign variant must not carry its gene's disease association (F22).
+
+    gene→phenotype is a *gene-level* mapping applied per-variant. Without a
+    pathogenicity gate every variant in the gene — benign included — inherits
+    the disease label (2,632 BRCA2 variants all labelled "breast-ovarian cancer
+    susceptibility 2"), which falsely implies that specific variant is causal in
+    the variant-detail drawer. A confidently-benign call must drop the label
+    *and* leave the gene-phenotype coverage bit clear; a pathogenic variant in
+    the same gene (positive control) must keep it.
+    """
+    run = build_live_run(
+        variants=[
+            {"rsid": "rs_benign", "chrom": "13", "pos": 32_300_000, "genotype": "GA"},
+            {"rsid": "rs_path", "chrom": "13", "pos": 32_400_000, "genotype": "GA"},
+        ],
+        clinvar=[
+            clinvar_row("rs_benign", "13", 32_300_000, "G", "A", "Benign", 2, gene="BRCA2"),
+            clinvar_row("rs_path", "13", 32_400_000, "G", "A", "Pathogenic", 3, gene="BRCA2"),
+        ],
+        vep=[
+            {
+                "rsid": "rs_benign",
+                "chrom": "13",
+                "pos": 32_300_000,
+                "ref": "G",
+                "alt": "A",
+                "gene_symbol": "BRCA2",
+                "consequence": "synonymous_variant",
+            },
+            {
+                "rsid": "rs_path",
+                "chrom": "13",
+                "pos": 32_400_000,
+                "ref": "G",
+                "alt": "A",
+                "gene_symbol": "BRCA2",
+                "consequence": "stop_gained",
+            },
+        ],
+        gene_phenotype_rows=[
+            {
+                "gene_symbol": "BRCA2",
+                "disease_name": "Breast-ovarian cancer, familial, susceptibility to, 2",
+                "disease_id": "MONDO:0012933",
+                "hpo_terms": "[]",
+                "source": "mondo_hpo",
+                "inheritance": "Autosomal dominant",
+            }
+        ],
+        run_analyses=False,
+    )
+
+    benign = run.annotated_by_rsid("rs_benign")
+    assert benign is not None
+    assert benign.disease_name is None, (
+        f"benign variant inherited gene-disease label {benign.disease_name!r} (F22)"
+    )
+    assert benign.disease_id is None
+    assert benign.annotation_coverage & GENE_PHENOTYPE_BIT == 0
+
+    # Positive control: a pathogenic variant in the same gene keeps the label.
+    path = run.annotated_by_rsid("rs_path")
+    assert path is not None
+    assert path.disease_name == "Breast-ovarian cancer, familial, susceptibility to, 2"
+    assert path.annotation_coverage & GENE_PHENOTYPE_BIT == GENE_PHENOTYPE_BIT
