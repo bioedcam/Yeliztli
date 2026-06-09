@@ -607,6 +607,25 @@ class TestRunAnnotation:
             VEP_BIT | CLINVAR_BIT | GNOMAD_BIT | DBNSFP_BIT | GENE_PHENOTYPE_BIT
         )
 
+    def test_engine_populates_zygosity(
+        self,
+        sample_with_variants: sa.Engine,
+        mock_registry: MagicMock,
+    ) -> None:
+        """The engine computes carriage (zygosity) from genotype vs ClinVar ref/alt.
+
+        Locks the live-engine carriage wiring (PR #320): run_annotation writes a
+        non-NULL zygosity for matched SNVs so downstream carriage gates can fire.
+        """
+        run_annotation(sample_with_variants, mock_registry)
+
+        with sample_with_variants.connect() as conn:
+            zygs = conn.execute(sa.select(annotated_variants.c.zygosity)).fetchall()
+
+        assert any(z.zygosity is not None for z in zygs), (
+            "engine wrote no zygosity — the carriage column is NULL for every variant"
+        )
+
     def test_bitmask_partial_coverage(
         self,
         sample_with_variants: sa.Engine,

@@ -382,6 +382,37 @@ class TestScorePathways:
         # GWAS match for MTHFR
         assert "rs1801133" in result.gwas_matched_rsids
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "MTHFR C677T strand-harmonization bug: 23andMe reports rs1801133 as "
+            "C/T, but the panel keys genotype_effects on the G/A "
+            "(reverse-complement) strand. _score_snp tries the reversed genotype "
+            "(TC), not the complement (GA), so a real CT heterozygote falls "
+            "through to STANDARD. Remove this xfail once chip alleles are "
+            "complemented to the panel strand."
+        ),
+    )
+    def test_mthfr_c677t_ct_scored_moderate(
+        self,
+        panel: NutrigenomicsPanel,
+        sample_engine: sa.Engine,
+        reference_engine: sa.Engine,
+    ) -> None:
+        """A real MTHFR C677T heterozygote ('CT') scores Moderate on its own.
+
+        Locks the SNP's own category instead of the folate pathway max(),
+        which is otherwise dominated by the co-seeded A1298C 'AC' call (the
+        masking that let the original test pass without scoring C677T).
+        """
+        _seed_variants(sample_engine, [("rs1801133", "1", 11856378, "CT")])
+
+        result = score_nutrigenomics_pathways(panel, sample_engine, reference_engine)
+        folate = next(pr for pr in result.pathway_results if pr.pathway_id == "folate_metabolism")
+        mthfr = next(s for s in folate.snp_results if s.rsid == "rs1801133")
+        assert mthfr.present_in_sample is True
+        assert mthfr.category == MODERATE
+
     def test_full_scoring_with_mthfr_homozygous_risk(
         self,
         panel: NutrigenomicsPanel,

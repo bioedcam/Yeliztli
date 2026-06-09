@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
+from _carriage_fixtures import hom_ref_pathogenic_row
 from fastapi.testclient import TestClient
 
 from backend.config import Settings
@@ -406,6 +407,42 @@ class TestSearchWithPanelEndpoint:
         assert data["variants_found"] >= 1
         for gene in data["genes_with_findings"]:
             assert gene in ["BRCA1"]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "panel search does not gate on carriage: the route builds "
+            "RareVariantFilter without carried_only, so a hom_ref (non-carrier) "
+            "Pathogenic variant in a panel gene is counted as found. The carriage "
+            "gate (PR #320) covers only the automated run_all path; remove this "
+            "xfail when panel search honors a carriage gate."
+        ),
+    )
+    def test_search_with_panel_excludes_hom_ref_pathogenic(
+        self, panel_client: TestClient, sample_db_path: Path
+    ) -> None:
+        """A hom_ref (non-carrier) Pathogenic variant in a panel gene is not found."""
+        engine = sa.create_engine(f"sqlite:///{sample_db_path}")
+        with engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [hom_ref_pathogenic_row(gene_symbol="ZZHOMREF")],
+            )
+        engine.dispose()
+
+        upload_resp = panel_client.post(
+            "/api/panels/upload?name=Homref+Panel",
+            files={"file": ("homref.txt", io.BytesIO(b"ZZHOMREF"), "text/plain")},
+        )
+        panel_id = upload_resp.json()["panel"]["id"]
+
+        resp = panel_client.post(
+            f"/api/panels/{panel_id}/search?sample_id=1",
+            json={},
+        )
+        assert resp.status_code == 200
+        # The only variant in this panel gene is a non-carrier → nothing found.
+        assert resp.json()["variants_found"] == 0
 
     def test_search_panel_not_found(self, panel_client: TestClient) -> None:
         """Search with non-existent panel returns 404."""

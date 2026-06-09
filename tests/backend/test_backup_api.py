@@ -302,7 +302,14 @@ class TestBackupDownload:
         assert resp.status_code == 400
 
     def test_download_path_traversal_blocked(self, tmp_data_dir: Path) -> None:
-        """Filenames containing '..' are rejected."""
+        """A filename containing '..' is rejected by the traversal guard (400).
+
+        Regression: the previous version requested a *clean* filename and
+        asserted 404 (file-not-found), so the ``".." in filename`` guard in
+        ``backup_download`` was never exercised — a removed guard would still
+        have passed. The '..' sits mid-segment (no slashes) so it reaches the
+        handler intact instead of being normalized away by the HTTP router.
+        """
         settings = self._make_test_client(tmp_data_dir)
         with _make_client(settings):
             reset_registry()
@@ -310,12 +317,10 @@ class TestBackupDownload:
 
             app = create_app()
             with TestClient(app) as tc:
-                # The '..' in the path segment is resolved by the HTTP
-                # router, so we test the validation logic directly
-                resp = tc.get("/api/backup/download/genomeinsight_backup_20250101_000000.tar.gz")
+                resp = tc.get("/api/backup/download/genomeinsight_backup_..config.tar.gz")
             reset_registry()
-        # Should be 404 (not found) since the file doesn't exist
-        assert resp.status_code == 404
+        # Traversal guard fires → 400 "Invalid filename." (not a 404 fall-through).
+        assert resp.status_code == 400
 
     def test_download_not_found(self, tmp_data_dir: Path) -> None:
         settings = self._make_test_client(tmp_data_dir)

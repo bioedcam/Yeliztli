@@ -19,6 +19,7 @@ import json
 
 import pytest
 import sqlalchemy as sa
+from _carriage_fixtures import het_pathogenic_row, hom_ref_pathogenic_row
 
 from backend.analysis.rare_variant_finder import (
     DEFAULT_AF_THRESHOLD,
@@ -229,6 +230,24 @@ class TestDefaultFilter:
         #   rs100006 (0.005), rs100007 (0.002), rs100008 (0.0001)
         # Should NOT find: rs100004 (0.15), rs100005 (0.03)
         assert result.count == 6
+
+    def test_carried_only_excludes_hom_ref_pathogenic(self, sample_engine: sa.Engine) -> None:
+        """A hom_ref (non-carrier) Pathogenic variant is not surfaced.
+
+        Negative control locking the carriage gate (PR #320): with
+        ``carried_only=True`` the het carrier is returned and the
+        homozygous-reference non-carrier is suppressed.
+        """
+        with sample_engine.begin() as conn:
+            conn.execute(
+                sa.insert(annotated_variants),
+                [het_pathogenic_row(), hom_ref_pathogenic_row()],
+            )
+
+        result = find_rare_variants(RareVariantFilter(carried_only=True), sample_engine)
+        rsids = {v.rsid for v in result.variants}
+        assert "rs_het_carrier" in rsids
+        assert "rs_hom_ref_pathogenic" not in rsids
 
     def test_excludes_common_variants(self, sample_with_rare_variants: sa.Engine) -> None:
         filters = RareVariantFilter()

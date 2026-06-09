@@ -228,6 +228,16 @@ class TestGlobalAncestry:
         total = sum(info["fraction"] for info in ancestry.values())
         assert abs(total - 1.0) < 0.01
 
+        # hap0 is all-AFR (index 0), hap1 is all-EUR (index 4), 10 windows each
+        # → an exact 50/50 split. Lock the index→population mapping so an
+        # index↔label mislabel (the EUR↔MID class of bug) that still normalizes
+        # to 1.0 is caught — the bare sum check above would pass for any split.
+        assert "AFR" in ancestry and "EUR" in ancestry, (
+            f"expected AFR + EUR populations, got {sorted(ancestry)}"
+        )
+        assert abs(ancestry["AFR"]["fraction"] - 0.5) < 0.05, ancestry["AFR"]["fraction"]
+        assert abs(ancestry["EUR"]["fraction"] - 0.5) < 0.05, ancestry["EUR"]["fraction"]
+
     def test_empty_results(self):
         runner_cls = LAIRunner.__new__(LAIRunner)
         ancestry = runner_cls._compute_global_ancestry({})
