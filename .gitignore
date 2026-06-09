@@ -89,6 +89,10 @@ AncestryDNA.txt:Zone.Identifier
 AncestryDNAsample.txt
 AncestryDNAsample.txt:Zone.Identifier
 
-# LAI bundle artifacts — distributed via GitHub Releases, not git
+# LAI bundle artifacts — distributed via GitHub Releases, not git.
+# Keep the legacy genomeinsight_lai_bundle_* pattern alongside the yeliztli_ one: the
+# currently-published asset is still named genomeinsight_lai_bundle_* (immutable), so
+# existing dev-machine artifacts must stay ignored through the deprecation window.
+genomeinsight_lai_bundle_*.tar.gz
 yeliztli_lai_bundle_*.tar.gz
 lai_bundle_build/

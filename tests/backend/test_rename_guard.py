@@ -74,6 +74,8 @@ ALLOWED_BY_FILE: dict[str, list[str]] = {
     "tests/backend/test_manifest.py": ["genomeinsight_lai_bundle", "GENOMEINSIGHT_"],
     "docs/setup-update-plan.md": ["genomeinsight_lai_bundle", "GENOMEINSIGHT_"],
     "docs/setup-update-steps.md": ["genomeinsight_lai_bundle", "GENOMEINSIGHT_"],
+    # ── ignore-pattern for the still-published legacy asset (kept alongside yeliztli_) ─
+    ".gitignore": ["genomeinsight_lai_bundle"],
     # ── Docker named-volume migration note (PR-D) ────────────────────────────────
     "docker-compose.yml": ["genomeinsight-data"],
     # ── deliberately-malformed reject-this-input fixture (must NOT be a valid tag) ─
