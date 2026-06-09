@@ -1106,13 +1106,37 @@ def update_client(tmp_data_dir: Path) -> TestClient:
 
 class TestUpdateAPI:
     def test_check_updates(self, update_client):
-        with patch("backend.db.update_manager.check_clinvar_update", return_value=None):
+        """``GET /api/updates/check`` dispatches every check via ``CHECK_FNS``.
+
+        The endpoint → ``check_all_updates`` loop iterates the module-level
+        ``CHECK_FNS`` dict (built at import), so patching the bound name
+        ``backend.db.update_manager.check_clinvar_update`` is a no-op — the dict
+        still holds the original callable. We must patch the dict itself. Every
+        entry is stubbed to return ``None`` (no available update, no network), so
+        all DBs land in ``up_to_date`` and the assertions actually prove the
+        dispatch reached the patched callables.
+        """
+        from backend.db.update_manager import CHECK_FNS
+
+        stubs = {name: MagicMock(return_value=None) for name in CHECK_FNS}
+        with patch.dict(
+            "backend.db.update_manager.CHECK_FNS",
+            stubs,
+            clear=True,
+        ):
             resp = update_client.get("/api/updates/check")
+
         assert resp.status_code == 200
         data = resp.json()
         assert "available" in data
         assert "up_to_date" in data
         assert "checked_at" in data
+        # Dispatch went through the patched dict: every stubbed check was invoked
+        # and its None return landed the DB in up_to_date (none in available).
+        assert set(data["up_to_date"]) == set(stubs)
+        assert data["available"] == []
+        for stub in stubs.values():
+            stub.assert_called_once()
 
     def test_get_status(self, update_client):
         resp = update_client.get("/api/updates/status")
