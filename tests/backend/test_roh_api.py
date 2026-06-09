@@ -104,3 +104,30 @@ class TestRunAndList:
         listing = client.get("/api/analysis/roh/findings?sample_id=1")
         assert listing.status_code == 200
         assert listing.json() is None
+
+    def test_malformed_detail_falls_back_safely(self, _env: sa.Engine, client: TestClient) -> None:
+        # A row with a schema-drifted segment must not 500 — the route falls back
+        # to the plain finding_text with zeroed metrics.
+        import json as _json
+
+        from backend.db.tables import findings
+
+        with _env.begin() as conn:
+            conn.execute(
+                sa.insert(findings),
+                [
+                    {
+                        "module": "roh",
+                        "category": "autozygosity",
+                        "evidence_level": 1,
+                        "finding_text": "summary text",
+                        "detail_json": _json.dumps({"segments": [{"unexpected": "shape"}]}),
+                    }
+                ],
+            )
+        resp = client.get("/api/analysis/roh/findings?sample_id=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["finding_text"] == "summary text"
+        assert data["segments"] == []
+        assert data["n_segments"] == 0

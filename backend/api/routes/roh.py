@@ -70,22 +70,25 @@ def list_findings(
         ).fetchone()
     if row is None:
         return None
-    detail: dict[str, Any] = {}
-    if row.detail_json:
-        try:
-            detail = json.loads(row.detail_json)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("Failed to parse ROH detail_json for finding id=%s", row.id)
-    return RohFindingResponse(
-        finding_text=row.finding_text or "",
-        froh=detail.get("froh", 0.0),
-        total_roh_kb=detail.get("total_roh_kb", 0.0),
-        longest_kb=detail.get("longest_kb", 0.0),
-        n_segments=detail.get("n_segments", 0),
-        autosomal_snps_used=detail.get("autosomal_snps_used", 0),
-        segments=[RohSegmentResponse(**s) for s in detail.get("segments", [])],
-        segments_truncated=detail.get("segments_truncated", False),
-    )
+    # Parse detail_json and build the response defensively: a malformed or
+    # schema-drifted detail blob (e.g. a row written by an older version, or an
+    # unexpected segment shape) must not 500 — fall back to the plain
+    # finding_text with zeroed metrics.
+    try:
+        detail: dict[str, Any] = json.loads(row.detail_json) if row.detail_json else {}
+        return RohFindingResponse(
+            finding_text=row.finding_text or "",
+            froh=detail.get("froh", 0.0),
+            total_roh_kb=detail.get("total_roh_kb", 0.0),
+            longest_kb=detail.get("longest_kb", 0.0),
+            n_segments=detail.get("n_segments", 0),
+            autosomal_snps_used=detail.get("autosomal_snps_used", 0),
+            segments=[RohSegmentResponse(**s) for s in detail.get("segments", [])],
+            segments_truncated=detail.get("segments_truncated", False),
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Failed to build ROH response for finding id=%s: %s", row.id, exc)
+        return RohFindingResponse(finding_text=row.finding_text or "")
 
 
 @router.post("/run", dependencies=[Depends(require_fresh_sample)])
