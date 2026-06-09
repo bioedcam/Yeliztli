@@ -339,6 +339,7 @@ def cross_module_client(cross_module_env: dict) -> TestClient:
 
 
 @pytest.mark.integration
+@pytest.mark.slow  # nightly: per-test ref-DB rebuild + real annotate (~119s/17)
 class TestCrossModuleIntegration:
     """All analysis modules run against full test fixture without errors."""
 

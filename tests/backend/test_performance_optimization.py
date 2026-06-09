@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.pool import StaticPool
 
@@ -239,6 +240,7 @@ def test_annotation_populates_timing() -> None:
 # ── dbNSFP lookup performance ──────────────────────────────────────────
 
 
+@pytest.mark.slow  # nightly/benchmark tier: wall-clock timing, flaky on shared runners
 def test_dbnsfp_rsid_lookup_performance() -> None:
     """dbNSFP rsid lookups for 10k rsids complete in under 2 seconds."""
     engine = sa.create_engine(
@@ -318,6 +320,7 @@ def test_dbnsfp_rsid_lookup_performance() -> None:
 # ── Annotation 10k with timing ────────────────────────────────────────
 
 
+@pytest.mark.slow  # nightly/benchmark tier: wall-clock timing, flaky on shared runners
 def test_annotation_10k_with_timing() -> None:
     """10k annotation run populates timing and completes quickly."""
     num = 10_000

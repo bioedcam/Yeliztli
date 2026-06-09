@@ -264,6 +264,42 @@ def e2e_client(e2e_env: dict) -> TestClient:
 
 
 @pytest.mark.integration
+class TestE2EPipelineSmoke:
+    """PR-tier smoke: the full pipeline runs to completion.
+
+    One representative end-to-end test kept on the PR tier so a broken
+    upload→annotate path is caught pre-merge; the exhaustive per-field
+    assertions live in ``TestE2EPipeline`` (slow / nightly).
+    """
+
+    def test_annotation_completes(self, e2e_client: TestClient) -> None:
+        """Upload → annotate runs to completion with status=complete."""
+        with open(SAMPLE_FILE, "rb") as f:
+            upload = e2e_client.post(
+                "/api/ingest",
+                files={"file": ("sample_23andme_v5.txt", f, "text/plain")},
+            )
+        assert upload.status_code == 202, f"Upload failed: {upload.text}"
+        sample_id = upload.json()["sample_id"]
+
+        annot = e2e_client.post(f"/api/annotation/{sample_id}")
+        assert annot.status_code == 202, f"Annotation start failed: {annot.text}"
+        job_id = annot.json()["job_id"]
+
+        # In immediate mode the Huey task runs synchronously; verify via jobs.
+        from backend.db.connection import get_registry
+
+        registry = get_registry()
+        with registry.reference_engine.connect() as conn:
+            row = conn.execute(sa.select(jobs).where(jobs.c.job_id == job_id)).fetchone()
+
+        assert row is not None
+        assert row.status == "complete"
+        assert row.progress_pct == 100.0
+
+
+@pytest.mark.integration
+@pytest.mark.slow  # nightly: per-test ref-DB rebuild + re-annotate (~74s/19)
 class TestE2EPipeline:
     """Full pipeline: upload → parse → annotate → query."""
 
@@ -318,26 +354,6 @@ class TestE2EPipeline:
         assert len(data["items"]) > 0
 
     # ── Annotation ─────────────────────────────────────────────────────
-
-    def test_annotation_completes(self, e2e_client: TestClient) -> None:
-        """Annotation runs to completion with status=complete."""
-        upload = self._upload_sample(e2e_client)
-        sample_id = upload["sample_id"]
-
-        annot = self._annotate_sample(e2e_client, sample_id)
-        job_id = annot["job_id"]
-
-        # In immediate mode, the Huey task runs synchronously, so the
-        # job should already be complete. Verify via the jobs table.
-        from backend.db.connection import get_registry
-
-        registry = get_registry()
-        with registry.reference_engine.connect() as conn:
-            row = conn.execute(sa.select(jobs).where(jobs.c.job_id == job_id)).fetchone()
-
-        assert row is not None
-        assert row.status == "complete"
-        assert row.progress_pct == 100.0
 
     def test_annotation_populates_annotated_variants(self, e2e_client: TestClient) -> None:
         """After annotation, annotated_variants table has rows."""
@@ -516,12 +532,14 @@ class TestE2EPipeline:
             row = conn.execute(sa.select(jobs).where(jobs.c.job_id == annot1["job_id"])).fetchone()
         assert row.status == "complete"
 
-        # Get annotated count after first run
+        # Annotated count after the first run.
         resp1 = e2e_client.get(
             "/api/variants",
-            params={"sample_id": sample_id, "annotated": "true", "limit": 1},
+            params={"sample_id": sample_id, "annotated": "true", "limit": 500},
         )
         assert resp1.status_code == 200
+        count1 = len(resp1.json()["items"])
+        assert count1 > 0, "First annotation should populate annotated variants"
 
         # Second annotation (crash recovery path: delete + re-annotate)
         annot2 = self._annotate_sample(e2e_client, sample_id)
@@ -530,6 +548,18 @@ class TestE2EPipeline:
                 sa.select(jobs).where(jobs.c.job_id == annot2["job_id"])
             ).fetchone()
         assert row2.status == "complete"
+
+        # Re-annotation must repopulate, not merely flip status to "complete":
+        # a delete-then-fail-to-repopulate regression leaves count2 == 0 while
+        # the job still reports complete.
+        resp2 = e2e_client.get(
+            "/api/variants",
+            params={"sample_id": sample_id, "annotated": "true", "limit": 500},
+        )
+        assert resp2.status_code == 200
+        count2 = len(resp2.json()["items"])
+        assert count2 > 0, "Re-annotation should repopulate annotated variants"
+        assert count2 == count1, f"Re-annotation count mismatch: run-1={count1}, run-2={count2}"
 
     # ── SSE status streaming ───────────────────────────────────────────
 

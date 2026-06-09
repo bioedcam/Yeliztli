@@ -247,6 +247,7 @@ class TestGetSampleDbPath:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.slow  # nightly tier: drives the real run_annotation_task E2E per test
 class TestRunAnnotationTask:
     def test_task_completes_and_updates_job(self, annotation_env: dict) -> None:
         """Task runs annotation and marks job as complete."""
@@ -381,6 +382,7 @@ class TestRunAnnotationTask:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.slow  # nightly tier: runs real annotation to exercise the state gate
 class TestAnnotationStateGate:
     """Plan §7.3 — both reserved kv keys are written iff run_all_analyses succeeds.
 
@@ -525,6 +527,7 @@ class TestAnnotationStateGate:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.slow  # nightly tier: drives real annotation + SSE streaming
 class TestAnnotationSSEIntegration:
     """T2-05: Background annotation job reports progress via SSE."""
 
