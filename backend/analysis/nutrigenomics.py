@@ -44,7 +44,7 @@ from pathlib import Path
 import sqlalchemy as sa
 import structlog
 
-from backend.analysis.zygosity import is_no_call
+from backend.analysis.zygosity import COMPLEMENT, is_no_call
 from backend.annotation.engine import GWAS_BIT
 from backend.db.tables import annotated_variants, findings, gwas_associations, raw_variants
 
@@ -222,6 +222,44 @@ def _normalize_genotype(genotype: str | None) -> str | None:
     return genotype.strip().upper()
 
 
+def _lookup_genotype_effect(
+    genotype_effects: dict[str, dict[str, str]], genotype: str
+) -> dict[str, str] | None:
+    """Find the panel effect for a genotype, harmonizing allele order and strand.
+
+    A genotyping chip reports alleles on its *design* strand, which for some SNPs
+    is the reverse strand relative to the panel's curated genotype keys. The
+    flagship example is MTHFR C677T (``rs1801133``): 23andMe reports it as
+    ``C``/``T``, but the panel keys ``genotype_effects`` on the ``G``/``A``
+    (Watson–Crick complement) strand. A real ``"CT"`` heterozygote must resolve
+    to the panel's ``"GA"``/``"AG"`` Moderate entry instead of falling through to
+    STANDARD.
+
+    Candidates are tried in order, **reference strand first**: the genotype as
+    reported, its reversed allele order, then the same two on the complemented
+    strand. The complement is only a fallback so an already-matching genotype is
+    never silently re-strand-flipped. This mirrors the "ref strand, then
+    complement" discipline in :mod:`backend.analysis.allele_match`. Non-ACGT
+    genotypes (indels ``"II"``/``"DD"``, ``"--"``) skip the complement step and
+    behave exactly as before.
+    """
+    gt = genotype.upper()
+    candidates = [genotype]
+    if len(genotype) == 2:
+        candidates.append(genotype[::-1])
+    if all(base in COMPLEMENT for base in gt):
+        comp = "".join(COMPLEMENT[base] for base in gt)
+        candidates.append(comp)
+        if len(comp) == 2:
+            candidates.append(comp[::-1])
+
+    for candidate in candidates:
+        effect = genotype_effects.get(candidate)
+        if effect is not None:
+            return effect
+    return None
+
+
 def _score_snp(snp: PanelSNP, genotype: str | None) -> SNPResult:
     """Score a single SNP given a genotype.
 
@@ -249,12 +287,9 @@ def _score_snp(snp: PanelSNP, genotype: str | None) -> SNPResult:
             present_in_sample=False,
         )
 
-    # Look up genotype effect from panel definition
-    effect = snp.genotype_effects.get(genotype)
-    if effect is None:
-        # Try reversed genotype (e.g. "CT" → "TC")
-        reversed_gt = genotype[::-1] if len(genotype) == 2 else genotype
-        effect = snp.genotype_effects.get(reversed_gt)
+    # Look up genotype effect from panel definition, harmonizing allele order
+    # and strand (e.g. chip "CT" → panel "GA" for MTHFR C677T rs1801133).
+    effect = _lookup_genotype_effect(snp.genotype_effects, genotype)
 
     if effect is None:
         # Unknown genotype — default to Standard

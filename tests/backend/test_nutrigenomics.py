@@ -382,17 +382,6 @@ class TestScorePathways:
         # GWAS match for MTHFR
         assert "rs1801133" in result.gwas_matched_rsids
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "MTHFR C677T strand-harmonization bug: 23andMe reports rs1801133 as "
-            "C/T, but the panel keys genotype_effects on the G/A "
-            "(reverse-complement) strand. _score_snp tries the reversed genotype "
-            "(TC), not the complement (GA), so a real CT heterozygote falls "
-            "through to STANDARD. Remove this xfail once chip alleles are "
-            "complemented to the panel strand."
-        ),
-    )
     def test_mthfr_c677t_ct_scored_moderate(
         self,
         panel: NutrigenomicsPanel,
@@ -404,6 +393,11 @@ class TestScorePathways:
         Locks the SNP's own category instead of the folate pathway max(),
         which is otherwise dominated by the co-seeded A1298C 'AC' call (the
         masking that let the original test pass without scoring C677T).
+
+        23andMe reports rs1801133 as C/T, but the panel keys genotype_effects on
+        the G/A (Watson–Crick complement) strand. ``_score_snp`` now harmonizes
+        strand via ``_lookup_genotype_effect`` (chip "CT" → panel "GA"), so a
+        real CT heterozygote resolves to Moderate instead of STANDARD.
         """
         _seed_variants(sample_engine, [("rs1801133", "1", 11856378, "CT")])
 
