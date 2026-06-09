@@ -38,6 +38,7 @@ from pathlib import Path
 import sqlalchemy as sa
 import structlog
 
+from backend.analysis.genotype_lookup import lookup_by_genotype
 from backend.analysis.zygosity import is_no_call
 from backend.annotation.engine import GWAS_BIT
 from backend.db.tables import (
@@ -269,18 +270,9 @@ def _score_snp(snp: PanelSNP, genotype: str | None) -> SNPResult:
             coverage_note=snp.coverage_note,
         )
 
-    # Look up genotype effect from panel definition
-    effect = snp.genotype_effects.get(genotype)
-    if effect is None:
-        # Try reversed genotype: "CT" → "TC", or "delG/G" → "G/delG"
-        if "/" in genotype:
-            parts = genotype.split("/", 1)
-            reversed_gt = f"{parts[1]}/{parts[0]}"
-        elif len(genotype) == 2:
-            reversed_gt = genotype[::-1]
-        else:
-            reversed_gt = genotype
-        effect = snp.genotype_effects.get(reversed_gt)
+    # Look up genotype effect from panel definition, harmonizing allele order
+    # (incl. slash-delimited indels like "delG/G") and strand via lookup_by_genotype.
+    effect = lookup_by_genotype(snp.genotype_effects, genotype)
 
     if effect is None:
         logger.warning(

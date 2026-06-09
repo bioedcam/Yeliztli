@@ -46,6 +46,7 @@ import structlog
 
 from backend.analysis.ancestry import get_inferred_ancestry, get_top_ancestry_fraction
 from backend.analysis.evidence import TRAITS_EVIDENCE_CAP, cap_evidence_level
+from backend.analysis.genotype_lookup import lookup_by_genotype
 from backend.analysis.prs import (
     PRSResult,
     PRSSNPWeight,
@@ -307,12 +308,9 @@ def _score_snp(snp: PanelSNP, genotype: str | None) -> SNPResult:
             cross_module=snp.cross_module,
         )
 
-    # Look up genotype effect from panel definition
-    effect = snp.genotype_effects.get(genotype)
-    if effect is None:
-        # Try reversed genotype (e.g. "CT" → "TC")
-        reversed_gt = genotype[::-1] if len(genotype) == 2 else genotype
-        effect = snp.genotype_effects.get(reversed_gt)
+    # Look up genotype effect from panel definition, harmonizing allele order
+    # and strand (e.g. chip "CT" → panel "GA" for a reverse-strand-keyed SNP).
+    effect = lookup_by_genotype(snp.genotype_effects, genotype)
 
     if effect is None:
         logger.warning(
