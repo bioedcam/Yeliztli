@@ -526,6 +526,45 @@ genetic and non-genetic factors are not captured here.
 """
 
 
+# ── Within-account KING-robust kinship / relatedness QC ─────────────────────
+
+KINSHIP_DISCLAIMER_TITLE = "About Relatedness (Kinship) Results"
+
+KINSHIP_DISCLAIMER_TEXT = """\
+This section estimates how genetically related your local samples are to one \
+another, using the KING-robust kinship method. Its main purpose is quality \
+control — spotting a duplicate upload or a sample mix-up — and providing \
+relatedness context.
+
+**Please understand the following before reviewing:**
+
+1. **Within your own samples only.** This compares only the samples stored in \
+this local instance against each other. It never compares against other users \
+and never sends your data anywhere.
+
+2. **An estimate, not a legal or clinical test.** Kinship coefficients place a \
+pair into broad relationship bands (duplicate/twin, 1st-degree, 2nd-degree, \
+3rd-degree, unrelated). They are statistical estimates from array genotypes, not \
+a paternity, immigration, or diagnostic test.
+
+3. **Parent-offspring vs full-sibling is provisional.** Within the 1st-degree \
+band, the two are separated using the IBS0 proportion (a heuristic); treat that \
+specific label as provisional.
+
+4. **Cross-vendor comparisons are weaker.** Samples from different vendors share \
+fewer positions and can differ in strand convention, which reduces accuracy. The \
+number of shared SNPs used is reported with each estimate so you can judge \
+confidence.
+
+5. **A near-duplicate result usually means a duplicate file.** A kinship near 0.5 \
+most often means the same person was uploaded twice (or identical twins) — worth \
+checking before interpreting any downstream results.
+
+**Resources:**
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
+"""
+
+
 # ── Runs-of-Homozygosity (ROH / FROH) autozygosity metric ───────────────────
 
 ROH_DISCLAIMER_TITLE = "About Runs of Homozygosity (FROH)"
