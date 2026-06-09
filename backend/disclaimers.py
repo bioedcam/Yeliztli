@@ -359,3 +359,40 @@ CLIA/accredited laboratory before any medical decision.
 - National Blood Clot Alliance: https://www.stoptheclot.org/
 - National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
 """
+
+
+# ── Alpha-1 antitrypsin deficiency (SERPINA1) module ────────────────────────
+
+ALPHA1_DISCLAIMER_TITLE = "About Alpha-1 Antitrypsin Deficiency Results"
+
+ALPHA1_DISCLAIMER_TEXT = """\
+This section reports the SERPINA1 Pi*Z (rs28929474) and Pi*S (rs17580) variants \
+that cause alpha-1 antitrypsin deficiency (AATD) — an under-diagnosed, \
+*actionable* condition affecting the lungs and liver.
+
+**Please understand the following before reviewing:**
+
+1. **The severe genotype is actionable.** PiZZ (two Z alleles) gives severe \
+deficiency and raises the risk of early-onset emphysema/COPD and liver disease. \
+The single most important step is avoiding smoking and vaping; augmentation \
+therapy and liver monitoring may be options to discuss with a clinician.
+
+2. **Genotype is not diagnosis.** Many carriers — and even some with deficiency \
+genotypes — remain healthy, particularly non-smokers. Serum AAT level and Pi \
+phenotyping confirm and quantify deficiency.
+
+3. **A negative result does not exclude rare null alleles.** The array tests only \
+Z and S. A result other than PiZZ or PiSZ does not exclude AATD — rare null and \
+other deficiency alleles (e.g. Pi*null, Pi*Mmalton) are not interrogated.
+
+4. **Family relevance.** Carrier (PiMZ/PiMS) results can be relevant for family \
+planning.
+
+5. **Professional guidance.** Discuss results with your physician or a genetic \
+counselor; confirm in a CLIA/accredited laboratory before any medical action.
+
+**Resources:**
+- Alpha-1 Foundation: https://www.alpha1.org/
+- COPD Foundation: https://www.copdfoundation.org/
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
+"""

@@ -1,0 +1,82 @@
+{
+  "module": "alpha1",
+  "version": "1.0.0",
+  "category": "risk_genotype",
+  "description": "Alpha-1 antitrypsin deficiency (SERPINA1) risk-genotype panel: Pi*Z (rs28929474) and Pi*S (rs17580). Genotype-combination calls (PiZZ/PiSZ/PiSS/PiMZ/PiMS). Actionable (smoking avoidance, augmentation eligibility, liver monitoring). EXPANSION_STRATEGY.md §6 / roadmap #25.",
+  "evaluation": "first_match",
+  "sex_stratified": false,
+  "ancestry_gate": null,
+  "disclaimer_key": "ALPHA1",
+  "loci": [
+    {
+      "rsid": "rs28929474",
+      "gene_symbol": "SERPINA1",
+      "label": "Pi*Z (E342K)",
+      "risk_allele": "T",
+      "ref_allele": "C",
+      "canonical_strand": "plus",
+      "off_chip_risk": "low"
+    },
+    {
+      "rsid": "rs17580",
+      "gene_symbol": "SERPINA1",
+      "label": "Pi*S (E264V)",
+      "risk_allele": "A",
+      "ref_allele": "T",
+      "canonical_strand": "plus",
+      "off_chip_risk": "low"
+    }
+  ],
+  "genotype_models": [
+    {
+      "id": "pizz",
+      "match": {"rs28929474": {"dosage": 2}},
+      "risk_classification": "PiZZ (severe deficiency)",
+      "zygosity": "hom_alt",
+      "evidence_stars": 3,
+      "finding_text": "Alpha-1 antitrypsin PiZZ ({genotype}) — the severe-deficiency genotype (serum AAT typically <30% of normal), strongly associated with early-onset emphysema/COPD and with liver disease. This is actionable: smoking and vaping avoidance is the single most important step, augmentation therapy may be an option, and periodic liver monitoring is advised. AATD is substantially under-diagnosed, so a confirmed PiZZ result is worth acting on.",
+      "caveats": ["aat_rare_null", "confirm_clinically"],
+      "pmids": ["15978931", "27465791"]
+    },
+    {
+      "id": "pisz",
+      "match": {"rs28929474": {"dosage": 1}, "rs17580": {"dosage": 1}},
+      "risk_classification": "PiSZ (intermediate deficiency)",
+      "zygosity": "het",
+      "evidence_stars": 3,
+      "finding_text": "Alpha-1 antitrypsin PiSZ ({genotype}) — intermediate deficiency with increased risk of lung (and some liver) disease, especially with smoking. Smoking/vaping avoidance is the highest-leverage step; discuss serum AAT testing and monitoring with a clinician.",
+      "caveats": ["aat_rare_null", "confirm_clinically"],
+      "pmids": ["15978931", "27465791"]
+    },
+    {
+      "id": "piss",
+      "match": {"rs17580": {"dosage": 2}},
+      "risk_classification": "PiSS",
+      "zygosity": "hom_alt",
+      "evidence_stars": 2,
+      "finding_text": "Alpha-1 antitrypsin PiSS ({genotype}) — mildly reduced AAT levels; clinical risk is low, particularly in non-smokers. Avoiding smoking remains advisable.",
+      "caveats": ["aat_rare_null"],
+      "pmids": ["15978931"]
+    },
+    {
+      "id": "pimz",
+      "match": {"rs28929474": {"dosage": 1}},
+      "risk_classification": "PiMZ (carrier)",
+      "zygosity": "het",
+      "evidence_stars": 2,
+      "finding_text": "Alpha-1 antitrypsin PiMZ ({genotype}) — you carry one Z allele. AAT levels are mildly reduced; risk is low overall but can rise with smoking. Mainly relevant for family planning and as a reason to avoid smoking.",
+      "caveats": ["aat_rare_null"],
+      "pmids": ["15978931"]
+    },
+    {
+      "id": "pims",
+      "match": {"rs17580": {"dosage": 1}},
+      "risk_classification": "PiMS (carrier)",
+      "zygosity": "het",
+      "evidence_stars": 1,
+      "finding_text": "Alpha-1 antitrypsin PiMS ({genotype}) — you carry one S allele. This is of minimal clinical significance on its own; mainly relevant for family planning.",
+      "caveats": ["aat_rare_null"],
+      "pmids": ["15978931"]
+    }
+  ]
+}

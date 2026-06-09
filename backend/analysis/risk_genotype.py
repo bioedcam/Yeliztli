@@ -76,6 +76,11 @@ CAVEAT_REGISTRY: dict[str, str] = {
         "This is an array-derived research/educational result. Confirm with clinical "
         "testing in a CLIA/accredited laboratory before any medical action."
     ),
+    "aat_rare_null": (
+        "A result other than PiZZ or PiSZ does not exclude alpha-1 antitrypsin "
+        "deficiency: rare null and other deficiency alleles (e.g. Pi*null, Pi*Mmalton) "
+        "are not interrogated by the array."
+    ),
 }
 
 

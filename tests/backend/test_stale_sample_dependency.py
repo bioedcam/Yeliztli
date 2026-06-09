@@ -47,6 +47,7 @@ from backend.db.tables import (
 _FULLY_GATED_MODULES = frozenset(
     {
         "allergy",
+        "alpha1",
         "ancestry",
         "annotations_api",
         "apoe",
