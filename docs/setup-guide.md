@@ -55,7 +55,7 @@ genomeinsight-setup uninstall
 genomeinsight-setup uninstall --remove-data
 ```
 
-**macOS**: Uses `launchd` user agents. Services start automatically at login. Logs are written to `~/Library/Logs/genomeinsight-*.log`.
+**macOS**: Uses `launchd` user agents. Services start automatically at login. Logs are written to `~/Library/Logs/yeliztli-*.log`.
 
 **Linux / WSL2**: Uses `systemd` user services. Enable lingering for auto-start at boot:
 
@@ -63,7 +63,7 @@ genomeinsight-setup uninstall --remove-data
 loginctl enable-linger $USER
 ```
 
-Logs are available via `journalctl --user -u genomeinsight-api`.
+Logs are available via `journalctl --user -u yeliztli-api`.
 
 ### 3. Open the application
 

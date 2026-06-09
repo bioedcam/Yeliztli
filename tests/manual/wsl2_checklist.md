@@ -50,12 +50,12 @@ manually before tagging a release.
 
 ### 6. systemd Services
 
-- [ ] Units install: `systemctl --user enable genomeinsight-api genomeinsight-huey`
-- [ ] Units start: `systemctl --user start genomeinsight-api genomeinsight-huey`
-- [ ] API service active: `systemctl --user is-active genomeinsight-api` returns active
-- [ ] Huey service active: `systemctl --user is-active genomeinsight-huey` returns active
+- [ ] Units install: `systemctl --user enable yeliztli-api yeliztli-huey`
+- [ ] Units start: `systemctl --user start yeliztli-api yeliztli-huey`
+- [ ] API service active: `systemctl --user is-active yeliztli-api` returns active
+- [ ] Huey service active: `systemctl --user is-active yeliztli-huey` returns active
 - [ ] Health check after service start: `curl -s http://localhost:8000/api/health`
-- [ ] Units stop: `systemctl --user stop genomeinsight-api genomeinsight-huey`
+- [ ] Units stop: `systemctl --user stop yeliztli-api yeliztli-huey`
 - [ ] Units uninstall: `genomeinsight-setup uninstall` succeeds
 
 ### 7. systemd Not Available (Fallback)

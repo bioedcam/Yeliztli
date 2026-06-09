@@ -152,15 +152,15 @@ class TestServiceTemplates:
             assert "[Install]" in content, f"Missing [Install] in {unit}"
 
     def test_systemd_api_service_config(self):
-        content = (_repo_root() / "systemd" / "genomeinsight-api.service").read_text()
+        content = (_repo_root() / "systemd" / "yeliztli-api.service").read_text()
         assert "uvicorn" in content
         assert "127.0.0.1" in content
         assert "8000" in content
 
     def test_systemd_huey_service_config(self):
-        content = (_repo_root() / "systemd" / "genomeinsight-huey.service").read_text()
+        content = (_repo_root() / "systemd" / "yeliztli-huey.service").read_text()
         assert "huey_consumer" in content
-        assert "genomeinsight-api.service" in content
+        assert "yeliztli-api.service" in content
 
 
 # ── Data directory ────────────────────────────────────────

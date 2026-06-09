@@ -52,7 +52,7 @@ class TestLocalhostBinding:
 
     def test_systemd_service_binds_localhost(self) -> None:
         """systemd service file hardcodes 127.0.0.1."""
-        service_file = _PROJECT_ROOT / "systemd" / "genomeinsight-api.service"
+        service_file = _PROJECT_ROOT / "systemd" / "yeliztli-api.service"
         content = service_file.read_text()
         assert "--host 127.0.0.1" in content
         # Must NOT contain 0.0.0.0
@@ -60,7 +60,7 @@ class TestLocalhostBinding:
 
     def test_launchd_plist_binds_localhost(self) -> None:
         """launchd plist hardcodes 127.0.0.1."""
-        plist_file = _PROJECT_ROOT / "launchd" / "com.genomeinsight.api.plist"
+        plist_file = _PROJECT_ROOT / "launchd" / "com.yeliztli.api.plist"
         content = plist_file.read_text()
         assert "127.0.0.1" in content
         # Must NOT contain 0.0.0.0
@@ -544,7 +544,7 @@ class TestDeploymentSecurity:
     def test_no_debug_mode_in_deployment_files(self) -> None:
         """Deployment files don't enable debug mode."""
         for path in [
-            _PROJECT_ROOT / "systemd" / "genomeinsight-api.service",
+            _PROJECT_ROOT / "systemd" / "yeliztli-api.service",
             _PROJECT_ROOT / "docker-compose.yml",
         ]:
             content = path.read_text()

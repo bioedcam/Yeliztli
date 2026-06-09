@@ -26,10 +26,10 @@ from backend.config import migrate_legacy_data_dir, warn_deprecated_env
 DATA_DIR = Path.home() / ".yeliztli"
 
 LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
-LAUNCHD_LABELS = ("com.genomeinsight.api", "com.genomeinsight.huey")
+LAUNCHD_LABELS = ("com.yeliztli.api", "com.yeliztli.huey")
 
 SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
-SYSTEMD_UNITS = ("genomeinsight-api.service", "genomeinsight-huey.service")
+SYSTEMD_UNITS = ("yeliztli-api.service", "yeliztli-huey.service")
 
 LOG_DIR_MACOS = Path.home() / "Library" / "Logs"
 
@@ -207,8 +207,8 @@ def _render_systemd_unit(template_path: Path, install_dir: Path) -> str:
     """Render a systemd unit template with the actual install directory."""
     content = template_path.read_text()
     home_dir = str(Path.home())
-    # Replace %h/GenomeInsight with the actual install dir
-    content = content.replace("%h/GenomeInsight", str(install_dir))
+    # Replace %h/Yeliztli with the actual install dir
+    content = content.replace("%h/Yeliztli", str(install_dir))
     # Ensure PATH includes common Python install locations with expanded home
     python_bin_dir = str(Path(_find_python()).parent)
     content = content.replace(
