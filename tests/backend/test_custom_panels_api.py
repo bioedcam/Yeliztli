@@ -408,20 +408,15 @@ class TestSearchWithPanelEndpoint:
         for gene in data["genes_with_findings"]:
             assert gene in ["BRCA1"]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "panel search does not gate on carriage: the route builds "
-            "RareVariantFilter without carried_only, so a hom_ref (non-carrier) "
-            "Pathogenic variant in a panel gene is counted as found. The carriage "
-            "gate (PR #320) covers only the automated run_all path; remove this "
-            "xfail when panel search honors a carriage gate."
-        ),
-    )
     def test_search_with_panel_excludes_hom_ref_pathogenic(
         self, panel_client: TestClient, sample_db_path: Path
     ) -> None:
-        """A hom_ref (non-carrier) Pathogenic variant in a panel gene is not found."""
+        """A hom_ref (non-carrier) Pathogenic variant in a panel gene is not found.
+
+        Panel search persists findings, so it carriage-gates the finder
+        (``carried_only=True``) — a non-carried Pathogenic variant in a panel
+        gene is never counted as found.
+        """
         engine = sa.create_engine(f"sqlite:///{sample_db_path}")
         with engine.begin() as conn:
             conn.execute(

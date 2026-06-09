@@ -276,20 +276,15 @@ class TestSearchEndpoint:
         assert "rs12345" not in rsids
         assert "rs28897696" in rsids  # BRCA1 pathogenic
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "interactive search does not gate on carriage: the route builds "
-            "RareVariantFilter without carried_only, so a hom_ref (non-carrier) "
-            "Pathogenic variant leaks into results. The carriage gate (PR #320) "
-            "covers only the automated run_all path; remove this xfail when the "
-            "search route honors a carriage gate."
-        ),
-    )
     def test_search_excludes_hom_ref_pathogenic(
         self, rare_client: TestClient, sample_db_path: Path
     ) -> None:
-        """Default search must not surface a hom_ref (non-carrier) Pathogenic variant."""
+        """Default search must not surface a hom_ref (non-carrier) Pathogenic variant.
+
+        The ``/search`` route persists findings, so it carriage-gates the finder
+        (``_request_to_filter`` forces ``carried_only=True``) — a non-carried
+        Pathogenic variant never leaks into results or stored findings.
+        """
         engine = sa.create_engine(f"sqlite:///{sample_db_path}")
         with engine.begin() as conn:
             conn.execute(sa.insert(annotated_variants), [hom_ref_pathogenic_row()])

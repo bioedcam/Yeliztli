@@ -168,7 +168,16 @@ def _get_sample_engine(sample_id: int) -> sa.Engine:
 
 
 def _request_to_filter(req: RareVariantFilterRequest) -> RareVariantFilter:
-    """Convert a Pydantic request model to the dataclass filter."""
+    """Convert a Pydantic request model to the dataclass filter.
+
+    ``carried_only=True`` is forced on: the interactive ``/search`` and ``/run``
+    endpoints both persist findings (via ``store_rare_variant_findings``), so —
+    exactly like the automated ``run_all`` path — they must surface only the
+    variants the individual actually carries. A genotyping chip reports a call at
+    every probe, so without this gate a hom-ref (non-carrier) or unscoreable call
+    at a Pathogenic locus leaks in as a clinical finding (the genotype-agnostic
+    defect class). NULL zygosity is also excluded by the gate.
+    """
     return RareVariantFilter(
         gene_symbols=req.gene_symbols,
         af_threshold=req.af_threshold,
@@ -176,6 +185,7 @@ def _request_to_filter(req: RareVariantFilterRequest) -> RareVariantFilter:
         clinvar_significance=req.clinvar_significance,
         include_novel=req.include_novel,
         zygosity=req.zygosity,
+        carried_only=True,
     )
 
 
@@ -309,7 +319,8 @@ def run_rare_variant_finder(
     Example: ``POST /api/analysis/rare-variants/run?sample_id=1``
     """
     sample_engine = _get_sample_engine(sample_id)
-    filters = _request_to_filter(body) if body else RareVariantFilter()
+    # No body → default filter, but still carriage-gate (this path stores findings).
+    filters = _request_to_filter(body) if body else RareVariantFilter(carried_only=True)
     result = find_rare_variants(filters, sample_engine)
     stored = store_rare_variant_findings(result, sample_engine)
 

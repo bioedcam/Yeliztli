@@ -293,6 +293,10 @@ def search_with_panel(
 
     sample_engine = _get_sample_engine(sample_id)
 
+    # Panel search persists findings (via store_rare_variant_findings below), so
+    # carriage-gate it like the automated run_all path: a hom-ref (non-carrier)
+    # or unscoreable call at a Pathogenic locus in a panel gene must not be
+    # counted as found. NULL zygosity is excluded by the gate too.
     filters = RareVariantFilter(
         gene_symbols=panel.gene_symbols,
         af_threshold=body.af_threshold if body else DEFAULT_AF_THRESHOLD,
@@ -300,6 +304,7 @@ def search_with_panel(
         clinvar_significance=body.clinvar_significance if body else None,
         include_novel=body.include_novel if body else True,
         zygosity=body.zygosity if body else None,
+        carried_only=True,
     )
 
     result = find_rare_variants(filters, sample_engine)
