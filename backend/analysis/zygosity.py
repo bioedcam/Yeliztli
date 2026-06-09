@@ -62,6 +62,11 @@ def is_no_call(genotype: str | None) -> bool:
 # complemented pair before giving up.
 _COMPLEMENT: dict[str, str] = {"A": "T", "T": "A", "C": "G", "G": "C"}
 
+# Public alias: ``backend.analysis.allele_match`` (and any future strand-aware
+# caller) imports the complement map from here so there is exactly one copy. The
+# private name is retained for the existing internal references below.
+COMPLEMENT: dict[str, str] = _COMPLEMENT
+
 # Zygosity vocabulary written to ``annotated_variants.zygosity`` (and consumed
 # by the carrier / cancer / cardiovascular modules and the variant browser).
 ZYG_HOM_REF = "hom_ref"
