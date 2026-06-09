@@ -1,0 +1,77 @@
+{
+  "module": "lhon",
+  "version": "1.0.0",
+  "category": "risk_genotype",
+  "description": "Leber hereditary optic neuropathy (LHON) primary-mutation panel: MT-ND4 m.11778G>A (rs199476112; ref G, risk A; ~70% of cases, poor visual recovery), MT-ND1 m.3460G>A (rs199476118; ref G, risk A; ~15%, poor recovery), MT-ND6 m.14484T>C (rs199476104; ref T, risk C; ~15%, best visual prognosis). Together these three primary mtDNA mutations explain >90% of LHON; all are ClinVar Pathogenic complex-I variants. Honesty guardrails (§12.5/§12.6): mtDNA is maternally inherited and these are typically homoplasmic, but arrays give a single binary call and cannot measure heteroplasmy; penetrance is incomplete and sex-biased (~50% of male carriers, ~10% of female carriers ever lose vision, often triggered by smoking/alcohol) so a positive call is never a diagnosis or prediction; a negative/absent call never rules LHON out (rare/private mutations and untyped positions exist). These positions are frequently off-chip (off_chip_risk=high) -> absent probe surfaced as indeterminate, never a false-negative. Not nuclear ClinVar P/LP in the engine's sense -> clinvar_significance=NULL. EXPANSION_STRATEGY.md §9 / roadmap #50.",
+  "evaluation": "collect_all",
+  "sex_stratified": false,
+  "ancestry_gate": null,
+  "disclaimer_key": "LHON",
+  "loci": [
+    {
+      "rsid": "rs199476112",
+      "gene_symbol": "MT-ND4",
+      "label": "m.11778G>A (p.Arg340His)",
+      "risk_allele": "A",
+      "ref_allele": "G",
+      "canonical_strand": "plus",
+      "off_chip_risk": "high",
+      "allele_type": "snv"
+    },
+    {
+      "rsid": "rs199476118",
+      "gene_symbol": "MT-ND1",
+      "label": "m.3460G>A (p.Ala52Thr)",
+      "risk_allele": "A",
+      "ref_allele": "G",
+      "canonical_strand": "plus",
+      "off_chip_risk": "high",
+      "allele_type": "snv"
+    },
+    {
+      "rsid": "rs199476104",
+      "gene_symbol": "MT-ND6",
+      "label": "m.14484T>C (p.Met64Val)",
+      "risk_allele": "C",
+      "ref_allele": "T",
+      "canonical_strand": "plus",
+      "off_chip_risk": "high",
+      "allele_type": "snv"
+    }
+  ],
+  "genotype_models": [
+    {
+      "id": "m11778ga",
+      "match": {"rs199476112": {"dosage_min": 1}},
+      "primary_rsid": "rs199476112",
+      "risk_classification": "MT-ND4 m.11778G>A — primary LHON mutation detected",
+      "zygosity": null,
+      "evidence_stars": 3,
+      "finding_text": "A primary LHON mutation, MT-ND4 m.11778G>A (rs199476112 {genotype}), was detected. This is the most common LHON variant (~70% of cases) and is associated with poor spontaneous visual recovery. Importantly, most carriers never lose vision: penetrance is incomplete and sex-biased — roughly half of male carriers and about one in ten female carriers ever develop optic neuropathy, often triggered by environmental factors such as smoking or heavy alcohol use. A positive result is not a diagnosis and not a prediction that you will lose vision.",
+      "caveats": ["reduced_penetrance", "mt_maternal_inheritance", "mt_heteroplasmy", "negative_not_clear", "confirm_clinically"],
+      "pmids": ["20301353"]
+    },
+    {
+      "id": "m3460ga",
+      "match": {"rs199476118": {"dosage_min": 1}},
+      "primary_rsid": "rs199476118",
+      "risk_classification": "MT-ND1 m.3460G>A — primary LHON mutation detected",
+      "zygosity": null,
+      "evidence_stars": 3,
+      "finding_text": "A primary LHON mutation, MT-ND1 m.3460G>A (rs199476118 {genotype}), was detected. This accounts for roughly 15% of LHON cases and is associated with poor spontaneous visual recovery. Most carriers never lose vision: penetrance is incomplete and sex-biased — about half of male carriers and one in ten female carriers ever develop optic neuropathy, often triggered by smoking or heavy alcohol use. A positive result is not a diagnosis and not a prediction.",
+      "caveats": ["reduced_penetrance", "mt_maternal_inheritance", "mt_heteroplasmy", "negative_not_clear", "confirm_clinically"],
+      "pmids": ["20301353"]
+    },
+    {
+      "id": "m14484tc",
+      "match": {"rs199476104": {"dosage_min": 1}},
+      "primary_rsid": "rs199476104",
+      "risk_classification": "MT-ND6 m.14484T>C — primary LHON mutation detected",
+      "zygosity": null,
+      "evidence_stars": 3,
+      "finding_text": "A primary LHON mutation, MT-ND6 m.14484T>C (rs199476104 {genotype}), was detected. This accounts for roughly 15% of LHON cases and carries the best visual prognosis of the three primary mutations, with spontaneous recovery seen in some affected individuals. Most carriers never lose vision: penetrance is incomplete and sex-biased — about half of male carriers and one in ten female carriers ever develop optic neuropathy, often triggered by smoking or heavy alcohol use. A positive result is not a diagnosis and not a prediction.",
+      "caveats": ["reduced_penetrance", "mt_maternal_inheritance", "mt_heteroplasmy", "negative_not_clear", "confirm_clinically"],
+      "pmids": ["20301353"]
+    }
+  ]
+}

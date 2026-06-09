@@ -65,6 +65,7 @@ _FULLY_GATED_MODULES = frozenset(
         "gout",
         "hemochromatosis",
         "igv_tracks",
+        "lhon",
         "liftover",
         "methylation",
         "mt_rnr1",

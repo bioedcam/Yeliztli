@@ -526,6 +526,53 @@ genetic and non-genetic factors are not captured here.
 """
 
 
+# ── LHON (Leber hereditary optic neuropathy) primary-mutation module ────────
+
+LHON_DISCLAIMER_TITLE = "About Leber Hereditary Optic Neuropathy (LHON) Results"
+
+LHON_DISCLAIMER_TEXT = """\
+This section reports the three primary mitochondrial LHON mutations — MT-ND4 \
+m.11778G>A (rs199476112), MT-ND1 m.3460G>A (rs199476118), and MT-ND6 m.14484T>C \
+(rs199476104) — which together account for more than 90% of Leber hereditary \
+optic neuropathy.
+
+**Please understand the following before reviewing:**
+
+1. **A positive result is not a diagnosis or a prediction.** Penetrance is \
+incomplete and strongly sex-biased: only about half of male carriers and roughly \
+one in ten female carriers ever develop vision loss, and onset is often triggered \
+by environmental factors such as smoking or heavy alcohol use. Most carriers keep \
+normal vision for life.
+
+2. **Maternally inherited.** Mitochondrial DNA passes only from mother to child. \
+A variant here is shared with your maternal relatives but is not passed on by \
+fathers — relevant information for the wider maternal family.
+
+3. **Heteroplasmy is not measured.** Arrays give a single binary call and cannot \
+measure heteroplasmy (the proportion of mitochondrial copies carrying the \
+variant), which can influence whether and how severely vision is affected. Only \
+quantitative clinical mitochondrial testing can establish it.
+
+4. **Visual prognosis differs by variant.** m.14484T>C carries the best outlook, \
+with spontaneous recovery seen in some affected individuals; m.11778G>A and \
+m.3460G>A are associated with poorer spontaneous recovery.
+
+5. **A negative result does not rule LHON out.** Rare and private LHON-causing \
+variants exist beyond these three, and a position not present on the array is \
+shown as indeterminate rather than negative. The absence of a finding is not a \
+clean bill of health — clinical mitochondrial testing is the way to confirm.
+
+6. **Confirm clinically.** This is a research/educational result, not a clinical \
+test. Anyone with vision symptoms, or considering this information for family \
+planning, should seek evaluation by an ophthalmologist or genetic counselor and \
+confirmation in a CLIA/accredited laboratory.
+
+**Resources:**
+- LHON GeneReviews: https://www.ncbi.nlm.nih.gov/books/NBK1174/
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
+"""
+
+
 # ── MT-RNR1 aminoglycoside-ototoxicity (m.1555A>G / m.1494C>T / m.1095T>C) ──
 
 MT_RNR1_DISCLAIMER_TITLE = "About MT-RNR1 Aminoglycoside-Ototoxicity Results"

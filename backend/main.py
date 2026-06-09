@@ -46,6 +46,7 @@ from backend.api.routes.hemochromatosis import router as hemochromatosis_router
 from backend.api.routes.igv_tracks import router as igv_tracks_router
 from backend.api.routes.individuals import router as individuals_router
 from backend.api.routes.ingest import router as ingest_router
+from backend.api.routes.lhon import router as lhon_router
 from backend.api.routes.liftover import router as liftover_router
 from backend.api.routes.methylation import router as methylation_router
 from backend.api.routes.mt_rnr1 import router as mt_rnr1_router
@@ -191,6 +192,7 @@ def create_app() -> FastAPI:
     api_router.include_router(igv_tracks_router)
     api_router.include_router(individuals_router)
     api_router.include_router(ingest_router)
+    api_router.include_router(lhon_router)
     api_router.include_router(liftover_router)
     api_router.include_router(methylation_router)
     api_router.include_router(mt_rnr1_router)
