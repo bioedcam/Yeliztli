@@ -48,21 +48,46 @@ def test_coverage_bit_implies_source_column(build_live_run) -> None:
         variants=[{"rsid": "rs_cov", "chrom": "7", "pos": 100, "genotype": "GA"}],
         clinvar=[clinvar_row("rs_cov", "7", 100, "G", "A", "Pathogenic", 3, gene="GENEX")],
         gnomad=[
-            {"rsid": "rs_cov", "chrom": "7", "pos": 100, "ref": "G", "alt": "A",
-             "af_global": 0.002}
+            {
+                "rsid": "rs_cov",
+                "chrom": "7",
+                "pos": 100,
+                "ref": "G",
+                "alt": "A",
+                "af_global": 0.002,
+            }
         ],
         vep=[
-            {"rsid": "rs_cov", "chrom": "7", "pos": 100, "ref": "G", "alt": "A",
-             "gene_symbol": "GENEX", "consequence": "missense_variant"}
+            {
+                "rsid": "rs_cov",
+                "chrom": "7",
+                "pos": 100,
+                "ref": "G",
+                "alt": "A",
+                "gene_symbol": "GENEX",
+                "consequence": "missense_variant",
+            }
         ],
         dbnsfp_rows=[
-            {"#chr": "7", "pos(1-based)": "100", "ref": "G", "alt": "A",
-             "rs_dbSNP": "rs_cov", "CADD_phred": "25.0", "REVEL_score": "0.7"}
+            {
+                "#chr": "7",
+                "pos(1-based)": "100",
+                "ref": "G",
+                "alt": "A",
+                "rs_dbSNP": "rs_cov",
+                "CADD_phred": "25.0",
+                "REVEL_score": "0.7",
+            }
         ],
         gene_phenotype_rows=[
-            {"gene_symbol": "GENEX", "disease_name": "GENEX-related disorder",
-             "disease_id": "MONDO:0000001", "hpo_terms": "[]", "source": "mondo_hpo",
-             "inheritance": "Autosomal dominant"}
+            {
+                "gene_symbol": "GENEX",
+                "disease_name": "GENEX-related disorder",
+                "disease_id": "MONDO:0000001",
+                "hpo_terms": "[]",
+                "source": "mondo_hpo",
+                "inheritance": "Autosomal dominant",
+            }
         ],
         run_analyses=False,
     )

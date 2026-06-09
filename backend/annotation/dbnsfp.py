@@ -1006,9 +1006,7 @@ def _pick_dbnsfp_row(rows: list[sa.Row], genotype: str | None) -> sa.Row:
         from backend.analysis.zygosity import CARRIED_ZYGOSITIES, classify_zygosity
 
         carried = [
-            r
-            for r in rows
-            if classify_zygosity(genotype, r.ref, r.alt) in CARRIED_ZYGOSITIES
+            r for r in rows if classify_zygosity(genotype, r.ref, r.alt) in CARRIED_ZYGOSITIES
         ]
         if carried:
             rows = carried
@@ -1058,9 +1056,7 @@ def lookup_dbnsfp_by_rsids(
                 rows_by_rsid.setdefault(row.rsid, []).append(row)
 
     return {
-        rsid: _dbnsfp_row_to_annotation(
-            _pick_dbnsfp_row(rows, genotype_by_rsid.get(rsid))
-        )
+        rsid: _dbnsfp_row_to_annotation(_pick_dbnsfp_row(rows, genotype_by_rsid.get(rsid)))
         for rsid, rows in rows_by_rsid.items()
     }
 

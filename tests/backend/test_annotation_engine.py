@@ -623,9 +623,7 @@ class TestRunAnnotation:
         with sample_with_variants.connect() as conn:
             rows = conn.execute(sa.select(annotated_variants)).fetchall()
 
-        all_source_bits = (
-            VEP_BIT | CLINVAR_BIT | GNOMAD_BIT | DBNSFP_BIT | GENE_PHENOTYPE_BIT
-        )
+        all_source_bits = VEP_BIT | CLINVAR_BIT | GNOMAD_BIT | DBNSFP_BIT | GENE_PHENOTYPE_BIT
         for row in rows:
             coverage = row.annotation_coverage
             assert coverage is not None  # always set (0 for unmatched)

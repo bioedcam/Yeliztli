@@ -221,9 +221,7 @@ def _build_vep_db(db_path: Path, vep: list[dict]) -> None:
         with engine.begin() as conn:
             conn.execute(sa.text(_VEP_DDL))
             conn.execute(sa.text("CREATE INDEX idx_vep_rsid ON vep_annotations(rsid)"))
-            conn.execute(
-                sa.text("CREATE INDEX idx_vep_chrom_pos ON vep_annotations(chrom, pos)")
-            )
+            conn.execute(sa.text("CREATE INDEX idx_vep_chrom_pos ON vep_annotations(chrom, pos)"))
             for row in vep:
                 conn.execute(
                     sa.text(_VEP_INSERT),
@@ -422,9 +420,7 @@ def build_live_run(tmp_data_dir: Path):
         )
 
         annot_result = run_annotation(sample_engine, registry)
-        analysis_result = (
-            run_all_analyses(sample_engine, registry) if run_analyses else {}
-        )
+        analysis_result = run_all_analyses(sample_engine, registry) if run_analyses else {}
 
         with sample_engine.connect() as conn:
             findings_rows = conn.execute(sa.select(findings)).fetchall()

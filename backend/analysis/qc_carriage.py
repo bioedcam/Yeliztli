@@ -123,9 +123,7 @@ def audit_carriage(
     with sample_engine.connect() as conn:
         genotypes = {
             r.rsid: r.genotype
-            for r in conn.execute(
-                sa.select(raw_variants.c.rsid, raw_variants.c.genotype)
-            )
+            for r in conn.execute(sa.select(raw_variants.c.rsid, raw_variants.c.genotype))
         }
         annotated_alleles = {
             r.rsid: (r.ref, r.alt)

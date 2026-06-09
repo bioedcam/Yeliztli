@@ -730,9 +730,7 @@ def lookup_gene_phenotypes(
                         pass
 
                 # Curated inheritance override for known-mislabelled genes (F14).
-                inheritance = overrides.get(
-                    (row.gene_symbol or "").upper(), row.inheritance
-                )
+                inheritance = overrides.get((row.gene_symbol or "").upper(), row.inheritance)
 
                 annot = GenePhenotypeAnnotation(
                     gene_symbol=row.gene_symbol,

@@ -29,9 +29,9 @@ _CLINVAR = [
 
 def _annotated_count(sample_engine: sa.Engine) -> int:
     with sample_engine.connect() as conn:
-        return conn.execute(
-            sa.select(sa.func.count()).select_from(annotated_variants)
-        ).scalar() or 0
+        return (
+            conn.execute(sa.select(sa.func.count()).select_from(annotated_variants)).scalar() or 0
+        )
 
 
 # ── F28: a crash mid-re-annotation must not destroy the prior result ──────
@@ -81,7 +81,9 @@ def test_unreadable_source_is_recorded(build_live_run, monkeypatch) -> None:
 # ── F39: large-input streaming / memory ceiling — Phase H (roadmap) ───────
 
 
-@pytest.mark.skip(reason="F39: yield_per/streaming is Phase H (WGS/WES roadmap); "
-                  "chip-scale inputs are not memory-bound")
+@pytest.mark.skip(
+    reason="F39: yield_per/streaming is Phase H (WGS/WES roadmap); "
+    "chip-scale inputs are not memory-bound"
+)
 def test_large_input_uses_streaming() -> None:  # pragma: no cover
     raise NotImplementedError

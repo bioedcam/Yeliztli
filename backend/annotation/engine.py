@@ -188,12 +188,8 @@ def _lookup_clinvar(
     """
     from backend.annotation.clinvar import lookup_clinvar_by_rsids
 
-    genotype_by_rsid = {
-        rsid: raw_by_rsid[rsid].genotype for rsid in rsids if rsid in raw_by_rsid
-    }
-    matches = lookup_clinvar_by_rsids(
-        rsids, reference_engine, genotype_by_rsid=genotype_by_rsid
-    )
+    genotype_by_rsid = {rsid: raw_by_rsid[rsid].genotype for rsid in rsids if rsid in raw_by_rsid}
+    matches = lookup_clinvar_by_rsids(rsids, reference_engine, genotype_by_rsid=genotype_by_rsid)
 
     results: dict[str, dict] = {}
     for rsid, annot in matches.items():
@@ -324,12 +320,8 @@ def _lookup_dbnsfp(
     # Primary: rsid-based lookup. Pass the genotypes so a multi-allelic site
     # resolves to the carried-ALT row, not an arbitrary one (F11) — mirrors the
     # ClinVar carried-allele selection.
-    genotype_by_rsid = {
-        rsid: raw_by_rsid[rsid].genotype for rsid in rsids if rsid in raw_by_rsid
-    }
-    rsid_matches = lookup_dbnsfp_by_rsids(
-        rsids, dbnsfp_engine, genotype_by_rsid=genotype_by_rsid
-    )
+    genotype_by_rsid = {rsid: raw_by_rsid[rsid].genotype for rsid in rsids if rsid in raw_by_rsid}
+    rsid_matches = lookup_dbnsfp_by_rsids(rsids, dbnsfp_engine, genotype_by_rsid=genotype_by_rsid)
 
     results: dict[str, dict] = {}
     for rsid, annot in rsid_matches.items():
@@ -609,9 +601,7 @@ _UPSERT_COLUMNS = [
 # swap itself is all-or-nothing.
 _STAGING_NAME = "annotated_variants_staging"
 _STAGING_METADATA = sa.MetaData()
-annotated_variants_staging = annotated_variants.to_metadata(
-    _STAGING_METADATA, name=_STAGING_NAME
-)
+annotated_variants_staging = annotated_variants.to_metadata(_STAGING_METADATA, name=_STAGING_NAME)
 # Drop the copied secondary indexes: SQLite index names are database-global so
 # they would collide with the live table's, and a write-once staging table
 # needs no read indexes. The ``rsid`` primary key (and its ON CONFLICT support)
@@ -637,10 +627,7 @@ def _swap_staging_into_place(sample_engine: sa.Engine) -> None:
     with sample_engine.begin() as conn:
         conn.execute(annotated_variants.delete())
         conn.execute(
-            sa.text(
-                f"INSERT INTO annotated_variants ({cols}) "
-                f"SELECT {cols} FROM {_STAGING_NAME}"
-            )
+            sa.text(f"INSERT INTO annotated_variants ({cols}) SELECT {cols} FROM {_STAGING_NAME}")
         )
     with sample_engine.begin() as conn:
         annotated_variants_staging.drop(conn, checkfirst=True)
@@ -693,11 +680,7 @@ def _bulk_upsert(
                     target.c.annotation_coverage.is_(None),
                     stmt.excluded.annotation_coverage,
                 ),
-                else_=(
-                    target.c.annotation_coverage.op("|")(
-                        stmt.excluded.annotation_coverage
-                    )
-                ),
+                else_=(target.c.annotation_coverage.op("|")(stmt.excluded.annotation_coverage)),
             )
 
             stmt = stmt.on_conflict_do_update(
