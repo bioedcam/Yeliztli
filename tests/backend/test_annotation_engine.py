@@ -1563,7 +1563,7 @@ class TestEnsemblePathogenicIntegration:
             alt="G",
             sift_score=0.001,
             sift_pred="D",
-            polyphen2_hsvar_score=0.5,
+            polyphen2_hsvar_score=0.95,  # > 0.909 "probably damaging" (F38)
             polyphen2_hsvar_pred="D",
             # Only 2 tools predict deleterious (SIFT + PP2)
             cadd_phred=10.0,  # Below 20 threshold
@@ -1659,7 +1659,7 @@ class TestEnsemblePathogenicIntegration:
     ) -> None:
         """P2-13: Variant with exactly 3 deleterious tools is flagged."""
         # Insert a custom variant with exactly 3 deleterious predictions:
-        # SIFT=0.01(D), PP2=0.5(D>0.453), CADD=25(D≥20), REVEL=0.3(<0.5), MetaSVM=-0.5(<0)
+        # SIFT=0.01(D), PP2=0.95(D>0.909), CADD=25(D≥20), REVEL=0.3(<0.5), MetaSVM=-0.5(<0)
         with sample_engine.begin() as conn:
             conn.execute(
                 raw_variants.insert().values(
@@ -1673,7 +1673,7 @@ class TestEnsemblePathogenicIntegration:
                     "(rsid, chrom, pos, ref, alt, cadd_phred, sift_score, sift_pred, "
                     "polyphen2_hsvar_score, polyphen2_hsvar_pred, revel, metasvm) "
                     "VALUES ('rs_three_del', '1', 99999, 'A', 'G', 25.0, 0.01, 'D', "
-                    "0.5, 'D', 0.3, -0.5)"
+                    "0.95, 'D', 0.3, -0.5)"
                 )
             )
 
