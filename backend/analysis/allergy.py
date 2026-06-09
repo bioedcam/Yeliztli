@@ -40,6 +40,7 @@ from pathlib import Path
 import sqlalchemy as sa
 import structlog
 
+from backend.analysis.genotype_lookup import lookup_by_genotype
 from backend.analysis.zygosity import is_no_call
 from backend.annotation.engine import GWAS_BIT
 from backend.db.tables import (
@@ -330,12 +331,9 @@ def _score_snp(snp: PanelSNP, genotype: str | None) -> SNPResult:
             coverage_note=snp.coverage_note,
         )
 
-    # Look up genotype effect from panel definition
-    effect = snp.genotype_effects.get(genotype)
-    if effect is None:
-        # Try reversed genotype (e.g. "CT" → "TC")
-        reversed_gt = genotype[::-1] if len(genotype) == 2 else genotype
-        effect = snp.genotype_effects.get(reversed_gt)
+    # Look up genotype effect from panel definition, harmonizing allele order
+    # and strand (e.g. chip "CT" → panel "GA" for a reverse-strand-keyed SNP).
+    effect = lookup_by_genotype(snp.genotype_effects, genotype)
 
     if effect is None:
         logger.warning(
