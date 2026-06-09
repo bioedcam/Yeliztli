@@ -444,7 +444,16 @@ def store_rare_variant_findings(
     for v in result.variants:
         # Determine category
         if v.is_clinvar_pathogenic:
-            category = "clinvar_pathogenic"
+            # F20 review-star floor: a 0-star P/LP record has no assertion
+            # criteria, so route it to a distinct low-confidence sub-tier rather
+            # than the headline ``clinvar_pathogenic`` category it would
+            # otherwise inflate. (It is already down-ranked to evidence_level 2
+            # by assign_clinvar_evidence_level, so it never reaches the
+            # high-confidence card; this also keeps it out of the headline count.)
+            if (v.clinvar_review_stars or 0) == 0:
+                category = "clinvar_pathogenic_low_confidence"
+            else:
+                category = "clinvar_pathogenic"
         elif v.ensemble_pathogenic:
             category = "ensemble_pathogenic"
         elif v.is_novel:
