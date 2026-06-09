@@ -270,7 +270,10 @@ class TestDefaultFilter:
     def test_novel_count(self, sample_with_rare_variants: sa.Engine) -> None:
         filters = RareVariantFilter()
         result = find_rare_variants(filters, sample_with_rare_variants)
-        assert result.novel_count == 1
+        # F12: the only AF-null variant (rs100003) is a ClinVar-catalogued
+        # Likely-pathogenic MLH1 frameshift — catalogued, so NOT novel. Absence
+        # from the exome-biased gnomAD bundle alone does not make it novel.
+        assert result.novel_count == 0
 
 
 # ── AF threshold tests ───────────────────────────────────────────────────
@@ -662,9 +665,11 @@ class TestStoreRareVariantFindings:
 class TestRareVariantResultProperties:
     """Test RareVariantResult dataclass properties."""
 
-    def test_is_novel(self) -> None:
-        v = RareVariantResult(
-            rsid="rs1",
+    @staticmethod
+    def _result(**overrides: object) -> RareVariantResult:
+        """Build a RareVariantResult with sane defaults for novelty tests."""
+        defaults: dict = dict(
+            rsid="i5004332",  # genuinely uncatalogued internal probe id by default
             chrom="1",
             pos=100,
             ref="A",
@@ -694,41 +699,29 @@ class TestRareVariantResultProperties:
             disease_name=None,
             inheritance_pattern=None,
         )
-        assert v.is_novel is True
+        defaults.update(overrides)
+        return RareVariantResult(**defaults)
 
-    def test_is_not_novel(self) -> None:
-        v = RareVariantResult(
-            rsid="rs1",
-            chrom="1",
-            pos=100,
-            ref="A",
-            alt="G",
-            genotype="AG",
-            zygosity="het",
-            gene_symbol="GENE1",
-            consequence="missense_variant",
-            hgvs_coding=None,
-            hgvs_protein=None,
-            gnomad_af_global=0.001,
-            gnomad_af_afr=None,
-            gnomad_af_amr=None,
-            gnomad_af_eas=None,
-            gnomad_af_eur=None,
-            gnomad_af_fin=None,
-            gnomad_af_sas=None,
-            clinvar_significance=None,
-            clinvar_review_stars=None,
-            clinvar_accession=None,
-            clinvar_conditions=None,
-            cadd_phred=None,
-            revel=None,
-            ensemble_pathogenic=False,
-            evidence_conflict=False,
-            evidence_level=1,
-            disease_name=None,
-            inheritance_pattern=None,
-        )
-        assert v.is_novel is False
+    def test_is_novel_when_uncatalogued(self) -> None:
+        """F12: AF-null AND uncatalogued (no rs id, no ClinVar) → genuinely novel."""
+        assert self._result(rsid="i5004332", gnomad_af_global=None).is_novel is True
+
+    def test_not_novel_when_af_present(self) -> None:
+        assert self._result(gnomad_af_global=0.001).is_novel is False
+
+    @pytest.mark.parametrize(
+        ("overrides", "why"),
+        [
+            ({"rsid": "rs3131972"}, "dbSNP rs id"),
+            ({"rsid": "i5004332", "clinvar_significance": "Benign"}, "ClinVar significance"),
+            ({"rsid": "i5004332", "clinvar_accession": "VCV000000001"}, "ClinVar accession"),
+        ],
+    )
+    def test_af_null_but_catalogued_is_not_novel(self, overrides: dict, why: str) -> None:
+        """F12: absence from gnomAD is not novelty when the variant is catalogued."""
+        v = self._result(gnomad_af_global=None, **overrides)
+        assert v.is_novel is False, why
+        assert v.is_catalogued is True
 
     def test_is_clinvar_pathogenic(self) -> None:
         v = RareVariantResult(

@@ -115,7 +115,7 @@ class RareVariantFilter:
     af_threshold: float = DEFAULT_AF_THRESHOLD
     consequences: list[str] | None = None
     clinvar_significance: list[str] | None = None
-    include_novel: bool = True  # Include variants with no gnomAD AF (novel)
+    include_novel: bool = True  # Include variants with no gnomAD AF (F12: not all are novel)
     zygosity: str | None = None  # "het", "hom_alt", or None for any
     # When True, surface only variants the individual actually carries
     # (zygosity in {het, hom_alt}). A genotyping chip reports a call at every
@@ -164,9 +164,29 @@ class RareVariantResult:
     inheritance_pattern: str | None
 
     @property
+    def is_catalogued(self) -> bool:
+        """Whether this variant is recorded in a public catalogue.
+
+        A genotyping-chip variant that carries a dbSNP ``rs`` identifier is, by
+        definition, catalogued in dbSNP; a ClinVar record is likewise positive
+        evidence of prior description. Either signal means the variant is *not*
+        novel regardless of whether gnomAD happens to have an allele frequency.
+        """
+        has_dbsnp_rsid = bool(self.rsid) and self.rsid.startswith("rs")
+        has_clinvar = self.clinvar_significance is not None or self.clinvar_accession is not None
+        return has_dbsnp_rsid or has_clinvar
+
+    @property
     def is_novel(self) -> bool:
-        """Whether this variant has no gnomAD AF data (novel/private)."""
-        return self.gnomad_af_global is None
+        """Whether this variant is genuinely uncatalogued (F12).
+
+        Absence from gnomAD is **not** novelty: the gnomAD bundle is
+        exome-biased, so the great majority of (common, well-known) chip SNPs
+        have no gnomAD AF yet are catalogued dbSNP variants. A variant is novel
+        only when it is absent from gnomAD *and* not catalogued in dbSNP (no
+        ``rs`` identifier) or ClinVar.
+        """
+        return self.gnomad_af_global is None and not self.is_catalogued
 
     @property
     def is_clinvar_pathogenic(self) -> bool:
@@ -197,7 +217,7 @@ class RareVariantFinderResult:
 
     @property
     def novel_count(self) -> int:
-        """Number of novel variants (no gnomAD AF)."""
+        """Number of genuinely novel variants (uncatalogued, F12 — not merely AF-null)."""
         return sum(1 for v in self.variants if v.is_novel)
 
     @property
@@ -429,8 +449,8 @@ def store_rare_variant_findings(
     Categories:
       - 'clinvar_pathogenic' — ClinVar P/LP rare variants
       - 'ensemble_pathogenic' — computationally predicted pathogenic
-      - 'novel' — novel variants (no gnomAD data)
-      - 'rare' — other rare variants below AF threshold
+      - 'novel' — genuinely uncatalogued (no gnomAD AF, no dbSNP rsid, no ClinVar; F12)
+      - 'rare' — other rare variants below AF threshold (incl. catalogued, gnomAD-absent)
 
     Args:
         result: RareVariantFinderResult from find_rare_variants.
@@ -461,11 +481,15 @@ def store_rare_variant_findings(
         else:
             category = "rare"
 
-        # Build human-readable finding text
+        # Build human-readable finding text. F12: absence from gnomAD is not
+        # novelty — only badge "Novel" when the variant is genuinely uncatalogued;
+        # otherwise state the neutral fact that gnomAD has no frequency for it.
         if v.gnomad_af_global is not None:
             af_text = f"AF={v.gnomad_af_global:.6f}"
+        elif v.is_novel:
+            af_text = "Novel (uncatalogued)"
         else:
-            af_text = "Novel (no gnomAD)"
+            af_text = "Not in gnomAD"
         gene_text = v.gene_symbol or "intergenic"
         cons_text = v.consequence or "unknown consequence"
 
