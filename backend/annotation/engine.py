@@ -72,6 +72,37 @@ GWAS_BIT = 0b0100000  # bit 5 = 32 (GWAS Catalog — P3-09a)
 # covered by CPIC. Bit 6 = 64 is the next free bit above GWAS.
 CPIC_BIT = 0b1000000  # bit 6 = 64 (CPIC/PharmGKB — P3-04a)
 
+# F22: ClinVar significances that disqualify a variant from inheriting its
+# gene's disease label. gene→phenotype is a *gene-level* association, so
+# attaching it to a variant the curators call benign falsely implies that
+# specific variant causes the gene's disease (e.g. a benign BRCA2 SNP labelled
+# "breast-ovarian cancer susceptibility 2"). Variants that are VUS, risk-factor
+# or simply unclassified keep the gene context — only a confident benign call
+# contradicts it. Stored in normalized (lowercase, underscores→spaces) form;
+# match through :func:`_is_benign_significance` so casing/separator variants —
+# real ClinVar "Likely_benign", normalized "Likely benign", lowercase fixtures —
+# are all caught.
+_BENIGN_SIGNIFICANCES: frozenset[str] = frozenset(
+    {
+        "benign",
+        "likely benign",
+        "benign/likely benign",
+    }
+)
+
+
+def _is_benign_significance(significance: str | None) -> bool:
+    """True for a confident ClinVar benign / likely-benign call (F22).
+
+    Case- and separator-insensitive: real ClinVar ``CLNSIG`` is capitalized with
+    underscores (``Likely_benign``), but stored and fixture forms vary
+    (``Benign``, ``Likely benign``, ``benign``).
+    """
+    if not significance:
+        return False
+    return significance.strip().lower().replace("_", " ") in _BENIGN_SIGNIFICANCES
+
+
 # Maximum concurrent annotation source lookups (VEP, ClinVar, gnomAD, dbNSFP)
 # Gene-phenotype runs sequentially after VEP since it depends on gene_symbol.
 _MAX_WORKERS = 4
@@ -483,7 +514,14 @@ def _merge_annotations(
             row_data.update(dbnsfp_data[rsid])
             bitmask |= DBNSFP_BIT
 
-        if rsid in gene_phenotype_data:
+        # F22: gate the gene-level disease label on the variant *not* being a
+        # confident benign call. ClinVar is merged above, so ``clinvar_significance``
+        # is already in ``row_data`` for this decision. A benign variant gets no
+        # disease label and no GENE_PHENOTYPE_BIT (the stored row carries no
+        # gene-phenotype data, so the coverage bit must stay clear too).
+        if rsid in gene_phenotype_data and not _is_benign_significance(
+            row_data.get("clinvar_significance")
+        ):
             row_data.update(gene_phenotype_data[rsid])
             bitmask |= GENE_PHENOTYPE_BIT
 
