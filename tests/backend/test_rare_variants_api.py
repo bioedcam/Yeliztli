@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
+from _carriage_fixtures import hom_ref_pathogenic_row
 from fastapi.testclient import TestClient
 
 from backend.config import Settings
@@ -274,6 +275,30 @@ class TestSearchEndpoint:
         rsids = [item["rsid"] for item in data["items"]]
         assert "rs12345" not in rsids
         assert "rs28897696" in rsids  # BRCA1 pathogenic
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "interactive search does not gate on carriage: the route builds "
+            "RareVariantFilter without carried_only, so a hom_ref (non-carrier) "
+            "Pathogenic variant leaks into results. The carriage gate (PR #320) "
+            "covers only the automated run_all path; remove this xfail when the "
+            "search route honors a carriage gate."
+        ),
+    )
+    def test_search_excludes_hom_ref_pathogenic(
+        self, rare_client: TestClient, sample_db_path: Path
+    ) -> None:
+        """Default search must not surface a hom_ref (non-carrier) Pathogenic variant."""
+        engine = sa.create_engine(f"sqlite:///{sample_db_path}")
+        with engine.begin() as conn:
+            conn.execute(sa.insert(annotated_variants), [hom_ref_pathogenic_row()])
+        engine.dispose()
+
+        resp = rare_client.post("/api/analysis/rare-variants/search?sample_id=1", json={})
+        assert resp.status_code == 200
+        rsids = [item["rsid"] for item in resp.json()["items"]]
+        assert "rs_hom_ref_pathogenic" not in rsids
 
     def test_search_gene_filter(self, rare_client: TestClient) -> None:
         """Gene panel filter restricts results to specified genes."""

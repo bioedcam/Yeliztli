@@ -113,9 +113,12 @@ class TestCORSLocalhostOnly:
                 "Access-Control-Request-Method": "GET",
             },
         )
-        # External origin must NOT appear in allow-origin
+        # A disallowed origin must NOT be echoed. Starlette omits the
+        # access-control-allow-origin header entirely, so the value is None.
+        # The old `!= "http://evil.example.com"` was vacuous: it also passed if
+        # a *different* wrong origin (or "*") were echoed back.
         allow_origin = resp.headers.get("access-control-allow-origin")
-        assert allow_origin != "http://evil.example.com"
+        assert allow_origin is None
 
     def test_cors_rejects_non_localhost_ip(self, test_client: TestClient) -> None:
         """CORS rejects requests from a non-localhost IP address."""
@@ -126,8 +129,9 @@ class TestCORSLocalhostOnly:
                 "Access-Control-Request-Method": "GET",
             },
         )
+        # Disallowed origin → header omitted, not echoed (see above).
         allow_origin = resp.headers.get("access-control-allow-origin")
-        assert allow_origin != "http://192.168.1.100:5173"
+        assert allow_origin is None
 
     def test_cors_origins_in_source_are_localhost_only(self) -> None:
         """Static analysis: CORS allow_origins list contains only localhost."""
@@ -222,9 +226,15 @@ class TestNoOutboundVariantData:
             for field_name in self._VARIANT_FIELDS:
                 # Check if field appears inside an httpx call context
                 # Match patterns like: params={..., "genotype": ..., data={"genotype":
+                # DOTALL + a bounded non-greedy gap so a *multi-line* outbound
+                # call (params= on one line, the field a few lines down) is still
+                # caught. Plain `.*` (no DOTALL) stopped at the first newline and
+                # silently under-detected; an unbounded DOTALL `.*` would instead
+                # match the field anywhere in the file (false positives).
                 if re.search(
-                    rf'(?:params|json|data|content)\s*=.*["\']?{field_name}["\']?',
+                    rf'(?:params|json|data|content)\s*=.{{0,200}}?["\']?{field_name}["\']?',
                     content,
+                    re.DOTALL,
                 ):
                     violations.append(f"{rel_path}: sends '{field_name}' in HTTP request")
         assert violations == [], f"Variant data found in outbound requests: {violations}"

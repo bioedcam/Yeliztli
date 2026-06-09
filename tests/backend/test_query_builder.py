@@ -52,7 +52,11 @@ class TestTranslatorBasicOperators:
         expr = translate(
             {"combinator": "and", "rules": [{"field": "chrom", "operator": "!=", "value": "Y"}]}
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        # An inverted != → = would return the wrong variant set to the filter UI.
+        assert "chrom" in sql
+        assert "!=" in sql or "<>" in sql
+        assert "'Y'" in sql
 
     def test_less_than(self) -> None:
         expr = translate(
@@ -61,25 +65,36 @@ class TestTranslatorBasicOperators:
                 "rules": [{"field": "gnomad_af_global", "operator": "<", "value": 0.01}],
             }
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "gnomad_af_global <" in sql
+        assert "<=" not in sql  # must be strict less-than
+        assert "0.01" in sql
 
     def test_greater_than(self) -> None:
         expr = translate(
             {"combinator": "and", "rules": [{"field": "cadd_phred", "operator": ">", "value": 20}]}
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        # A sign-flipped > → < would silently return low-impact variants.
+        assert "cadd_phred >" in sql
+        assert ">=" not in sql  # must be strict greater-than
+        assert "20" in sql
 
     def test_less_than_or_equal(self) -> None:
         expr = translate(
             {"combinator": "and", "rules": [{"field": "pos", "operator": "<=", "value": 100000}]}
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "pos <=" in sql
+        assert "100000" in sql
 
     def test_greater_than_or_equal(self) -> None:
         expr = translate(
             {"combinator": "and", "rules": [{"field": "revel", "operator": ">=", "value": 0.5}]}
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "revel >=" in sql
+        assert "0.5" in sql
 
     def test_contains(self) -> None:
         expr = translate(
@@ -88,7 +103,11 @@ class TestTranslatorBasicOperators:
                 "rules": [{"field": "gene_symbol", "operator": "contains", "value": "BRC"}],
             }
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "gene_symbol" in sql
+        assert "LIKE" in sql.upper()
+        # SQLAlchemy renders contains() with wildcards concatenated on both sides.
+        assert "'%' || 'BRC' || '%'" in sql
 
     def test_begins_with(self) -> None:
         expr = translate(
@@ -97,7 +116,12 @@ class TestTranslatorBasicOperators:
                 "rules": [{"field": "consequence", "operator": "beginsWith", "value": "missense"}],
             }
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "consequence" in sql
+        assert "LIKE" in sql.upper()
+        # Trailing-only wildcard: a leading anchor would change the match set.
+        assert "'missense' || '%'" in sql
+        assert "'%' || 'missense'" not in sql
 
     def test_ends_with(self) -> None:
         expr = translate(
@@ -108,7 +132,12 @@ class TestTranslatorBasicOperators:
                 ],
             }
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "clinvar_conditions" in sql
+        assert "LIKE" in sql.upper()
+        # Leading-only wildcard: a trailing anchor would change the match set.
+        assert "'%' || 'cancer'" in sql
+        assert "'cancer' || '%'" not in sql
 
     def test_in_operator(self) -> None:
         expr = translate(
@@ -117,7 +146,10 @@ class TestTranslatorBasicOperators:
                 "rules": [{"field": "chrom", "operator": "in", "value": ["1", "2", "X"]}],
             }
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        assert "chrom IN (" in sql
+        assert "NOT IN" not in sql  # `in` must not invert to NOT IN
+        assert "'X'" in sql
 
     def test_not_in(self) -> None:
         expr = translate(
@@ -132,7 +164,11 @@ class TestTranslatorBasicOperators:
                 ],
             }
         )
-        assert expr is not None
+        sql = str(expr.compile(compile_kwargs={"literal_binds": True}))
+        # An inverted notIn → IN would return exactly the rows it should exclude.
+        assert "clinvar_significance" in sql
+        assert "NOT IN" in sql
+        assert "'benign'" in sql
 
     def test_between(self) -> None:
         expr = translate(

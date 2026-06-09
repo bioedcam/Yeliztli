@@ -629,9 +629,12 @@ class TestEURClassification:
         result = infer_ancestry(bundle, sample_engine)
         assert result.is_sufficient
         assert result.snps_used == bundle.snp_count
-        # The top population should be one of the known populations
-        assert result.top_population in bundle.populations, (
-            f"Top population {result.top_population} not in known populations"
+        # T3-25 acceptance: a homozygous-reference (broadly EUR-like) AIM
+        # pattern must land in the EUR cluster — not merely "some known
+        # population" (vacuously true for any classification, so a regression
+        # misclassifying EUR as MID/AFR/EAS would have passed).
+        assert result.top_population == "EUR", (
+            f"EUR-like genotype classified as {result.top_population!r}, expected 'EUR'"
         )
 
 

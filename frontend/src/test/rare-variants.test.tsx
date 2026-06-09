@@ -139,12 +139,21 @@ describe("ResultsTable", () => {
   it("renders variant rows", () => {
     const variants = [
       makeMockVariant(),
-      makeMockVariant({ rsid: "rs67890", gene_symbol: "TP53", evidence_level: 2 }),
+      makeMockVariant({
+        rsid: "rs67890",
+        gene_symbol: "TP53",
+        evidence_level: 2,
+        zygosity: "hom_alt",
+      }),
     ]
     render(<ResultsTable items={variants} selectedRsid={null} onSelect={vi.fn()} />)
     expect(screen.getAllByTestId("result-row")).toHaveLength(2)
     expect(screen.getByText("BRCA1")).toBeInTheDocument()
     expect(screen.getByText("TP53")).toBeInTheDocument()
+    // Zygosity labels: het → "Het", hom_alt → "Hom". A label inversion would
+    // render a het carrier as homozygous (a clinically wrong call).
+    expect(screen.getByText("Het")).toBeInTheDocument()
+    expect(screen.getByText("Hom")).toBeInTheDocument()
   })
 
   it("calls onSelect when row is clicked", async () => {
@@ -207,6 +216,15 @@ describe("VariantDetailPanel", () => {
     expect(screen.getByText("Pathogenic")).toBeInTheDocument()
     expect(screen.getByText("28.5")).toBeInTheDocument()
     expect(screen.getByText("VCV000012345")).toBeInTheDocument()
+    // het default → "Heterozygous" (the zygosity label was previously unasserted)
+    expect(screen.getByText("Heterozygous")).toBeInTheDocument()
+  })
+
+  it("renders the homozygous zygosity label", () => {
+    const variant = makeMockVariant({ zygosity: "hom_alt" })
+    render(<VariantDetailPanel variant={variant} onClose={vi.fn()} />)
+    expect(screen.getByText("Homozygous")).toBeInTheDocument()
+    expect(screen.queryByText("Heterozygous")).not.toBeInTheDocument()
   })
 
   it("calls onClose when close button clicked", async () => {

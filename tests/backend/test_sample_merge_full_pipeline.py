@@ -96,6 +96,7 @@ from backend.analysis.prs import (
     compute_prs_bootstrap_ci,
     compute_prs_percentile,
 )
+from backend.analysis.zygosity import classify_zygosity
 from backend.annotation.engine import run_annotation
 from backend.config import Settings
 from backend.db.connection import DBRegistry, get_registry, reset_registry
@@ -647,6 +648,31 @@ class TestMergedSampleFullPipeline:
         assert row is not None
         assert row.source == "S2"
         assert row.concordance == "unique"
+
+    def test_f508del_indel_unscoreable_on_chip(self) -> None:
+        """F508del (an indel) is unscoreable on an A/C/G/T chip.
+
+        Documents why ``test_carrier_finding_source_attribution_emitted`` must
+        hand-backfill zygosity: ``classify_zygosity`` cannot resolve carriage for
+        a multi-base ref/alt, so the real engine writes NULL here. Locking this
+        makes the masked indel-carriage gap explicit rather than hidden behind the
+        overwrite.
+        """
+        assert classify_zygosity("AT", "ATCT", "A") is None
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "indel carriage unsupported: classify_zygosity returns None for an "
+            "F508del deletion (ref=ATCT, alt=A) because only single-base SNV ref/alt "
+            "map to chip A/C/G/T calls, so CFTR's most common pathogenic allele is "
+            "dropped from carrier screening. Remove this xfail when indel/no-call "
+            "carriage is resolved (e.g. via the I/D chip codes)."
+        ),
+    )
+    def test_f508del_indel_carriage_resolved(self) -> None:
+        """A real F508del deletion call resolves to a carrier zygosity."""
+        assert classify_zygosity("AT", "ATCT", "A") in {"het", "hom_alt"}
 
     def test_prs_ci_revalidation_within_bounds(
         self,
