@@ -1,11 +1,11 @@
 [Unit]
-Description=GenomeInsight API Server (Uvicorn)
+Description=Yeliztli API Server (Uvicorn)
 After=network.target
 
 [Service]
 Type=simple
 ExecStart=uvicorn backend.main:app --host 127.0.0.1 --port 8000
-WorkingDirectory=%h/GenomeInsight
+WorkingDirectory=%h/Yeliztli
 Restart=on-failure
 RestartSec=5
 Environment=PATH=%h/.local/bin:/usr/bin

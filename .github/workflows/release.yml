@@ -161,12 +161,12 @@ jobs:
           plat = _detect_platform()
           root = _repo_root()
           if plat == 'macos':
-              assert (root / 'launchd' / 'com.genomeinsight.api.plist').exists()
-              assert (root / 'launchd' / 'com.genomeinsight.huey.plist').exists()
+              assert (root / 'launchd' / 'com.yeliztli.api.plist').exists()
+              assert (root / 'launchd' / 'com.yeliztli.huey.plist').exists()
               print('macOS launchd templates: OK')
           else:
-              assert (root / 'systemd' / 'genomeinsight-api.service').exists()
-              assert (root / 'systemd' / 'genomeinsight-huey.service').exists()
+              assert (root / 'systemd' / 'yeliztli-api.service').exists()
+              assert (root / 'systemd' / 'yeliztli-huey.service').exists()
               print('Linux/WSL2 systemd templates: OK')
           "
 

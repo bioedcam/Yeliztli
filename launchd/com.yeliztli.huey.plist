@@ -4,7 +4,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.genomeinsight.huey</string>
+    <string>com.yeliztli.huey</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -14,7 +14,7 @@
         <string>1</string>
     </array>
 
-    <!-- Replace __INSTALL_DIR__ with the actual GenomeInsight install path -->
+    <!-- Replace __INSTALL_DIR__ with the actual Yeliztli install path -->
     <key>WorkingDirectory</key>
     <string>__INSTALL_DIR__</string>
 
@@ -25,9 +25,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>~/Library/Logs/genomeinsight-huey.log</string>
+    <string>~/Library/Logs/yeliztli-huey.log</string>
 
     <key>StandardErrorPath</key>
-    <string>~/Library/Logs/genomeinsight-huey.log</string>
+    <string>~/Library/Logs/yeliztli-huey.log</string>
 </dict>
 </plist>

@@ -106,15 +106,13 @@ class TestRenderSystemdUnit:
     def test_replaces_working_directory(self, tmp_path: Path):
         unit = tmp_path / "test.service"
         unit.write_text(
-            "[Service]\n"
-            "WorkingDirectory=%h/GenomeInsight\n"
-            "Environment=PATH=%h/.local/bin:/usr/bin\n"
+            "[Service]\nWorkingDirectory=%h/Yeliztli\nEnvironment=PATH=%h/.local/bin:/usr/bin\n"
         )
 
-        rendered = installer._render_systemd_unit(unit, Path("/home/user/GenomeInsight"))
+        rendered = installer._render_systemd_unit(unit, Path("/home/user/Yeliztli"))
 
-        assert "WorkingDirectory=/home/user/GenomeInsight" in rendered
-        assert "%h/GenomeInsight" not in rendered
+        assert "WorkingDirectory=/home/user/Yeliztli" in rendered
+        assert "%h/Yeliztli" not in rendered
 
     def test_includes_python_bin_in_path(self, tmp_path: Path):
         unit = tmp_path / "test.service"
