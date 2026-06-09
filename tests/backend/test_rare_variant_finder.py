@@ -517,9 +517,11 @@ class TestEvidenceLevelAssignment:
         v = self._make_variant(clinvar_significance="Likely pathogenic", clinvar_review_stars=0)
         assert _assign_evidence_level(v) == 2
 
-    def test_ensemble_pathogenic_no_clinvar_gives_2(self) -> None:
+    def test_ensemble_pathogenic_no_clinvar_gives_1(self) -> None:
+        # F19: in-silico ensemble support alone is PRELIMINARY (★), not ★★ —
+        # ★★ MODERATE is reserved for functional/clinical evidence.
         v = self._make_variant(ensemble_pathogenic=True)
-        assert _assign_evidence_level(v) == 2
+        assert _assign_evidence_level(v) == 1
 
     def test_rare_no_clinvar_no_ensemble_gives_1(self) -> None:
         v = self._make_variant()
@@ -649,9 +651,9 @@ class TestStoreRareVariantFindings:
             ).fetchall()
         evidence_map = {row.rsid: row.evidence_level for row in rows}
         assert evidence_map["rs100001"] == 4  # Pathogenic 3-star
-        assert evidence_map["rs100002"] == 2  # Ensemble pathogenic
+        assert evidence_map["rs100002"] == 1  # Ensemble pathogenic (F19: in-silico → ★, not ★★)
         assert evidence_map["rs100003"] == 3  # LP 1-star
-        assert evidence_map["rs100008"] == 2  # LP 0-star
+        assert evidence_map["rs100008"] == 2  # LP 0-star (F20 sub-tier, evidence MODERATE)
 
 
 # ── Dataclass property tests ────────────────────────────────────────────

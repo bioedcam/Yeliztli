@@ -150,16 +150,20 @@ class TestAssignClinvarEvidenceLevel:
         assert result == 1
 
     def test_ensemble_pathogenic_no_clinvar(self):
-        """★★☆☆ — No ClinVar but ensemble pathogenic."""
+        """★☆☆☆ — ensemble (in-silico) support alone stays PRELIMINARY, not ★★ (F19)."""
         result = assign_clinvar_evidence_level(None, None, ensemble_pathogenic=True)
-        assert result == 2
+        assert result == 1
 
     def test_ensemble_pathogenic_with_vus(self):
-        """★★☆☆ — VUS but ensemble pathogenic fires."""
+        """★☆☆☆ — a VUS with ensemble support is not promoted to ★★ (F19).
+
+        In-silico prediction is computational, not functional, evidence; the PRD
+        rubric reserves ★★ MODERATE for functional/clinical evidence.
+        """
         result = assign_clinvar_evidence_level(
             "Uncertain significance", 1, ensemble_pathogenic=True
         )
-        assert result == 2
+        assert result == 1
 
     def test_ensemble_pathogenic_does_not_override_clinvar(self):
         """ClinVar P/LP takes precedence over ensemble flag."""

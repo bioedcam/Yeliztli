@@ -142,10 +142,11 @@ def assign_clinvar_evidence_level(
             return min(gene_baseline, EVIDENCE_MODERATE)
         return EVIDENCE_MODERATE  # 2
 
-    # Non-pathogenic ClinVar or absent — check ensemble prediction
-    if ensemble_pathogenic:
-        return EVIDENCE_MODERATE  # 2
-
+    # Non-pathogenic ClinVar or absent. In-silico ensemble support is
+    # computational — not functional — evidence, so it does NOT promote the
+    # finding to MODERATE (★★, reserved for functional/clinical evidence per the
+    # PRD rubric, F19). Ensemble-supported VUS/Benign stay PRELIMINARY (★); the
+    # ensemble_pathogenic flag is surfaced as its own category, never as ★★.
     return EVIDENCE_PRELIMINARY  # 1
 
 
