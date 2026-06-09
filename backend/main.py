@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.api.routes.admin import router as admin_router
 from backend.api.routes.allergy import router as allergy_router
 from backend.api.routes.alpha1 import router as alpha1_router
+from backend.api.routes.amd import router as amd_router
 from backend.api.routes.ancestry import router as ancestry_router
 from backend.api.routes.annotation import router as annotation_router
 from backend.api.routes.annotations_api import router as annotations_api_router
@@ -162,6 +163,7 @@ def create_app() -> FastAPI:
     api_router.include_router(auth_router)
     api_router.include_router(allergy_router)
     api_router.include_router(alpha1_router)
+    api_router.include_router(amd_router)
     api_router.include_router(ancestry_router)
     api_router.include_router(apoe_router)
     api_router.include_router(backup_router)

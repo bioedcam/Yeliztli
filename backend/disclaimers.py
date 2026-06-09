@@ -396,3 +396,44 @@ counselor; confirm in a CLIA/accredited laboratory before any medical action.
 - COPD Foundation: https://www.copdfoundation.org/
 - National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/\
 """
+
+
+# ── Age-related macular degeneration (AMD: CFH / ARMS2) module ──────────────
+
+AMD_DISCLAIMER_TITLE = "About Age-Related Macular Degeneration (AMD) Risk Results"
+
+AMD_DISCLAIMER_TEXT = """\
+This section reports two common AMD risk alleles — CFH Y402H (rs1061170) and \
+ARMS2/HTRA1 (rs10490924). These are common genetic risk factors, not pathogenic \
+mutations, and they describe an *association* with age-related macular \
+degeneration — not a diagnosis.
+
+**Please understand the following before reviewing:**
+
+1. **Relative risk is not absolute risk.** The odds ratios shown (up to ~7× for \
+CFH and ~5.5× for ARMS2 homozygotes, and an illustrative ~33× for the \
+double-homozygous genotype, n=14, with a very wide confidence interval) are \
+*relative* odds from case-control studies. Your absolute, lifetime AMD risk \
+depends much more on age, smoking, and your overall genetic background.
+
+2. **These two loci are not the whole picture.** A genome-wide study found that \
+52 variants across 34 loci explain ~47% (95% CI 44.5–48.8%) of advanced-AMD \
+variability in European-ancestry subjects — just under half — and that ~47% is \
+attributable to all 52 variants, not to CFH and ARMS2 alone. Most of AMD's \
+heritability and most of a person's actual risk lie outside these two SNPs.
+
+3. **Ancestry context.** These odds ratios are derived primarily from \
+European-ancestry populations and attenuate in East Asian populations.
+
+4. **A negative result does not rule out AMD risk.** Other AMD variants and \
+non-genetic factors (age, smoking, diet) are not captured here.
+
+5. **AMD is modifiable and screenable.** Not smoking, a healthy diet, and \
+regular dilated eye exams are the actionable steps; discuss your eye health \
+with an optometrist or ophthalmologist.
+
+**Resources:**
+- BrightFocus Foundation (Macular Degeneration): https://www.brightfocus.org/macular/
+- American Academy of Ophthalmology: https://www.aao.org/eye-health/diseases/amd-macular-degeneration
+- National Eye Institute: https://www.nei.nih.gov/learn-about-eye-health/eye-conditions-and-diseases/age-related-macular-degeneration\
+"""

@@ -70,6 +70,7 @@ def _get_modules() -> list[tuple[str, Callable]]:
         ("hemochromatosis", _run_hemochromatosis),
         ("thrombophilia", _run_thrombophilia),
         ("alpha1", _run_alpha1),
+        ("amd", _run_amd),
         ("pharmacogenomics", _run_pharma),
         ("nutrigenomics", _run_nutrigenomics),
         ("traits", _run_traits),
@@ -216,6 +217,18 @@ def _run_alpha1(sample_engine: Engine, registry: DBRegistry) -> int:
     panel = load_alpha1_panel()
     assessment = assess_alpha1(panel, sample_engine)
     return store_alpha1_findings(assessment, sample_engine)
+
+
+def _run_amd(sample_engine: Engine, registry: DBRegistry) -> int:
+    from backend.analysis.amd import (
+        assess_amd,
+        load_amd_panel,
+        store_amd_findings,
+    )
+
+    panel = load_amd_panel()
+    assessment = assess_amd(panel, sample_engine)
+    return store_amd_findings(assessment, sample_engine)
 
 
 def _run_apoe(sample_engine: Engine, registry: DBRegistry) -> int:

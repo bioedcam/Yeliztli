@@ -1,0 +1,110 @@
+{
+  "module": "amd",
+  "version": "1.0.0",
+  "category": "risk_genotype",
+  "description": "Age-related macular degeneration (AMD) common-risk-allele panel: CFH Y402H (rs1061170) and ARMS2/HTRA1 (rs10490924). These are common GWAS risk alleles, NOT ClinVar P/LP variants — findings carry clinvar_significance=NULL and capped evidence stars. Odds ratios are illustrative single-cohort estimates with wide CIs and are always paired with absolute-risk context. EXPANSION_STRATEGY.md §9 / roadmap #26.",
+  "evaluation": "first_match",
+  "sex_stratified": false,
+  "ancestry_gate": null,
+  "disclaimer_key": "AMD",
+  "loci": [
+    {
+      "rsid": "rs1061170",
+      "gene_symbol": "CFH",
+      "label": "Y402H",
+      "risk_allele": "C",
+      "ref_allele": "T",
+      "canonical_strand": "plus",
+      "off_chip_risk": "low"
+    },
+    {
+      "rsid": "rs10490924",
+      "gene_symbol": "ARMS2",
+      "label": "A69S",
+      "risk_allele": "T",
+      "ref_allele": "G",
+      "canonical_strand": "plus",
+      "off_chip_risk": "low"
+    }
+  ],
+  "genotype_models": [
+    {
+      "id": "double_homozygous",
+      "match": {"rs1061170": {"dosage": 2}, "rs10490924": {"dosage": 2}},
+      "risk_classification": "CFH + ARMS2 double-homozygous (high-risk genotype)",
+      "primary_rsid": "rs1061170",
+      "zygosity": "hom_alt",
+      "evidence_stars": 3,
+      "odds_ratio": "OR ~33.3 (95% CI 12.8–86.4) for advanced AMD vs the low-risk reference genotype — an illustrative single-cohort estimate (n=14) with a very wide confidence interval",
+      "absolute_risk_context": "This is a relative odds ratio from one case-control cohort, not an absolute or lifetime risk. Absolute AMD risk depends strongly on age (AMD is age-related), smoking, and the other ~50 known AMD variants. These two loci do not by themselves determine whether AMD develops, and the odds ratios attenuate in East Asian populations.",
+      "finding_text": "You carry the high-risk CFH + ARMS2 double-homozygous genotype ({genotype}). {odds_ratio}. {absolute_risk}",
+      "caveats": ["negative_not_clear", "ancestry_european", "confirm_clinically"],
+      "pmids": ["23867343", "26691988"]
+    },
+    {
+      "id": "cfh_homozygous",
+      "match": {"rs1061170": {"dosage": 2}},
+      "risk_classification": "CFH Y402H homozygous",
+      "primary_rsid": "rs1061170",
+      "zygosity": "hom_alt",
+      "evidence_stars": 3,
+      "odds_ratio": "OR ~7.2 (95% CI 3.6–14.5) for advanced AMD for the CFH Y402H CC homozygous genotype",
+      "absolute_risk_context": "This is a relative odds ratio, not an absolute or lifetime risk. Absolute AMD risk also depends strongly on age, smoking, and the other ~50 known AMD variants; the odds ratios attenuate in East Asian populations.",
+      "finding_text": "CFH Y402H homozygous (rs1061170 {genotype}) — both copies carry the AMD risk allele. {odds_ratio}. {absolute_risk}",
+      "caveats": ["negative_not_clear", "ancestry_european", "confirm_clinically"],
+      "pmids": ["23867343", "26691988"]
+    },
+    {
+      "id": "arms2_homozygous",
+      "match": {"rs10490924": {"dosage": 2}},
+      "risk_classification": "ARMS2 homozygous",
+      "primary_rsid": "rs10490924",
+      "zygosity": "hom_alt",
+      "evidence_stars": 3,
+      "odds_ratio": "OR ~5.5 (95% CI 2.6–11.8) for advanced AMD for the ARMS2 TT homozygous genotype",
+      "absolute_risk_context": "This is a relative odds ratio, not an absolute or lifetime risk. Absolute AMD risk also depends strongly on age, smoking, and the other ~50 known AMD variants; the odds ratios attenuate in East Asian populations.",
+      "finding_text": "ARMS2/HTRA1 homozygous (rs10490924 {genotype}) — both copies carry the AMD risk allele. {odds_ratio}. {absolute_risk}",
+      "caveats": ["negative_not_clear", "ancestry_european", "confirm_clinically"],
+      "pmids": ["23867343", "26691988"]
+    },
+    {
+      "id": "both_heterozygous",
+      "match": {"rs1061170": {"dosage": 1}, "rs10490924": {"dosage": 1}},
+      "risk_classification": "CFH + ARMS2 compound heterozygous (intermediate)",
+      "primary_rsid": "rs1061170",
+      "zygosity": "het",
+      "evidence_stars": 2,
+      "odds_ratio": "Carrying one risk allele at both CFH Y402H and ARMS2 confers an intermediate, additively increased AMD risk, below either homozygous genotype",
+      "absolute_risk_context": "This is a relative, intermediate risk, not an absolute or lifetime risk. Absolute AMD risk depends strongly on age, smoking, and the other ~50 known AMD variants; the odds ratios attenuate in East Asian populations.",
+      "finding_text": "You carry one risk allele at both CFH Y402H and ARMS2 ({genotype}). {odds_ratio}. {absolute_risk}",
+      "caveats": ["negative_not_clear", "ancestry_european", "confirm_clinically"],
+      "pmids": ["23867343", "26691988"]
+    },
+    {
+      "id": "cfh_heterozygous",
+      "match": {"rs1061170": {"dosage": 1}},
+      "risk_classification": "CFH Y402H heterozygous",
+      "primary_rsid": "rs1061170",
+      "zygosity": "het",
+      "evidence_stars": 2,
+      "odds_ratio": "A single CFH Y402H risk allele confers a modestly increased AMD risk, well below the homozygous genotype",
+      "absolute_risk_context": "This is a modest relative risk, not an absolute or lifetime risk. Absolute AMD risk depends strongly on age, smoking, and the other ~50 known AMD variants; the odds ratios attenuate in East Asian populations.",
+      "finding_text": "CFH Y402H heterozygous (rs1061170 {genotype}) — you carry one copy. {odds_ratio}. {absolute_risk}",
+      "caveats": ["negative_not_clear", "ancestry_european", "confirm_clinically"],
+      "pmids": ["23867343", "26691988"]
+    },
+    {
+      "id": "arms2_heterozygous",
+      "match": {"rs10490924": {"dosage": 1}},
+      "risk_classification": "ARMS2 heterozygous",
+      "primary_rsid": "rs10490924",
+      "zygosity": "het",
+      "evidence_stars": 2,
+      "odds_ratio": "A single ARMS2 risk allele confers a modestly increased AMD risk, well below the homozygous genotype",
+      "absolute_risk_context": "This is a modest relative risk, not an absolute or lifetime risk. Absolute AMD risk depends strongly on age, smoking, and the other ~50 known AMD variants; the odds ratios attenuate in East Asian populations.",
+      "finding_text": "ARMS2/HTRA1 heterozygous (rs10490924 {genotype}) — you carry one copy. {odds_ratio}. {absolute_risk}",
+      "caveats": ["negative_not_clear", "ancestry_european", "confirm_clinically"],
+      "pmids": ["23867343", "26691988"]
+    }
+  ]
+}

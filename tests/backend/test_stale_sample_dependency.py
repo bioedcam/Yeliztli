@@ -48,6 +48,7 @@ _FULLY_GATED_MODULES = frozenset(
     {
         "allergy",
         "alpha1",
+        "amd",
         "ancestry",
         "annotations_api",
         "apoe",
