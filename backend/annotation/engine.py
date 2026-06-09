@@ -31,9 +31,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from backend.analysis.zygosity import classify_zygosity
 from backend.annotation.dbnsfp import (
-    ENSEMBLE_PATHOGENIC_THRESHOLD,
     DbNSFPAnnotation,
     is_ensemble_pathogenic,
+    is_ensemble_pathogenic_from_counts,
     lookup_dbnsfp_by_positions,
     lookup_dbnsfp_by_rsids,
 )
@@ -325,6 +325,7 @@ def _dbnsfp_annot_to_dict(annot: DbNSFPAnnotation) -> dict:
         "mpc": annot.mpc,
         "primateai": annot.primateai,
         "deleterious_count": annot.deleterious_count,
+        "deleterious_total_assessed": annot.deleterious_total_assessed,
         "ensemble_pathogenic": is_ensemble_pathogenic(annot),
     }
 
@@ -555,16 +556,20 @@ def apply_ensemble_pathogenic(merged: list[dict]) -> None:
     """Set ``ensemble_pathogenic`` flag on merged variant dicts.
 
     For variants that already have ``ensemble_pathogenic`` set (e.g. from
-    ``_dbnsfp_annot_to_dict``), this is a no-op.  For any variant with a
-    ``deleterious_count`` but no ``ensemble_pathogenic`` key, the flag is
-    computed here.
+    ``_dbnsfp_annot_to_dict``), this is a no-op.  For any variant carrying the
+    vote counts but no ``ensemble_pathogenic`` key, the flag is computed here via
+    the k-of-present rule (F24/F25), which needs both ``deleterious_count`` and
+    ``deleterious_total_assessed``.
 
     Mutates *merged* in place (same pattern as ``apply_evidence_conflicts``).
     """
     for v in merged:
+        if "ensemble_pathogenic" in v:
+            continue
         dc = v.get("deleterious_count")
-        if dc is not None and "ensemble_pathogenic" not in v:
-            v["ensemble_pathogenic"] = dc >= ENSEMBLE_PATHOGENIC_THRESHOLD
+        ta = v.get("deleterious_total_assessed")
+        if dc is not None and ta is not None:
+            v["ensemble_pathogenic"] = is_ensemble_pathogenic_from_counts(dc, ta)
 
 
 # ── Bulk upsert ──────────────────────────────────────────────────────────
@@ -618,6 +623,7 @@ _UPSERT_COLUMNS = [
     "mpc",
     "primateai",
     "deleterious_count",
+    "deleterious_total_assessed",
     "ensemble_pathogenic",
     # Gene-phenotype
     "disease_name",

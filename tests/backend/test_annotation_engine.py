@@ -1332,8 +1332,8 @@ class TestDbnsfpAnnotationIntegration:
         assert d["phylop"] == pytest.approx(7.92)
         assert d["mpc"] == pytest.approx(1.85)
         assert d["primateai"] == pytest.approx(0.91)
-        # 5 of 5 tools predict deleterious for this variant
-        assert d["deleterious_count"] == 5
+        # All 4 independent axes deleterious (META = REVEL/MetaSVM/MetaLR, F24)
+        assert d["deleterious_count"] == 4
 
     def test_dbnsfp_annot_to_dict_null_scores(self) -> None:
         """_dbnsfp_annot_to_dict handles all-null scores."""
@@ -1376,8 +1376,8 @@ class TestDbnsfpAnnotationIntegration:
         """P2-12: Lookup computes and returns deleterious_count."""
         result = _lookup_dbnsfp(["rs429358"], {}, dbnsfp_engine)
         data = result["rs429358"]
-        # rs429358: SIFT=0.001(D), PP2=0.998(D), CADD=28.3(D), REVEL=0.812(D), MetaSVM=0.920(D)
-        assert data["deleterious_count"] == 5
+        # rs429358: SIFT(D), PP2(D), CADD(D), META=REVEL/MetaSVM/MetaLR(D) → 4 axes (F24)
+        assert data["deleterious_count"] == 4
 
     def test_delegates_to_dbnsfp_module(self, dbnsfp_engine: sa.Engine) -> None:
         """Engine uses dbnsfp.py lookup functions (not duplicated SQL)."""
@@ -1424,7 +1424,8 @@ class TestDbnsfpAnnotationIntegration:
 
         assert "rs_user_id" in result
         assert result["rs_user_id"]["cadd_phred"] == pytest.approx(28.3)
-        assert result["rs_user_id"]["deleterious_count"] == 5
+        # rs429358 coordinates → 4 independent axes, all deleterious (F24)
+        assert result["rs_user_id"]["deleterious_count"] == 4
 
     def test_position_fallback_skipped_without_ref_alt(self, dbnsfp_engine: sa.Engine) -> None:
         """Fallback is skipped when raw variant lacks ref/alt columns."""
@@ -1470,8 +1471,10 @@ class TestDbnsfpAnnotationIntegration:
         assert row.phylop == pytest.approx(7.92)
         assert row.mpc == pytest.approx(1.85)
         assert row.primateai == pytest.approx(0.91)
-        # Deleterious count
-        assert row.deleterious_count == 5
+        # Deleterious count: 4 independent axes (SIFT, PolyPhen, CADD, collapsed
+        # META = REVEL/MetaSVM/MetaLR), all deleterious (F24).
+        assert row.deleterious_count == 4
+        assert row.deleterious_total_assessed == 4
         # Bitmask has dbNSFP bit set
         assert row.annotation_coverage & DBNSFP_BIT == DBNSFP_BIT
 
@@ -1493,7 +1496,8 @@ class TestDbnsfpAnnotationIntegration:
         # All dbNSFP-matched variants should have deleterious_count
         for row in rows:
             assert row.deleterious_count is not None
-            assert 0 <= row.deleterious_count <= 5
+            # 4 independent axes after the meta-predictor collapse (F24).
+            assert 0 <= row.deleterious_count <= 4
 
     def test_partial_scores_deleterious_count(
         self,
@@ -1511,7 +1515,7 @@ class TestDbnsfpAnnotationIntegration:
         # rs1801133 (MTHFR C677T) is in seed data for all sources
         assert row is not None
         assert row.deleterious_count is not None
-        assert 0 <= row.deleterious_count <= 5
+        assert 0 <= row.deleterious_count <= 4
 
     def test_known_variant_rs1801133_scores(
         self,
@@ -1537,23 +1541,23 @@ class TestDbnsfpAnnotationIntegration:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# P2-13: Ensemble pathogenicity flag (≥3 tools deleterious)
+# P2-13 / F24/F25: Ensemble pathogenicity flag (majority of present axes)
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestEnsemblePathogenicIntegration:
-    """P2-13 / T2-12: Ensemble pathogenicity flag fires when ≥3 tools deleterious.
+    """P2-13 / F24/F25: ensemble flag = strict majority of *present* independent axes.
 
     Verifies:
-    - _dbnsfp_annot_to_dict includes ensemble_pathogenic
-    - apply_ensemble_pathogenic sets flag on merged dicts
-    - Flag flows through full pipeline into annotated_variants
-    - Variants with <3 deleterious tools are NOT flagged
-    - Variants with ≥3 deleterious tools ARE flagged
+    - _dbnsfp_annot_to_dict includes ensemble_pathogenic + deleterious_total_assessed
+    - apply_ensemble_pathogenic sets flag on merged dicts via the k-of-present rule
+    - Flag and denominator flow through the full pipeline into annotated_variants
+    - The four axes are SIFT, PolyPhen, CADD and the collapsed META family (F24)
+    - The denominator is the axes actually assessed, not a fixed 5 (F25)
     """
 
     def test_dbnsfp_annot_to_dict_includes_ensemble_flag(self) -> None:
-        """_dbnsfp_annot_to_dict returns ensemble_pathogenic=True when ≥3 deleterious."""
+        """_dbnsfp_annot_to_dict carries the vote counts and a True flag when a majority agree."""
         annot = DbNSFPAnnotation(
             rsid="rs1",
             chrom="1",
@@ -1569,7 +1573,9 @@ class TestEnsemblePathogenicIntegration:
             metasvm=0.9,
         )
         d = _dbnsfp_annot_to_dict(annot)
-        assert d["deleterious_count"] == 5
+        # SIFT, PolyPhen, CADD + collapsed META (REVEL/MetaSVM) = 4 axes, all del.
+        assert d["deleterious_count"] == 4
+        assert d["deleterious_total_assessed"] == 4
         assert d["ensemble_pathogenic"] is True
 
     def test_dbnsfp_annot_to_dict_not_pathogenic_under_threshold(self) -> None:
@@ -1584,13 +1590,16 @@ class TestEnsemblePathogenicIntegration:
             sift_pred="D",
             polyphen2_hsvar_score=0.95,  # > 0.909 "probably damaging" (F38)
             polyphen2_hsvar_pred="D",
-            # Only 2 tools predict deleterious (SIFT + PP2)
+            # Only 2 of 4 axes deleterious (SIFT + PolyPhen); CADD and the META
+            # axis (REVEL+MetaSVM both tolerated) vote not-deleterious.
             cadd_phred=10.0,  # Below 20 threshold
             revel=0.3,  # Below 0.5 threshold
             metasvm=-0.5,  # Below 0 threshold
         )
         d = _dbnsfp_annot_to_dict(annot)
         assert d["deleterious_count"] == 2
+        assert d["deleterious_total_assessed"] == 4
+        # 2 of 4 is not a strict majority → not flagged.
         assert d["ensemble_pathogenic"] is False
 
     def test_dbnsfp_annot_to_dict_null_scores_not_pathogenic(self) -> None:
@@ -1607,30 +1616,42 @@ class TestEnsemblePathogenicIntegration:
         assert d["ensemble_pathogenic"] is False
 
     def test_apply_ensemble_pathogenic_on_merged(self) -> None:
-        """apply_ensemble_pathogenic sets flag on merged dicts without it."""
+        """apply_ensemble_pathogenic sets the flag via the k-of-present rule (F24/F25)."""
         from backend.annotation.engine import apply_ensemble_pathogenic
 
         merged = [
-            {"rsid": "rs1", "deleterious_count": 4},
-            {"rsid": "rs2", "deleterious_count": 2},
-            {"rsid": "rs3", "deleterious_count": 3},
-            {"rsid": "rs4"},  # No deleterious_count at all
+            # 3 of 4 → strict majority → flagged
+            {"rsid": "rs1", "deleterious_count": 3, "deleterious_total_assessed": 4},
+            # 2 of 4 → not a majority → not flagged
+            {"rsid": "rs2", "deleterious_count": 2, "deleterious_total_assessed": 4},
+            # 2 of 2 present → majority → flagged (unreachable under the old fixed-3)
+            {"rsid": "rs3", "deleterious_count": 2, "deleterious_total_assessed": 2},
+            # 1 of 1 present → too few axes → not flagged
+            {"rsid": "rs4", "deleterious_count": 1, "deleterious_total_assessed": 1},
+            {"rsid": "rs5"},  # No vote counts at all → flag left unset
         ]
         apply_ensemble_pathogenic(merged)
 
         assert merged[0]["ensemble_pathogenic"] is True
         assert merged[1]["ensemble_pathogenic"] is False
         assert merged[2]["ensemble_pathogenic"] is True
-        assert "ensemble_pathogenic" not in merged[3]
+        assert merged[3]["ensemble_pathogenic"] is False
+        assert "ensemble_pathogenic" not in merged[4]
 
     def test_apply_ensemble_pathogenic_does_not_overwrite(self) -> None:
         """apply_ensemble_pathogenic skips dicts that already have the key."""
         from backend.annotation.engine import apply_ensemble_pathogenic
 
         merged = [
-            {"rsid": "rs1", "deleterious_count": 4, "ensemble_pathogenic": True},
+            {
+                "rsid": "rs1",
+                "deleterious_count": 1,
+                "deleterious_total_assessed": 4,
+                "ensemble_pathogenic": True,
+            },
         ]
         apply_ensemble_pathogenic(merged)
+        # Pre-set flag is preserved even though 1 of 4 would not flag on its own.
         assert merged[0]["ensemble_pathogenic"] is True
 
     def test_ensemble_flag_in_annotated_variants_true(
@@ -1642,13 +1663,15 @@ class TestEnsemblePathogenicIntegration:
         run_annotation(sample_with_variants, mock_registry)
 
         with sample_with_variants.connect() as conn:
-            # rs429358: SIFT=D, PP2=D, CADD=28.3, REVEL=0.812, MetaSVM=0.920 → 5 deleterious
+            # rs429358: SIFT=D, PP2=D, CADD=D, META(REVEL/MetaSVM/MetaLR)=D
+            # → all 4 independent axes deleterious (F24).
             row = conn.execute(
                 sa.select(annotated_variants).where(annotated_variants.c.rsid == "rs429358")
             ).fetchone()
 
         assert row is not None
-        assert row.deleterious_count == 5
+        assert row.deleterious_count == 4
+        assert row.deleterious_total_assessed == 4
         assert row.ensemble_pathogenic in (True, 1)
 
     def test_ensemble_flag_in_annotated_variants_false(
@@ -1660,14 +1683,16 @@ class TestEnsemblePathogenicIntegration:
         run_annotation(sample_with_variants, mock_registry)
 
         with sample_with_variants.connect() as conn:
-            # rs4680: SIFT=0.082(T), PP2=0.451(B), CADD=15.2(<20), REVEL=0.312(<0.5),
-            # MetaSVM=0.380(D) → only 1 deleterious (MetaSVM)
+            # rs4680: SIFT=0.082(T), PP2=0.451(T), CADD=15.2(T), and the META axis
+            # is tolerated — REVEL=0.312(T) and MetaLR=0.420(T) outvote the lone
+            # MetaSVM=0.380(D), so the collapsed family contributes no vote (F24).
             row = conn.execute(
                 sa.select(annotated_variants).where(annotated_variants.c.rsid == "rs4680")
             ).fetchone()
 
         assert row is not None
-        assert row.deleterious_count == 1
+        assert row.deleterious_count == 0
+        assert row.deleterious_total_assessed == 4
         assert row.ensemble_pathogenic in (False, 0)
 
     def test_ensemble_flag_exactly_three(
@@ -1736,11 +1761,14 @@ class TestEnsemblePathogenicIntegration:
         for row in rows:
             assert row.ensemble_pathogenic is not None
             assert row.deleterious_count is not None
-            # Verify consistency: flag matches threshold
-            if row.deleterious_count >= 3:
-                assert row.ensemble_pathogenic in (True, 1)
-            else:
-                assert row.ensemble_pathogenic in (False, 0)
+            assert row.deleterious_total_assessed is not None
+            # Flag matches the k-of-present rule: a strict majority of the
+            # assessed axes, with at least 2 axes present (F24/F25).
+            expected = (
+                row.deleterious_total_assessed >= 2
+                and row.deleterious_count * 2 > row.deleterious_total_assessed
+            )
+            assert bool(row.ensemble_pathogenic) is expected
 
     def test_ensemble_pathogenic_in_upsert_columns(self) -> None:
         """ensemble_pathogenic is in _UPSERT_COLUMNS list."""

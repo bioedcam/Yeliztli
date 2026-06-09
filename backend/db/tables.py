@@ -601,7 +601,16 @@ annotated_variants = sa.Table(
     sa.Column("hpo_terms", sa.Text, comment="JSON array of HPO term IDs"),
     sa.Column("inheritance_pattern", sa.Text),
     # Ensemble pathogenicity (dbNSFP-derived)
-    sa.Column("deleterious_count", sa.Integer),
+    sa.Column(
+        "deleterious_count",
+        sa.Integer,
+        comment="Independent in-silico axes voting deleterious (0-4, F24)",
+    ),
+    sa.Column(
+        "deleterious_total_assessed",
+        sa.Integer,
+        comment="Independent in-silico axes assessed — k-of-present denominator (F25)",
+    ),
     # Evidence & conflict
     sa.Column("evidence_conflict", sa.Boolean, server_default=sa.text("0")),
     sa.Column("ensemble_pathogenic", sa.Boolean, server_default=sa.text("0")),

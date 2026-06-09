@@ -237,58 +237,119 @@ class LoadStats:
 
 @dataclass
 class DbNSFPAnnotation(DbNSFPRecord):
-    """dbNSFP annotation data with computed deleterious count."""
+    """dbNSFP annotation data with computed ensemble vote counts."""
 
+    #: Independent in-silico axes voting deleterious (0–4, F24).
     deleterious_count: int = field(init=False)
+    #: Independent in-silico axes actually assessed — the k-of-present
+    #: denominator for the ensemble flag (0–4, F25).
+    deleterious_total_assessed: int = field(init=False)
 
     def __post_init__(self) -> None:
-        self.deleterious_count = count_deleterious(self)
+        self.deleterious_count, self.deleterious_total_assessed = assess_ensemble(self)
 
 
 # ── Ensemble pathogenicity helpers ──────────────────────────────────────
 
 
-def count_deleterious(annot: DbNSFPAnnotation) -> int:
-    """Count the number of in-silico tools predicting deleterious effect.
+# F24: the in-silico ensemble counts *independent* evidence axes, not raw tools.
+# REVEL, MetaSVM and MetaLR are meta-predictors trained on the component scores
+# (REVEL ensembles 13 tools; MetaLR is MetaSVM's sibling — pairwise call
+# concordance ~90%), so counting each as a separate vote triple-counts the same
+# signal and the deleterious tally spikes at its maximum. The four independent
+# axes are:
+#   • SIFT       — sequence conservation
+#   • PolyPhen-2 — protein structure
+#   • CADD       — genome-wide integrative score
+#   • META       — meta-predictor family (REVEL / MetaSVM / MetaLR), collapsed
+# Each axis votes deleterious / not-deleterious, or is *absent* when no
+# underlying predictor is present (F25).
 
-    Thresholds follow standard cutoffs:
-        - SIFT4G: score < 0.05 (D)
-        - PolyPhen-2 HVAR: score > 0.909 ("probably damaging")
-        - CADD: phred ≥ 20
-        - REVEL: score ≥ 0.5
-        - MetaSVM: score > 0 (D)
 
-    F38: the PolyPhen cutoff is the strict "probably damaging" 0.909, matching
-    the sibling ``evidence_conflict._is_polyphen_deleterious``. The old lenient
-    0.453 ("possibly damaging") double-counted borderline calls and inflated the
-    deleterious vote (~6%) relative to the rest of the codebase.
+def _sift_axis(annot: DbNSFPRecord) -> bool | None:
+    """SIFT4G axis: score < 0.05 → deleterious. None when no score."""
+    if annot.sift_score is None:
+        return None
+    return annot.sift_score < 0.05
+
+
+def _polyphen_axis(annot: DbNSFPRecord) -> bool | None:
+    """PolyPhen-2 HVAR axis: strict "probably damaging" > 0.909 (F38). None when absent."""
+    if annot.polyphen2_hsvar_score is None:
+        return None
+    return annot.polyphen2_hsvar_score > 0.909
+
+
+def _cadd_axis(annot: DbNSFPRecord) -> bool | None:
+    """CADD axis: PHRED ≥ 20 → deleterious. None when no score."""
+    if annot.cadd_phred is None:
+        return None
+    return annot.cadd_phred >= 20
+
+
+def _meta_axis(annot: DbNSFPRecord) -> bool | None:
+    """Collapse the correlated meta-predictor family into one vote (F24).
+
+    Deleterious iff a strict majority of the *present* meta-predictors call
+    deleterious (REVEL ≥ 0.5, MetaSVM > 0, MetaLR > 0.5); absent when none are
+    present. Requiring a majority stops a single outlier meta-predictor from
+    manufacturing an "independent" vote out of redundant signal.
+    """
+    votes: list[bool] = []
+    if annot.revel is not None:
+        votes.append(annot.revel >= 0.5)
+    if annot.metasvm is not None:
+        votes.append(annot.metasvm > 0)
+    if annot.metalr is not None:
+        votes.append(annot.metalr > 0.5)
+    if not votes:
+        return None
+    return sum(votes) * 2 > len(votes)
+
+
+def assess_ensemble(annot: DbNSFPRecord) -> tuple[int, int]:
+    """Return ``(deleterious_axes, assessed_axes)`` over the four independent axes.
+
+    F24 collapses the correlated meta-predictors into a single axis; F25 makes
+    the denominator the axes *actually assessed* so the ensemble flag is
+    k-of-present, never k-of-a-fixed-5 that silently penalises a variant for
+    predictors dbNSFP simply does not cover.
 
     Returns:
-        Number of tools predicting deleterious (0-5).
+        ``(deleterious, assessed)`` — axes voting deleterious and axes with data,
+        each 0–4.
     """
-    count = 0
-    if annot.sift_score is not None and annot.sift_score < 0.05:
-        count += 1
-    if annot.polyphen2_hsvar_score is not None and annot.polyphen2_hsvar_score > 0.909:
-        count += 1
-    if annot.cadd_phred is not None and annot.cadd_phred >= 20:
-        count += 1
-    if annot.revel is not None and annot.revel >= 0.5:
-        count += 1
-    if annot.metasvm is not None and annot.metasvm > 0:
-        count += 1
-    return count
+    axes = [_sift_axis(annot), _polyphen_axis(annot), _cadd_axis(annot), _meta_axis(annot)]
+    assessed = [a for a in axes if a is not None]
+    return sum(1 for a in assessed if a), len(assessed)
 
 
-ENSEMBLE_PATHOGENIC_THRESHOLD = 3
+def count_deleterious(annot: DbNSFPRecord) -> int:
+    """Number of independent in-silico axes voting deleterious (0–4, F24)."""
+    deleterious, _ = assess_ensemble(annot)
+    return deleterious
 
 
-def is_ensemble_pathogenic(annot: DbNSFPAnnotation) -> bool:
-    """Check if ≥3 tools predict deleterious (ensemble pathogenicity flag).
+#: Minimum independent axes that must be assessable before the ensemble flag can
+#: fire — a "majority" of a single axis is not corroborating evidence (F25).
+ENSEMBLE_MIN_AXES = 2
 
-    Per PRD P2-13: "≥3 tools predict deleterious → flag set".
+
+def is_ensemble_pathogenic_from_counts(deleterious: int, assessed: int) -> bool:
+    """Ensemble rule: a strict majority of the *present* axes vote deleterious.
+
+    Requires at least :data:`ENSEMBLE_MIN_AXES` axes assessed, so the flag never
+    fires on a single predictor's say-so (F24/F25).
     """
-    return annot.deleterious_count >= ENSEMBLE_PATHOGENIC_THRESHOLD
+    if assessed < ENSEMBLE_MIN_AXES:
+        return False
+    return deleterious * 2 > assessed
+
+
+def is_ensemble_pathogenic(annot: DbNSFPRecord) -> bool:
+    """Whether the in-silico ensemble supports pathogenicity (F24/F25)."""
+    deleterious, assessed = assess_ensemble(annot)
+    return is_ensemble_pathogenic_from_counts(deleterious, assessed)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

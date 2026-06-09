@@ -24,7 +24,9 @@ logger = structlog.get_logger(__name__)
 # v7: Add watched_variants table (P4-21g — VUS tracking)
 # v8: Add provenance columns to raw_variants + merge_provenance table
 #     (AncestryDNA Plan §10.4 — multi-source sample merging)
-SAMPLE_SCHEMA_VERSION = 8
+# v9: Add deleterious_total_assessed to annotated_variants
+#     (validation strategy F25 — k-of-present ensemble denominator)
+SAMPLE_SCHEMA_VERSION = 9
 
 
 # AncestryDNA Plan §10.4(a): merged-sample raw_variants uses (chrom, pos) PK
@@ -227,6 +229,28 @@ def _add_missing_columns(engine: sa.Engine, from_version: int) -> bool:
                 logger.info(
                     "raw_variants_provenance_columns_added",
                     columns=list(new_cols),
+                    from_version=from_version,
+                )
+                added = True
+
+    if from_version < 9:
+        # Validation strategy F25: record the in-silico ensemble denominator
+        # (independent axes actually assessed) so the pathogenic flag is
+        # k-of-present, not k-of-a-fixed-5. NULL on existing rows until the
+        # sample is re-annotated.
+        inspector = sa.inspect(engine)
+        if "annotated_variants" in inspector.get_table_names():
+            existing_cols = {c["name"] for c in inspector.get_columns("annotated_variants")}
+            if "deleterious_total_assessed" not in existing_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        sa.text(
+                            "ALTER TABLE annotated_variants "
+                            "ADD COLUMN deleterious_total_assessed INTEGER"
+                        )
+                    )
+                logger.info(
+                    "deleterious_total_assessed_column_added",
                     from_version=from_version,
                 )
                 added = True

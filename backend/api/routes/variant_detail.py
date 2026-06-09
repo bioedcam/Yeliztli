@@ -154,6 +154,7 @@ class VariantDetailResponse(BaseModel):
 
     # Ensemble / conflict
     deleterious_count: int | None = None
+    deleterious_total_assessed: int | None = None
     evidence_conflict: bool | None = None
     ensemble_pathogenic: bool | None = None
     annotation_coverage: int | None = None

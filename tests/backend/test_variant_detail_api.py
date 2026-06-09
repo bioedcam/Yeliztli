@@ -74,7 +74,8 @@ SAMPLE_VARIANT_BRCA1 = {
     "phenotype_source": "mondo_hpo",
     "hpo_terms": '["HP:0003002"]',
     "inheritance_pattern": "AD",
-    "deleterious_count": 5,
+    "deleterious_count": 4,
+    "deleterious_total_assessed": 4,
     "evidence_conflict": False,
     "ensemble_pathogenic": True,
     "annotation_coverage": 0b011111,
@@ -357,7 +358,9 @@ class TestGetVariantDetail:
         data = tc.get(f"/api/variants/rs80357906?sample_id={sid}").json()
         assert data["annotation_coverage"] == 0b011111
         assert data["ensemble_pathogenic"] is True
-        assert data["deleterious_count"] == 5
+        assert data["deleterious_count"] == 4
+        # F25: the k-of-present denominator is surfaced alongside the count.
+        assert data["deleterious_total_assessed"] == 4
 
 
 # ═══════════════════════════════════════════════════════════════════════

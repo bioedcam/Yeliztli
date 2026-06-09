@@ -381,9 +381,11 @@ class TestLookupDbnsfpByRsids:
         """DbNSFPAnnotation.deleterious_count should be auto-computed."""
         results = lookup_dbnsfp_by_rsids(["rs429358"], dbnsfp_engine_with_data)
         annot = results["rs429358"]
-        # rs429358 has: SIFT=0.001(D), PP2=0.998(D), CADD=28.3, REVEL=0.812, MetaSVM=0.920
-        # All 5 should be deleterious
-        assert annot.deleterious_count == 5
+        # rs429358: SIFT=0.001(D), PP2=0.998(D), CADD=28.3(D), REVEL/MetaSVM/MetaLR(D).
+        # F24: REVEL/MetaSVM/MetaLR collapse into ONE meta axis → 4 independent
+        # axes (SIFT, PolyPhen, CADD, META), all deleterious.
+        assert annot.deleterious_count == 4
+        assert annot.deleterious_total_assessed == 4
 
 
 class TestLookupDbnsfpByPositions:
@@ -415,7 +417,13 @@ class TestLookupDbnsfpByPositions:
 
 
 class TestEnsemblePathogenicity:
-    """T2-12: Ensemble pathogenicity flag fires when ≥3 tools deleterious."""
+    """T2-12 / F24/F25: ensemble flag = strict majority of *present* independent axes.
+
+    The four independent axes are SIFT, PolyPhen-2, CADD and META (the
+    REVEL/MetaSVM/MetaLR meta-predictor family collapsed to one vote, F24). The
+    flag needs a strict majority of the axes actually assessed, with ≥2 axes
+    present (k-of-present, F25) — not a fixed ≥3-of-5.
+    """
 
     def _make_annot(self, **kwargs) -> DbNSFPAnnotation:
         defaults = {
@@ -436,7 +444,8 @@ class TestEnsemblePathogenicity:
             revel=0.8,
             metasvm=0.5,
         )
-        assert count_deleterious(annot) == 5
+        # SIFT, PolyPhen, CADD + the collapsed META axis = 4 independent axes.
+        assert count_deleterious(annot) == 4
         assert is_ensemble_pathogenic(annot)
 
     def test_exactly_three_deleterious(self):
@@ -511,6 +520,44 @@ class TestEnsemblePathogenicity:
         # MetaSVM boundary: exactly 0 is NOT deleterious (> 0 required)
         annot = self._make_annot(metasvm=0.0)
         assert count_deleterious(annot) == 0
+
+    def test_meta_predictors_collapse_to_one_axis(self):
+        """F24: REVEL+MetaSVM+MetaLR count as ONE axis, not three votes.
+
+        Three concordant meta-predictors (and nothing else) form a single
+        deleterious axis — so a fixed-5 count would have read 2+ here, but the
+        collapsed model reports exactly one assessed axis, which cannot flag on
+        its own (k-of-present needs ≥2 axes).
+        """
+        annot = self._make_annot(revel=0.9, metasvm=0.8, metalr=0.9)
+        assert count_deleterious(annot) == 1
+        assert annot.deleterious_total_assessed == 1
+        assert not is_ensemble_pathogenic(annot)
+
+    def test_meta_axis_needs_majority_not_a_single_outlier(self):
+        """F24: a lone deleterious meta-predictor outvoted by its siblings is not a vote."""
+        # MetaSVM says deleterious; REVEL and MetaLR say tolerated → axis = not del.
+        annot = self._make_annot(revel=0.2, metasvm=0.8, metalr=0.1)
+        assert count_deleterious(annot) == 0
+        assert annot.deleterious_total_assessed == 1
+
+    def test_k_of_present_flags_two_of_two(self):
+        """F25: 2 of 2 *present* axes deleterious flags, where fixed-3-of-5 never could.
+
+        Only SIFT and CADD are present (no PolyPhen, no meta-predictors); both
+        deleterious. Denominator is the 2 assessed axes, so the strict-majority
+        rule fires — the old fixed threshold of 3 made this unreachable.
+        """
+        annot = self._make_annot(sift_score=0.001, cadd_phred=30.0)
+        deleterious, assessed = count_deleterious(annot), annot.deleterious_total_assessed
+        assert (deleterious, assessed) == (2, 2)
+        assert is_ensemble_pathogenic(annot)
+
+    def test_single_present_axis_never_flags(self):
+        """F25: one assessed axis is not corroborating evidence, even if deleterious."""
+        annot = self._make_annot(cadd_phred=35.0)
+        assert annot.deleterious_total_assessed == 1
+        assert not is_ensemble_pathogenic(annot)
 
 
 # ── Version tracking tests ───────────────────────────────────────────────
