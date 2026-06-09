@@ -564,6 +564,11 @@ annotated_variants = sa.Table(
     sa.Column("gnomad_af_eur", sa.Float),
     sa.Column("gnomad_af_fin", sa.Float),
     sa.Column("gnomad_af_sas", sa.Float),
+    sa.Column(
+        "gnomad_af_popmax",
+        sa.Float,
+        comment="Population-max AF (max of non-null pop AFs); rarity denominator (F15)",
+    ),
     sa.Column("gnomad_homozygous_count", sa.Integer),
     sa.Column("rare_flag", sa.Boolean, server_default=sa.text("0")),
     sa.Column("ultra_rare_flag", sa.Boolean, server_default=sa.text("0")),

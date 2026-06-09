@@ -1130,10 +1130,18 @@ class TestGnomadAnnotationLookupIntegration:
         assert result["rs7412"]["gnomad_homozygous_count"] == 874
 
     def test_rare_threshold_correct(self, gnomad_engine: sa.Engine) -> None:
-        """P2-09: rare_flag uses 0.01 threshold (not hardcoded)."""
-        # rs28897696 has af_global=0.0052 — rare but not ultra-rare
+        """P2-09 / F15: rare_flag uses the 0.01 threshold on popmax (not global)."""
+        # rs5030862: popmax (afr)=0.006 — rare in every population.
+        result = _lookup_gnomad(["rs5030862"], {}, gnomad_engine)
+        assert result["rs5030862"]["rare_flag"] is True
+        assert result["rs5030862"]["ultra_rare_flag"] is False
+        assert result["rs5030862"]["gnomad_af_popmax"] == pytest.approx(0.006)
+
+    def test_ancestry_common_not_rare(self, gnomad_engine: sa.Engine) -> None:
+        """F15: rare globally (0.0052) but common in AFR (0.018) → not rare by popmax."""
         result = _lookup_gnomad(["rs28897696"], {}, gnomad_engine)
-        assert result["rs28897696"]["rare_flag"] is True
+        assert result["rs28897696"]["gnomad_af_popmax"] == pytest.approx(0.018)
+        assert result["rs28897696"]["rare_flag"] is False
         assert result["rs28897696"]["ultra_rare_flag"] is False
 
     def test_ultra_rare_threshold_correct(self, gnomad_engine: sa.Engine) -> None:

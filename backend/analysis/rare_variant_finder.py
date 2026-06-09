@@ -304,16 +304,22 @@ def find_rare_variants(
     # Build WHERE conditions
     conditions: list[sa.ColumnElement] = []
 
-    # AF threshold filter: include variants below threshold OR with no AF data
+    # F15: judge rarity on the population-max AF, not the global average, so a
+    # variant common in one ancestry is not surfaced as "rare". Fall back to the
+    # global AF for rows annotated before the popmax column existed (NULL popmax).
+    effective_af = sa.func.coalesce(av.c.gnomad_af_popmax, av.c.gnomad_af_global)
+
+    # AF threshold filter: include variants below threshold OR with no AF data.
+    # The no-data sentinel stays on gnomad_af_global (the F12 novelty signal).
     if filters.include_novel:
         conditions.append(
             sa.or_(
-                av.c.gnomad_af_global < filters.af_threshold,
+                effective_af < filters.af_threshold,
                 av.c.gnomad_af_global.is_(None),
             )
         )
     else:
-        conditions.append(av.c.gnomad_af_global < filters.af_threshold)
+        conditions.append(effective_af < filters.af_threshold)
         conditions.append(av.c.gnomad_af_global.isnot(None))
 
     # Gene panel filter
@@ -354,12 +360,13 @@ def find_rare_variants(
             (av.c.clinvar_significance.in_(list(PATHOGENIC_SIGNIFICANCE)), 0),
             else_=1,
         ),
-        # AF ascending, NULLs (novel) after known-rare
+        # AF ascending, NULLs (novel) after known-rare. Ordered by the same
+        # popmax-or-global rarity measure used for filtering (F15).
         sa.case(
             (av.c.gnomad_af_global.is_(None), 1),
             else_=0,
         ),
-        av.c.gnomad_af_global.asc(),
+        effective_af.asc(),
         # Chromosome and position for deterministic ordering
         av.c.chrom,
         av.c.pos,

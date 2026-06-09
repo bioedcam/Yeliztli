@@ -33,6 +33,7 @@ from backend.annotation.gnomad import (
     GnomADAnnotation,
     LoadStats,
     classify_variant_rarity,
+    compute_af_popmax,
     compute_rare_flags,
     create_gnomad_tables,
     iter_gnomad_vcf,
@@ -470,13 +471,27 @@ class TestRareVariantFlags:
         assert annot.ultra_rare_flag is False
 
     def test_rare_but_not_ultra_rare(self, gnomad_engine_with_data: sa.Engine):
-        """Variants with 0.001 <= AF < 0.01 are rare but not ultra-rare."""
-        # rs28897696 has af_global=0.0052
+        """Variants with 0.001 <= popmax < 0.01 are rare but not ultra-rare (F15)."""
+        # rs5030862: global=0.0041, popmax (afr)=0.006 — rare in every population.
+        results = lookup_gnomad_by_rsids(["rs5030862"], gnomad_engine_with_data)
+
+        annot = results["rs5030862"]
+        assert annot.af_popmax == pytest.approx(0.006)
+        assert annot.rare_flag is True
+        assert annot.ultra_rare_flag is False
+
+    def test_ancestry_common_variant_not_flagged_rare(self, gnomad_engine_with_data: sa.Engine):
+        """F15: a variant rare globally but common in one ancestry is NOT rare.
+
+        rs28897696 sits at af_global=0.0052 (rare) yet af_afr=0.018 (>1% in AFR),
+        so its popmax is 0.018 and global-AF rarity would mislabel it "rare".
+        """
         results = lookup_gnomad_by_rsids(["rs28897696"], gnomad_engine_with_data)
 
         annot = results["rs28897696"]
         assert annot.af_global == pytest.approx(0.0052)
-        assert annot.rare_flag is True
+        assert annot.af_popmax == pytest.approx(0.018)
+        assert annot.rare_flag is False
         assert annot.ultra_rare_flag is False
 
     def test_thresholds_match_constants(self):
@@ -705,6 +720,32 @@ class TestComputeRareFlags:
     def test_zero_af(self):
         """AF of 0.0 → (False, False): monomorphic reference, not ultra-rare (F26)."""
         assert compute_rare_flags(0.0) == (False, False)
+
+
+class TestComputeAfPopmax:
+    """compute_af_popmax: rarity denominator is the most-common ancestry (F15)."""
+
+    def test_max_over_populations(self):
+        # Global rare, but common in AFR → popmax is the ancestry max.
+        assert compute_af_popmax(0.0052, 0.018, 0.0025, 0.0001, 0.0003, 0.0001, 0.002) == 0.018
+
+    def test_all_none_is_none(self):
+        assert compute_af_popmax(None, None, None, None, None, None, None) is None
+
+    def test_ignores_nulls(self):
+        # Only global + one ancestry present; popmax is the larger of the two.
+        assert compute_af_popmax(0.002, None, 0.007, None, None, None, None) == 0.007
+
+    def test_popmax_at_least_global(self):
+        assert compute_af_popmax(0.03) == 0.03
+
+    def test_popmax_drives_rare_flag(self):
+        # The F15 wiring: an ancestry-common variant is NOT rare by popmax.
+        popmax = compute_af_popmax(0.0052, 0.018)
+        assert compute_rare_flags(popmax) == (False, False)
+        # …while a variant rare in every population is rare-not-ultra.
+        popmax_rare = compute_af_popmax(0.0041, 0.006, 0.003)
+        assert compute_rare_flags(popmax_rare) == (True, False)
 
 
 # ── Database index tests for rare flags (P2-10) ─────────────────────────

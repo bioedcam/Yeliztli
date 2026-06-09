@@ -54,6 +54,7 @@ _DEFAULTS = {
     "gnomad_af_eur": None,
     "gnomad_af_fin": None,
     "gnomad_af_sas": None,
+    "gnomad_af_popmax": None,
     "clinvar_significance": None,
     "clinvar_review_stars": None,
     "clinvar_accession": None,
@@ -215,6 +216,73 @@ def sample_with_rare_variants(sample_engine: sa.Engine) -> sa.Engine:
 def empty_sample(sample_engine: sa.Engine) -> sa.Engine:
     """Sample engine with no annotated variants."""
     return sample_engine
+
+
+class TestPopmaxRarity:
+    """F15: the finder judges rarity on popmax, falling back to global AF."""
+
+    def _insert(self, engine: sa.Engine, rows: list[dict]) -> None:
+        with engine.begin() as conn:
+            conn.execute(sa.insert(annotated_variants), rows)
+
+    def test_ancestry_common_variant_excluded(self, sample_engine: sa.Engine) -> None:
+        self._insert(
+            sample_engine,
+            [
+                # Rare globally (0.0005) but common in one ancestry (popmax 0.02) → excluded.
+                _v(
+                    rsid="rs_anc_common",
+                    chrom="1",
+                    pos=1000,
+                    genotype="AG",
+                    zygosity="het",
+                    gene_symbol="GENEA",
+                    consequence="missense_variant",
+                    gnomad_af_global=0.0005,
+                    gnomad_af_popmax=0.02,
+                    annotation_coverage=4,
+                ),
+                # Rare in every population (popmax 0.0005) → included.
+                _v(
+                    rsid="rs_truly_rare",
+                    chrom="1",
+                    pos=2000,
+                    genotype="AG",
+                    zygosity="het",
+                    gene_symbol="GENEB",
+                    consequence="missense_variant",
+                    gnomad_af_global=0.0005,
+                    gnomad_af_popmax=0.0005,
+                    annotation_coverage=4,
+                ),
+            ],
+        )
+        result = find_rare_variants(RareVariantFilter(), sample_engine)
+        rsids = {v.rsid for v in result.variants}
+        assert "rs_truly_rare" in rsids
+        assert "rs_anc_common" not in rsids
+
+    def test_null_popmax_falls_back_to_global(self, sample_engine: sa.Engine) -> None:
+        # Un-reannotated row: popmax NULL but global rare → still surfaced.
+        self._insert(
+            sample_engine,
+            [
+                _v(
+                    rsid="rs_legacy_rare",
+                    chrom="1",
+                    pos=3000,
+                    genotype="AG",
+                    zygosity="het",
+                    gene_symbol="GENEC",
+                    consequence="missense_variant",
+                    gnomad_af_global=0.0005,
+                    gnomad_af_popmax=None,
+                    annotation_coverage=4,
+                ),
+            ],
+        )
+        result = find_rare_variants(RareVariantFilter(), sample_engine)
+        assert "rs_legacy_rare" in {v.rsid for v in result.variants}
 
 
 # ── Default filter tests ──────────────────────────────────────────────────
