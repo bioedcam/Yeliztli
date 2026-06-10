@@ -158,7 +158,7 @@ S2_VARIANTS: list[dict] = [
     _v("rs16947", "22", 42522613, "TT"),  # CYP2D6 *2 defining — S2-only
     _v("rs4680", "22", 19963748, "AG"),  # PRS effect-allele coverage — S2
     _v("rs12913832", "15", 28365618, "GG"),  # PRS effect-allele coverage — S2
-    _v("rs113993959", "7", 117587806, "GT"),  # CFTR G542X het Pathogenic SNV — S2-only
+    _v("rs113993959", "7", 117587778, "GT"),  # CFTR G542X het Pathogenic SNV — S2-only
     _v("rs_mtB", "MT", 2706, "GG"),  # synthetic mt rsid
     _v("rs_yC", "Y", 14181030, "CC"),  # synthetic Y rsid — typed
     _v("rs_yD", "Y", 14181040, "GG"),  # synthetic Y rsid — typed
@@ -229,7 +229,7 @@ _VEP_SEED: tuple[dict, ...] = (
     {
         "rsid": "rs113993959",
         "chrom": "7",
-        "pos": 117587806,
+        "pos": 117587778,
         "ref": "G",
         "alt": "T",
         "gene_symbol": "CFTR",
@@ -242,15 +242,15 @@ _SEED_CLINVAR: tuple[dict, ...] = (
     {
         "rsid": "rs113993959",
         "chrom": "7",
-        "pos": 117587806,
+        "pos": 117587778,
         "ref": "G",
         "alt": "T",
         "significance": "Pathogenic",
         "review_stars": 3,
-        "accession": "VCV000007121",
+        "accession": "VCV000007115",
         "conditions": "Cystic fibrosis",
         "gene_symbol": "CFTR",
-        "variation_id": 7121,
+        "variation_id": 7115,
     },
 )
 
