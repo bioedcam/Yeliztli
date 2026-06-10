@@ -210,7 +210,7 @@ SEED_CPIC_ALLELES = [
     {
         "gene": "CYP2D6",
         "allele_name": "*2",
-        "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "C", "alt": "T"}]),
+        "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "G", "alt": "A"}]),
         "function": "Normal function",
         "activity_score": 1.0,
     },
@@ -224,7 +224,7 @@ SEED_CPIC_ALLELES = [
     {
         "gene": "CYP2D6",
         "allele_name": "*10",
-        "defining_variants": json.dumps([{"rsid": "rs1065852", "ref": "C", "alt": "T"}]),
+        "defining_variants": json.dumps([{"rsid": "rs1065852", "ref": "G", "alt": "A"}]),
         "function": "Decreased function",
         "activity_score": 0.25,
     },
@@ -585,7 +585,7 @@ SEED_RAW_VARIANTS = [
     {"rsid": "rs7412", "chrom": "19", "pos": 44908822, "genotype": "CC"},
     {"rsid": "rs1801133", "chrom": "1", "pos": 11856378, "genotype": "AG"},
     {"rsid": "rs4680", "chrom": "22", "pos": 19963748, "genotype": "AG"},
-    {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "CT"},
+    {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "AG"},
     {"rsid": "rs3892097", "chrom": "22", "pos": 42524947, "genotype": "CC"},
     {"rsid": "rs12913832", "chrom": "15", "pos": 28365618, "genotype": "GG"},
     {"rsid": "rs7903146", "chrom": "10", "pos": 114758349, "genotype": "CT"},

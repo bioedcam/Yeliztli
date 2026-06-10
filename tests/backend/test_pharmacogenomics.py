@@ -98,7 +98,7 @@ def pgx_reference_engine() -> sa.Engine:
         {
             "gene": "CYP2D6",
             "allele_name": "*2",
-            "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "C", "alt": "T"}]),
+            "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "G", "alt": "A"}]),
             "function": "Normal function",
             "activity_score": 1.0,
         },
@@ -112,7 +112,7 @@ def pgx_reference_engine() -> sa.Engine:
         {
             "gene": "CYP2D6",
             "allele_name": "*10",
-            "defining_variants": json.dumps([{"rsid": "rs1065852", "ref": "C", "alt": "T"}]),
+            "defining_variants": json.dumps([{"rsid": "rs1065852", "ref": "G", "alt": "A"}]),
             "function": "Decreased function",
             "activity_score": 0.25,
         },
@@ -130,7 +130,7 @@ def pgx_reference_engine() -> sa.Engine:
             "defining_variants": json.dumps(
                 [
                     {"rsid": "rs1800460", "ref": "C", "alt": "T"},
-                    {"rsid": "rs1142345", "ref": "A", "alt": "G"},
+                    {"rsid": "rs1142345", "ref": "T", "alt": "C"},
                 ]
             ),
             "function": "No function",
@@ -146,7 +146,7 @@ def pgx_reference_engine() -> sa.Engine:
         {
             "gene": "TPMT",
             "allele_name": "*3C",
-            "defining_variants": json.dumps([{"rsid": "rs1142345", "ref": "A", "alt": "G"}]),
+            "defining_variants": json.dumps([{"rsid": "rs1142345", "ref": "T", "alt": "C"}]),
             "function": "No function",
             "activity_score": 0.0,
         },
@@ -652,7 +652,7 @@ class TestCallStarAllelesCYP2D6:
     def test_cyp2d6_star1_star4(self, pgx_reference_engine: sa.Engine):
         """rs3892097 CT → *1/*4 → Intermediate Metabolizer."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
-        genotypes = {"rs16947": "CC", "rs3892097": "CT", "rs1065852": "CC"}
+        genotypes = {"rs16947": "GG", "rs3892097": "CT", "rs1065852": "GG"}
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*1/*4"
@@ -661,7 +661,7 @@ class TestCallStarAllelesCYP2D6:
     def test_cyp2d6_star4_star4(self, pgx_reference_engine: sa.Engine):
         """rs3892097 TT → *4/*4 → Poor Metabolizer."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
-        genotypes = {"rs16947": "CC", "rs3892097": "TT", "rs1065852": "CC"}
+        genotypes = {"rs16947": "GG", "rs3892097": "TT", "rs1065852": "GG"}
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*4/*4"
@@ -670,7 +670,7 @@ class TestCallStarAllelesCYP2D6:
     def test_cyp2d6_star2_star4(self, pgx_reference_engine: sa.Engine):
         """rs16947 CT + rs3892097 CT → *2/*4 → IM."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
-        genotypes = {"rs16947": "CT", "rs3892097": "CT", "rs1065852": "CC"}
+        genotypes = {"rs16947": "AG", "rs3892097": "CT", "rs1065852": "GG"}
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*2/*4"
@@ -681,7 +681,7 @@ class TestCallStarAllelesCYP2D6:
     def test_cyp2d6_star1_star2(self, pgx_reference_engine: sa.Engine):
         """rs16947 CT, others ref → *1/*2 → Normal Metabolizer."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
-        genotypes = {"rs16947": "CT", "rs3892097": "CC", "rs1065852": "CC"}
+        genotypes = {"rs16947": "AG", "rs3892097": "CC", "rs1065852": "GG"}
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*1/*2"
@@ -690,7 +690,7 @@ class TestCallStarAllelesCYP2D6:
     def test_cyp2d6_wildtype(self, pgx_reference_engine: sa.Engine):
         """All ref → *1/*1."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
-        genotypes = {"rs16947": "CC", "rs3892097": "CC", "rs1065852": "CC"}
+        genotypes = {"rs16947": "GG", "rs3892097": "CC", "rs1065852": "GG"}
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*1/*1"
@@ -706,7 +706,7 @@ class TestMultiVariantAlleles:
     def test_tpmt_star3a_het(self, pgx_reference_engine: sa.Engine):
         """Both *3A defining variants het → *1/*3A (most specific wins)."""
         alleles = _fetch_alleles_for_gene("TPMT", pgx_reference_engine)
-        genotypes = {"rs1800460": "CT", "rs1142345": "AG"}
+        genotypes = {"rs1800460": "CT", "rs1142345": "CT"}
 
         result = call_star_alleles_for_gene("TPMT", alleles, genotypes, pgx_reference_engine)
         # *3A is most specific (2 variants), gets priority over *3B or *3C
@@ -716,7 +716,7 @@ class TestMultiVariantAlleles:
     def test_tpmt_star3b_only(self, pgx_reference_engine: sa.Engine):
         """Only rs1800460 het, rs1142345 ref → *1/*3B."""
         alleles = _fetch_alleles_for_gene("TPMT", pgx_reference_engine)
-        genotypes = {"rs1800460": "CT", "rs1142345": "AA"}
+        genotypes = {"rs1800460": "CT", "rs1142345": "TT"}
 
         result = call_star_alleles_for_gene("TPMT", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*1/*3B"
@@ -725,7 +725,7 @@ class TestMultiVariantAlleles:
     def test_tpmt_star3c_only(self, pgx_reference_engine: sa.Engine):
         """Only rs1142345 het, rs1800460 ref → *1/*3C."""
         alleles = _fetch_alleles_for_gene("TPMT", pgx_reference_engine)
-        genotypes = {"rs1800460": "CC", "rs1142345": "AG"}
+        genotypes = {"rs1800460": "CC", "rs1142345": "CT"}
 
         result = call_star_alleles_for_gene("TPMT", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*1/*3C"
@@ -734,7 +734,7 @@ class TestMultiVariantAlleles:
     def test_tpmt_wildtype(self, pgx_reference_engine: sa.Engine):
         """All ref → *1/*1."""
         alleles = _fetch_alleles_for_gene("TPMT", pgx_reference_engine)
-        genotypes = {"rs1800460": "CC", "rs1142345": "AA"}
+        genotypes = {"rs1800460": "CC", "rs1142345": "TT"}
 
         result = call_star_alleles_for_gene("TPMT", alleles, genotypes, pgx_reference_engine)
         assert result.diplotype == "*1/*1"
@@ -786,9 +786,9 @@ class TestEdgeCases:
         """involved_rsids only includes rsids that contributed to a call."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
         genotypes = {
-            "rs16947": "CC",  # ref → not involved
+            "rs16947": "GG",  # ref → not involved
             "rs3892097": "CT",  # alt → involved (*4)
-            "rs1065852": "CC",  # ref → not involved
+            "rs1065852": "GG",  # ref → not involved
         }
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
@@ -818,7 +818,7 @@ class TestCallAllStarAlleles:
         sample = _make_sample_engine(
             [
                 {"rsid": "rs4244285", "chrom": "10", "pos": 96541616, "genotype": "GA"},
-                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "CT"},
+                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "AG"},
             ]
         )
 
@@ -859,8 +859,8 @@ class TestCallAllStarAlleles:
             [
                 {"rsid": "rs4244285", "chrom": "10", "pos": 96541616, "genotype": "GA"},
                 {"rsid": "rs3892097", "chrom": "22", "pos": 42524947, "genotype": "CT"},
-                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "CC"},
-                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "CC"},
+                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "GG"},
+                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "GG"},
             ]
         )
 
@@ -1104,7 +1104,7 @@ class TestCallConfidenceIntegrated:
     def test_cyp2d6_partial_structural_variant(self, pgx_reference_engine: sa.Engine):
         """T3-04: CYP2D6 calling produces Partial state with structural variant caveat."""
         alleles = _fetch_alleles_for_gene("CYP2D6", pgx_reference_engine)
-        genotypes = {"rs16947": "CT", "rs3892097": "CC", "rs1065852": "CC"}
+        genotypes = {"rs16947": "AG", "rs3892097": "CC", "rs1065852": "GG"}
 
         result = call_star_alleles_for_gene("CYP2D6", alleles, genotypes, pgx_reference_engine)
         assert result.call_confidence == CallConfidence.PARTIAL
@@ -1135,7 +1135,7 @@ class TestCallConfidenceIntegrated:
     def test_tpmt_complete_all_rsids(self, pgx_reference_engine: sa.Engine):
         """TPMT with all defining rsids → Complete."""
         alleles = _fetch_alleles_for_gene("TPMT", pgx_reference_engine)
-        genotypes = {"rs1800460": "CC", "rs1142345": "AA"}
+        genotypes = {"rs1800460": "CC", "rs1142345": "TT"}
 
         result = call_star_alleles_for_gene("TPMT", alleles, genotypes, pgx_reference_engine)
         assert result.call_confidence == CallConfidence.COMPLETE
@@ -1163,9 +1163,9 @@ class TestCallConfidenceIntegrated:
                 {"rsid": "rs4244285", "chrom": "10", "pos": 96541616, "genotype": "GA"},
                 {"rsid": "rs4986893", "chrom": "10", "pos": 96540410, "genotype": "GG"},
                 {"rsid": "rs12248560", "chrom": "10", "pos": 96521657, "genotype": "CC"},
-                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "CT"},
+                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "AG"},
                 {"rsid": "rs3892097", "chrom": "22", "pos": 42524947, "genotype": "CC"},
-                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "CC"},
+                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "GG"},
             ]
         )
 
@@ -1574,9 +1574,9 @@ class TestPrescribingAlertIntegration:
         """CYP2D6 *4/*4 → PM → codeine + tramadol alerts stored in findings."""
         sample = _make_sample_engine(
             [
-                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "CC"},
+                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "GG"},
                 {"rsid": "rs3892097", "chrom": "22", "pos": 42524947, "genotype": "TT"},
-                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "CC"},
+                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "GG"},
             ]
         )
 
@@ -1620,9 +1620,9 @@ class TestPrescribingAlertIntegration:
                 {"rsid": "rs4986893", "chrom": "10", "pos": 96540410, "genotype": "GG"},
                 {"rsid": "rs12248560", "chrom": "10", "pos": 96521657, "genotype": "CC"},
                 # CYP2D6 *1/*1 → NM
-                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "CC"},
+                {"rsid": "rs16947", "chrom": "22", "pos": 42522613, "genotype": "GG"},
                 {"rsid": "rs3892097", "chrom": "22", "pos": 42524947, "genotype": "CC"},
-                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "CC"},
+                {"rsid": "rs1065852", "chrom": "22", "pos": 42525772, "genotype": "GG"},
             ]
         )
 

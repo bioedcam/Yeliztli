@@ -506,11 +506,18 @@ class TestCrossModuleIntegration:
     ) -> None:
         """CYP2D6 and CYP2C19 star-allele calls produce pharma findings.
 
-        The test fixture includes:
-        - rs16947 (CYP2D6 *2 defining variant) with genotype AG
-        - rs3892097 (CYP2D6 *4 defining variant) with genotype GA
-        - rs1065852 (CYP2D6 *10 defining variant) with genotype CT
-        - rs4244285 (CYP2C19 *2 defining variant) with genotype GA
+        Star-allele defining variants exercised by the fixture (all genotypes are
+        GRCh37 plus/forward strand, matching real 23andMe data and the corrected
+        cpic_alleles.csv):
+        - rs16947 (CYP2D6 *2; plus-strand alt A) genotype AG -> *2 carrier
+        - rs4244285 (CYP2C19 *2; plus-strand alt A) genotype GA -> *2 carrier
+
+        NOTE: the synthetic sample_23andme_v5.txt fixture still carries a few
+        legacy pre-strand-fix CYP2D6 genotypes (e.g. rs1065852 CT, rs3892097 GA)
+        that no longer match the corrected plus-strand allele table and so are
+        not called; normalizing that fixture to plus strand is tracked as a
+        follow-up. The assertion below only requires that *some* pharma finding
+        is produced, which the CYP2C19/CYP2D6*2 calls above guarantee.
         """
         client = cross_module_client
         sample_id = self._upload_and_annotate(client)

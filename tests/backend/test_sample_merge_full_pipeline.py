@@ -155,7 +155,7 @@ S1_VARIANTS: list[dict] = [
 
 S2_VARIANTS: list[dict] = [
     _v("rs7412", "19", 44908822, "CC"),  # APOE — S2-only
-    _v("rs16947", "22", 42522613, "TT"),  # CYP2D6 *2 defining — S2-only
+    _v("rs16947", "22", 42522613, "AA"),  # CYP2D6 *2 defining (plus-strand alt=A) — S2-only
     _v("rs4680", "22", 19963748, "AG"),  # PRS effect-allele coverage — S2
     _v("rs12913832", "15", 28365618, "GG"),  # PRS effect-allele coverage — S2
     _v("rs113993959", "7", 117587778, "GT"),  # CFTR G542X het Pathogenic SNV — S2-only
@@ -270,7 +270,7 @@ _SEED_CPIC_ALLELES: tuple[dict, ...] = (
     {
         "gene": "CYP2D6",
         "allele_name": "*2",
-        "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "C", "alt": "T"}]),
+        "defining_variants": json.dumps([{"rsid": "rs16947", "ref": "G", "alt": "A"}]),
         "function": "Normal function",
         "activity_score": 1.0,
     },
