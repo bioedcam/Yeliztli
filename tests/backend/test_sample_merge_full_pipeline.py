@@ -20,9 +20,11 @@ Step 83 / MRG-09 (Plan §15.1). Covers the five sub-asserts MRG-09 names:
     pharmacogenomic coverage."
 
   * **Carrier-finding source attribution emitted.** A heterozygous
-    Pathogenic ClinVar variant in the carrier-panel CFTR gene (rs113993960)
-    lives only on S2. After merge + annotation the carrier finding fires;
-    crucially the merged ``raw_variants`` row at that rsid carries
+    Pathogenic ClinVar SNV in the carrier-panel CFTR gene (rs113993959,
+    G542X) lives only on S2. After merge + annotation the carrier finding
+    fires — its ``zygosity`` is computed by ``run_annotation`` itself (a
+    single-base ref/alt SNV is scoreable on an A/C/G/T chip), not
+    hand-seeded; crucially the merged ``raw_variants`` row at that rsid carries
     ``source='S2'`` so the post-merge UI can render which side authored
     the finding — locks the §10.4(b) provenance contract end-to-end at
     the boundary where it matters most (carrier findings drive
@@ -129,8 +131,9 @@ def _v(rsid: str, chrom: str, pos: int, genotype: str) -> dict:
 #   APOE         — rs429358 (S1) + rs7412 (S2) → DETERMINED only post-merge.
 #   CPIC CYP2D6  — rs3892097 (*4 def, S1) + rs16947 (*2 def, S2) → covers
 #                  both stars only post-merge.
-#   Carrier      — rs113993960 (CFTR het Pathogenic, S2-only) drives the
-#                  carrier finding; merged row's ``source`` column = "S2".
+#   Carrier      — rs113993959 (CFTR G542X het Pathogenic SNV, S2-only)
+#                  drives the carrier finding; the engine computes its
+#                  zygosity (no hand-seed); merged row's ``source`` = "S2".
 #   PRS          — four-SNP set: two rsids per side → coverage_fraction
 #                  flips from 50% on either source alone to 100% post-merge.
 #   Haplogroup   — synthetic chrM rsids (mt tree-walk; non-overlapping with
@@ -155,7 +158,7 @@ S2_VARIANTS: list[dict] = [
     _v("rs16947", "22", 42522613, "TT"),  # CYP2D6 *2 defining — S2-only
     _v("rs4680", "22", 19963748, "AG"),  # PRS effect-allele coverage — S2
     _v("rs12913832", "15", 28365618, "GG"),  # PRS effect-allele coverage — S2
-    _v("rs113993960", "7", 117559590, "AT"),  # CFTR het Pathogenic — S2-only
+    _v("rs113993959", "7", 117587806, "GT"),  # CFTR G542X het Pathogenic SNV — S2-only
     _v("rs_mtB", "MT", 2706, "GG"),  # synthetic mt rsid
     _v("rs_yC", "Y", 14181030, "CC"),  # synthetic Y rsid — typed
     _v("rs_yD", "Y", 14181040, "GG"),  # synthetic Y rsid — typed
@@ -224,30 +227,30 @@ _VEP_SEED: tuple[dict, ...] = (
         "consequence": "intron_variant",
     },
     {
-        "rsid": "rs113993960",
+        "rsid": "rs113993959",
         "chrom": "7",
-        "pos": 117559590,
-        "ref": "ATCT",
-        "alt": "A",
+        "pos": 117587806,
+        "ref": "G",
+        "alt": "T",
         "gene_symbol": "CFTR",
-        "consequence": "inframe_deletion",
+        "consequence": "stop_gained",
     },
 )
 
 
 _SEED_CLINVAR: tuple[dict, ...] = (
     {
-        "rsid": "rs113993960",
+        "rsid": "rs113993959",
         "chrom": "7",
-        "pos": 117559590,
-        "ref": "ATCT",
-        "alt": "A",
+        "pos": 117587806,
+        "ref": "G",
+        "alt": "T",
         "significance": "Pathogenic",
         "review_stars": 3,
-        "accession": "VCV000007105",
+        "accession": "VCV000007121",
         "conditions": "Cystic fibrosis",
         "gene_symbol": "CFTR",
-        "variation_id": 7105,
+        "variation_id": 7121,
     },
 )
 
@@ -586,24 +589,18 @@ class TestMergedSampleFullPipeline:
         self,
         merged_pipeline: tuple[DBRegistry, int, int, int, sa.Engine],
     ) -> None:
-        """CFTR het Pathogenic on S2 → merged carrier finding carries source='S2'."""
-        from backend.db.tables import annotated_variants
+        """CFTR G542X het Pathogenic on S2 → merged carrier finding carries source='S2'.
 
+        The carrier finding's ``zygosity`` is computed by ``run_annotation`` (the
+        ``merged_pipeline`` fixture already ran it), *not* hand-seeded: G542X is a
+        single-base SNV (ClinVar ref ``G`` / alt ``T``), so ``classify_zygosity``
+        resolves the merged ``GT`` call to ``het`` through the real engine path.
+        This exercises the production carriage gate end-to-end instead of stubbing
+        the column under test. The unscoreable-indel counterpart (F508del) is
+        locked separately by ``test_f508del_indel_unscoreable_on_chip`` and the
+        ``xfail`` tracker below.
+        """
         _registry, _s1_id, _s2_id, _merged_id, merged_engine = merged_pipeline
-
-        # The annotation engine writes ``genotype`` into annotated_variants
-        # but ``zygosity`` is populated by downstream analysis modules in
-        # the production pipeline (see test_carrier_analysis.py's fixture
-        # for the same pattern — they hand-seed the column). We backfill
-        # the single row our carrier-finding test reads so MRG-09's
-        # source-attribution invariant is exercised against a real
-        # carrier finding rather than a pre-skip suppression.
-        with merged_engine.begin() as conn:
-            conn.execute(
-                annotated_variants.update()
-                .where(annotated_variants.c.rsid == "rs113993960")
-                .values(zygosity="het")
-            )
 
         # Minimal one-gene CarrierPanel — Plan §15.1 MRG-09 only specifies
         # "source attribution emitted," so a single-gene CFTR panel is
@@ -621,7 +618,7 @@ class TestMergedSampleFullPipeline:
                     inheritance="AR",
                     evidence_level=4,
                     cross_links=[],
-                    expected_clinvar_rsids=["rs113993960"],
+                    expected_clinvar_rsids=["rs113993959"],
                     pmids=[],
                     notes="",
                 ),
@@ -631,7 +628,7 @@ class TestMergedSampleFullPipeline:
         assert carrier_result.carrier_count == 1
         carrier = carrier_result.variants[0]
         assert carrier.gene_symbol == "CFTR"
-        assert carrier.rsid == "rs113993960"
+        assert carrier.rsid == "rs113993959"
         assert carrier.zygosity == "het"
         assert "Pathogenic" in carrier.clinvar_significance
 
@@ -652,11 +649,13 @@ class TestMergedSampleFullPipeline:
     def test_f508del_indel_unscoreable_on_chip(self) -> None:
         """F508del (an indel) is unscoreable on an A/C/G/T chip.
 
-        Documents why ``test_carrier_finding_source_attribution_emitted`` must
-        hand-backfill zygosity: ``classify_zygosity`` cannot resolve carriage for
-        a multi-base ref/alt, so the real engine writes NULL here. Locking this
-        makes the masked indel-carriage gap explicit rather than hidden behind the
-        overwrite.
+        ``classify_zygosity`` cannot resolve carriage for a multi-base ref/alt, so
+        the real engine writes NULL zygosity for F508del. That is exactly why
+        ``test_carrier_finding_source_attribution_emitted`` drives its end-to-end
+        carrier assertion with a *SNV* (G542X, ref ``G`` / alt ``T``) the engine
+        can score, rather than with F508del — no hand-overwrite of the column
+        under test. This test keeps the indel-carriage gap explicit; the xfail
+        tracker below marks when it is closed.
         """
         assert classify_zygosity("AT", "ATCT", "A") is None
 
