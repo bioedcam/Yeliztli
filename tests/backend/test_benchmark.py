@@ -217,8 +217,8 @@ def test_annotation_600k_timing(
         )
     else:
         print(
-            f"  Status: PASS (over PRD {_ANNOTATION_PRD_HARD_LIMIT_SECONDS:.0f}s hard limit, "
-            f"within {limit / 60:.0f}-min {where} regression ceiling)"
+            f"  Status: PASS (over PRD {_ANNOTATION_PRD_HARD_LIMIT_SECONDS / 60:.0f}-min hard "
+            f"limit, within {limit / 60:.0f}-min {where} regression ceiling)"
         )
 
 

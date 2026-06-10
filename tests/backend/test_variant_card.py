@@ -586,7 +586,14 @@ class TestVariantCardAPI:
         assert resp.status_code == 404
 
     def test_generate_pdf_endpoint_with_mock(self, card_client: TestClient) -> None:
-        """T4-11: Variant evidence card generates valid PDF for known variant."""
+        """T4-11: the variant-card endpoint streams the generator's PDF bytes.
+
+        Scope: this validates the endpoint *plumbing* — bytes from
+        ``generate_variant_card_pdf`` come back with the right content-type and
+        filename. The PDF rendering itself is Playwright/Chromium-based
+        (``backend/reports/variant_card.py``) and belongs to the E2E tier, not this
+        fast unit test, so the generator is mocked here deliberately.
+        """
         fake_pdf = b"%PDF-1.4 fake pdf content"
         with patch(
             "backend.reports.variant_card.generate_variant_card_pdf",

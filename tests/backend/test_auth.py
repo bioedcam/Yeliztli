@@ -271,10 +271,12 @@ class TestAuthEnforcement:
         login_resp = auth_client.post("/api/auth/login", json={"password": "testpin"})
         cookies = {"gi_session": login_resp.cookies.get("gi_session")}
 
-        # Access protected endpoint
+        # Access protected endpoint — a valid session must succeed, not merely
+        # avoid 401. Asserting == 200 (the documented success for /api/samples,
+        # see TestAuthDisabled::test_no_auth_needed_when_disabled) also catches a
+        # 500 / 403 that `!= 401` would silently pass.
         resp = auth_client.get("/api/samples", cookies=cookies)
-        # Should not be 401 (might be 200 or other, but not auth-blocked)
-        assert resp.status_code != 401
+        assert resp.status_code == 200
 
 
 # ═══════════════════════════════════════════════════════════════════════

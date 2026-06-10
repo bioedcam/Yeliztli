@@ -647,9 +647,40 @@ class TestRunScoring:
         resp = tc.post("/api/analysis/skin/run?sample_id=9999")
         assert resp.status_code == 404
 
-    def test_run_idempotent(self, client_with_variants: tuple[TestClient, int]) -> None:
-        """Running scoring twice produces the same result (no duplicates)."""
+    def test_run_idempotent(
+        self, client_with_variants: tuple[TestClient, int], tmp_data_dir: Path
+    ) -> None:
+        """Running scoring twice is idempotent — equal count AND no duplicate rows."""
         tc, sample_id = client_with_variants
         resp1 = tc.post(f"/api/analysis/skin/run?sample_id={sample_id}")
         resp2 = tc.post(f"/api/analysis/skin/run?sample_id={sample_id}")
-        assert resp1.json()["findings_count"] == resp2.json()["findings_count"]
+        count = resp2.json()["findings_count"]
+        assert resp1.json()["findings_count"] == count
+
+        # findings_count is the per-run stored count, so equal counts alone do not
+        # prove the second run didn't APPEND duplicate rows. Assert the skin
+        # findings table holds exactly `count` rows after two runs — i.e. the
+        # delete-then-insert in store_skin_findings actually cleared the first run.
+        # Resolve the sample DB path from the samples table rather than assuming
+        # the on-disk filename, so the check doesn't couple to fixture naming.
+        settings = Settings(data_dir=tmp_data_dir, wal_mode=False)
+        ref_engine = sa.create_engine(f"sqlite:///{settings.reference_db_path}")
+        try:
+            with ref_engine.connect() as conn:
+                db_path = conn.execute(
+                    sa.select(samples.c.db_path).where(samples.c.id == sample_id)
+                ).scalar_one()
+        finally:
+            ref_engine.dispose()
+        sample_db = tmp_data_dir / db_path
+        engine = sa.create_engine(f"sqlite:///{sample_db}")
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    sa.select(sa.func.count())
+                    .select_from(findings)
+                    .where(findings.c.module == "skin")
+                ).scalar()
+        finally:
+            engine.dispose()
+        assert rows == count, f"expected {count} skin findings, found {rows} (duplicates?)"
