@@ -120,14 +120,15 @@ Each is a real masked defect; fix the assertion (and the SUT if the assertion th
 
 ---
 
-### Owner — repo settings (not code; requires `bioedcam`)
+### Owner — repo settings (requires `bioedcam`)
 
-> **Current state (2026-06-09):** `main` has **no branch protection** (`GET /branches/main/protection` → 404) and **no merge queue**. The `ci-required` aggregator and the Tier-2 push/`merge_group` legs are already wired in `ci.yml`, so the config below is the only missing piece. This is intentionally **deferred to a deliberate owner action**: turning on required checks / a merge queue mid-stream would gate in-flight remediation PRs and affect other contributors, so it should not be flipped on as a side effect of the test-debt work.
+1. **Branch protection on `main` — DONE (2026-06-09).** A repository ruleset **"main protection"** (id `17483890`, `enforcement: active`) targets the default branch and requires the **`CI Required`** + **`Lint`** status checks to pass before `main` can be updated (`strict_required_status_checks_policy: false`, so branches need not be up-to-date). The `CI Required` aggregator (`ci.yml`) treats *skipped* jobs as pass, so it is safe as the sole gate alongside `Lint`; on a PR the Tier-2 macOS/Docker/E2E legs are skipped and `CI Required` passes on the Linux jobs. Verify with `gh api repos/bioedcam/Yeliztli/rules/branches/main`.
 
-1. **Branch protection on `main`:** require status checks **`ci-required`** + **`lint`** (the `ci-required` aggregator is already wired in `ci.yml`; skipped jobs are treated as pass, so it is safe as the sole required check alongside `lint`).
-2. **Merge queue:** enable it with the **Tier-2** matrix (macOS `test-backend-cross-os` / `smoke-install-cross-os`, `docker-build`, 3-browser `test-e2e`) as required merge-queue checks — this closes the pre-merge macOS/Docker/E2E blind spot (those legs only run on `push`/`merge_group` today).
+2. **Merge queue — N/A on this repo.** GitHub's merge queue is only available for **organization-owned** repositories; `bioedcam/Yeliztli` is owned by a **personal (User) account**, so the "Require merge queue" rule is absent from the ruleset UI and the rulesets REST API rejects the `merge_queue` rule type (`422 Invalid rule 'merge_queue'`, even as admin with documented defaults). It cannot be enabled without transferring the repo to an organization.
+   - **Consequence:** the Tier-2 macOS/Docker/E2E legs cannot gate *pre-merge* via a `merge_group` event. They continue to run on **`push`→`main` (post-merge)** plus the **nightly cross-OS backstop**, so a Tier-2 break is caught "at most one merge later." This is the documented fallback (audit Part 2.4) and is the recommended steady state for a repo this size.
+   - **If pre-merge Tier-2 gating is ever required without a queue:** change each Tier-2 job's `if:` in `ci.yml` to also run on `pull_request` (they are already in `CI Required`'s `needs:`, so they would then block PRs directly). Cost: macOS (~10× Linux minutes), a Docker build, and 3-browser Playwright on **every** PR — the exact per-PR cost the 3-tier model was built to avoid — so this is a deliberate trade, not a default.
 
-**DoD:** `main` is protected by `ci-required` + `lint`; merge queue active with Tier-2 gates.
+**DoD:** `main` is protected by the `CI Required` + `Lint` required checks (✓). Merge queue is **not applicable** on a personal-account repo; Tier-2 stays post-merge (`push`) + nightly.
 
 ---
 
@@ -155,4 +156,4 @@ Rough order of effort: P1 items are small and high-signal; the P2 sweep is the b
 - ✅ Convention against `assert x is not None` / `status_code == 200`-only assertions is documented (`CONTRIBUTING.md`) with an advisory `.coderabbit.yaml` check; the audit's high-signal value-blind tests are fixed. *(Legacy lines are migrated opportunistically, not in a blocking sweep.)*
 - ✅ No perf assert sits next to a target it is an order of magnitude looser than. *(120s/300s inlined at the benchmark assert)*
 - ✅ Frontend chart tests assert the data, not the trace count *(density/qc charts expose per-trace y-values; dark-mode System-mode OS preference; overlays apply→results + delete; findings/variant zygosity rendering)*.
-- ⏳ **Owner-only (pending `bioedcam`):** `main` protected by the `ci-required` + `lint` required checks, with the merge queue gating Tier-2 (macOS/Docker/E2E). The aggregator + Tier-2 legs are already wired in `ci.yml`; only the repo-settings toggle remains (see "Owner — repo settings").
+- ✅ **`main` is protected** by the `CI Required` + `Lint` required checks (ruleset "main protection", active, 2026-06-09). The **merge queue is N/A** — it requires an organization-owned repo and this is a personal-account repo, so Tier-2 (macOS/Docker/E2E) stays post-merge (`push`) + nightly rather than pre-merge (see "Owner — repo settings").
