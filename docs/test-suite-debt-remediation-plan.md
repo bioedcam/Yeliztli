@@ -68,8 +68,9 @@ The audit's headline finding: the test suite encoded the **genotype-agnostic bug
    - The shared `tests/backend/_carriage_fixtures.py` (`hom_ref_pathogenic_row` / `het_pathogenic_row`) exists and is used by the ClinVar-carriage finders (`rare_variant_finder`, `custom_panels`).
    - **Coverage as of 2026-06-09 (re-verified):** `cancer` (`test_excludes_non_carried_zygosity`) and `cardiovascular` (`test_fh_status_negative_when_only_homozygous_reference`) are covered. The expansion-wave **risk-genotype** modules are covered by construction — their gate is risk-allele *dosage*, not ClinVar significance, so the correct negative control is "all-reference genotype → `calls == []`", which each module already asserts (see the "Already remediated" table). Non-carriage modules (`apoe` — everyone carries two alleles; `sex_aneuploidy`/`roh`/`kinship`/`qc` — sample-level metrics) are **N/A**.
    - **`carrier_status` — DONE.** `test_carrier_analysis.py::test_hom_ref_pathogenic_excluded` now seeds a `hom_ref` Pathogenic CFTR variant (with a real het carrier as a positive control) and asserts the non-carrier is suppressed through both `extract_carrier_variants` and `store_carrier_findings` (distinct from the pre-existing homozygous-ALT/affected exclusion `test_t3_37_hom_plp_excluded`).
-   - **Still open (folded into the P2 sweep):** the two panel-scoring modules — `pharmacogenomics` (all-wildtype defining variants → `*1/*1`, **no** clinical alert — handled with the P2 pgx phenotype fix) and `nutrigenomics` (standard genotype → no elevated-category SNP finding).
-   - **DoD:** `carrier_status` has a hom_ref negative control (✓); the pgx/nutrigenomics wildtype cases assert absence-of-finding (P2).
+   - **`pharmacogenomics` — DONE.** `test_no_data_defaults_to_wildtype` now also asserts the phenotype (`Normal Metabolizer`), and `test_absent_data_fabricates_no_risk_metabolizer` asserts absent pgx data resolves every gene to `*1/*1` Normal Metabolizer and that `generate_prescribing_alerts` never fabricates a Poor/Rapid/Intermediate/Ultrarapid alert from that absence.
+   - **Still open (folded into the P2 sweep):** `nutrigenomics` (standard genotype → no elevated-category SNP finding).
+   - **DoD:** `carrier_status` (✓) and `pharmacogenomics` (✓) have negative controls; the nutrigenomics wildtype case remains (P2).
 
 ---
 
@@ -90,7 +91,7 @@ Each is a real masked defect; fix the assertion (and the SUT if the assertion th
 
 **DoD:** each test asserts the behavior it claims to. Batch into ~2–3 PRs by subsystem (variant/export, cross-module, traits/pgx/lai).
 
-**Progress:** the **variant/export** subsystem is done — `test_variant_detail_api` now asserts hom_ref carriage is surfaced; `test_rare_variants_api::test_search_zygosity_filter` is two-sided (a rare hom_alt carrier is excluded by the het filter and surfaced by the hom_alt filter); `test_export::test_vcf_export` asserts per-line REF/ALT/GT (no dropped variants / swapped REF↔ALT / mis-encoded GT). The **cross-module** and **traits/pgx/lai** subsystems remain.
+**Progress:** the **variant/export** subsystem is done — `test_variant_detail_api` now asserts hom_ref carriage is surfaced; `test_rare_variants_api::test_search_zygosity_filter` is two-sided (a rare hom_alt carrier is excluded by the het filter and surfaced by the hom_alt filter); `test_export::test_vcf_export` asserts per-line REF/ALT/GT (no dropped variants / swapped REF↔ALT / mis-encoded GT). The **cross-module** subsystem is done — `test_unified_findings_aggregates_all_modules` asserts findings span ≥2 distinct modules (pharmacogenomics + another), and `test_apoe_genotype_determination` asserts the exact `ε3/ε3` diplotype. The **pgx** phenotype/negative-control fixes are done (see P1-B3). The **traits/lai** subsystem remains.
 
 ---
 

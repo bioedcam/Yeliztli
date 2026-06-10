@@ -451,6 +451,18 @@ class TestCrossModuleIntegration:
         # alleles are in the test fixture with matching CPIC data)
         assert len(findings) > 0, "No findings from any module"
 
+        # Aggregation must actually SPAN modules — a regression that dropped
+        # all-but-one module's findings would still satisfy "len > 0". Assert the
+        # unified feed carries pharmacogenomics AND at least one other module.
+        modules = {f["module"] for f in findings}
+        assert "pharmacogenomics" in modules, (
+            f"pharmacogenomics findings missing; modules present: {sorted(modules)}"
+        )
+        assert len(modules) >= 2, (
+            f"unified findings span only one module ({sorted(modules)}); the "
+            f"aggregator should combine several"
+        )
+
     def test_findings_summary_shows_module_counts(self, cross_module_client: TestClient) -> None:
         """Findings summary endpoint returns per-module counts."""
         client = cross_module_client
@@ -526,7 +538,9 @@ class TestCrossModuleIntegration:
         # rs429358=TT (no C allele) + rs7412=CC (no T allele) → ε3/ε3
         genotype = data.get("genotype") or data.get("diplotype")
         assert genotype is not None, "No genotype/diplotype in APOE response"
-        assert "3" in str(genotype), f"Expected ε3/ε3, got {genotype}"
+        # Assert the EXACT diplotype — "'3' in str" also passes for ε2/ε3, ε3/ε4,
+        # so an allele-pairing bug in the determination would slip through.
+        assert str(genotype) == "ε3/ε3", f"Expected ε3/ε3, got {genotype!r}"
 
     def test_cancer_module_processes_panel(self, cross_module_client: TestClient) -> None:
         """Cancer module processes the gene panel without errors."""

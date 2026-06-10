@@ -875,7 +875,7 @@ class TestCallAllStarAlleles:
         assert by_gene["CYP2D6"].diplotype == "*1/*4"
 
     def test_no_data_defaults_to_wildtype(self, pgx_reference_engine: sa.Engine):
-        """Gene with no sample data → *1/*1."""
+        """Gene with no sample data → *1/*1, Normal Metabolizer."""
         sample = _make_sample_engine([])
 
         results = call_all_star_alleles(
@@ -885,6 +885,34 @@ class TestCallAllStarAlleles:
         )
 
         assert results[0].diplotype == "*1/*1"
+        # Assert the phenotype call too — the diplotype alone doesn't prove the
+        # *1/*1 → phenotype lookup ran; a broken mapping could leave it None or
+        # mislabel it while the diplotype string still reads "*1/*1".
+        assert results[0].phenotype == "Normal Metabolizer"
+
+    def test_absent_data_produces_no_risk_phenotype_alerts(self, pgx_reference_engine: sa.Engine):
+        """Absent pgx data must default to Normal Metabolizer, never a risk call.
+
+        The genotype-agnostic guard for the diplotype path: a sample with no
+        defining variants must resolve every gene to *1/*1 Normal Metabolizer,
+        and ``generate_prescribing_alerts`` must not fabricate a Poor / Rapid /
+        Intermediate / Ultrarapid metabolizer alert from that absence (such a
+        miscall would drive a real prescribing change).
+        """
+        sample = _make_sample_engine([])
+
+        results = call_all_star_alleles(
+            pgx_reference_engine,
+            sample,
+            genes=frozenset({"CYP2C19", "CYP2D6"}),
+        )
+        for r in results:
+            assert r.diplotype == "*1/*1", f"{r.gene} not wildtype: {r.diplotype}"
+            assert r.phenotype == "Normal Metabolizer", f"{r.gene}: {r.phenotype}"
+
+        alerts = generate_prescribing_alerts(results, pgx_reference_engine)
+        non_normal = [(a.gene, a.phenotype) for a in alerts if a.phenotype != "Normal Metabolizer"]
+        assert not non_normal, f"absent data produced risk-metabolizer alerts: {non_normal}"
 
     def test_results_sorted_by_gene(self, pgx_reference_engine: sa.Engine):
         """Results are sorted alphabetically by gene name."""
