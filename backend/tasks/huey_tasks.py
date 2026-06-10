@@ -321,6 +321,23 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
             # annotation_state is NOT upserted — the gate stays up so the user
             # can retry via the re-annotation banner.
 
+        # Stamp per-finding provenance (SW-A4 #8): pin the source-release snapshot
+        # used to produce each finding. Best-effort and audit-only — a failure
+        # never affects findings or the staleness gate.
+        try:
+            from backend.analysis.provenance import stamp_findings_provenance
+
+            stamped = stamp_findings_provenance(sample_engine, registry.reference_engine)
+            logger.info(
+                "findings_provenance_stamped",
+                extra={"job_id": job_id, "sample_id": sample_id, "stamped": stamped},
+            )
+        except Exception:
+            logger.exception(
+                "findings_provenance_failed",
+                extra={"job_id": job_id, "sample_id": sample_id},
+            )
+
         # Generate SVGs for all findings (post-analysis step)
         _update_job(
             job_id,

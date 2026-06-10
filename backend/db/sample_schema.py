@@ -28,7 +28,9 @@ logger = structlog.get_logger(__name__)
 #     (validation strategy F25 — k-of-present ensemble denominator)
 # v10: Add gnomad_af_popmax to annotated_variants
 #      (validation strategy F15 — population-max rarity denominator)
-SAMPLE_SCHEMA_VERSION = 10
+# v11: Add provenance column to findings
+#      (SW-A4 #8 — per-finding source-release + version pinning, audit metadata)
+SAMPLE_SCHEMA_VERSION = 11
 
 
 # AncestryDNA Plan §10.4(a): merged-sample raw_variants uses (chrom, pos) PK
@@ -271,6 +273,19 @@ def _add_missing_columns(engine: sa.Engine, from_version: int) -> bool:
                         sa.text("ALTER TABLE annotated_variants ADD COLUMN gnomad_af_popmax REAL")
                     )
                 logger.info("gnomad_af_popmax_column_added", from_version=from_version)
+                added = True
+
+    if from_version < 11:
+        # SW-A4 (#8): per-finding provenance + version pinning. A JSON audit
+        # snapshot stamped on each finding after analysis. NULL on existing rows
+        # until the sample is re-annotated (the provenance pass runs post-analysis).
+        inspector = sa.inspect(engine)
+        if "findings" in inspector.get_table_names():
+            existing_cols = {c["name"] for c in inspector.get_columns("findings")}
+            if "provenance" not in existing_cols:
+                with engine.begin() as conn:
+                    conn.execute(sa.text("ALTER TABLE findings ADD COLUMN provenance TEXT"))
+                logger.info("findings_provenance_column_added", from_version=from_version)
                 added = True
 
     return added

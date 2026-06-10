@@ -74,6 +74,13 @@ def findings_client(
             "clinvar_significance": "Pathogenic",
             "pmid_citations": json.dumps(["12345678"]),
             "detail_json": json.dumps({"syndromes": ["HBOC"]}),
+            "provenance": json.dumps(
+                {
+                    "pipeline_version": "0.2.0",
+                    "sources": {"clinvar": {"version": "2026-05-01", "genome_build": "GRCh37"}},
+                    "variation_ids": {"rsid": "rs80357906"},
+                }
+            ),
         },
         {
             "module": "pharmacogenomics",
@@ -186,6 +193,17 @@ class TestListFindings:
         resp = findings_client.get("/api/analysis/findings?sample_id=1&module=cancer")
         data = resp.json()
         assert data[0]["detail"]["syndromes"] == ["HBOC"]
+
+    def test_finding_has_parsed_provenance(self, findings_client):
+        resp = findings_client.get("/api/analysis/findings?sample_id=1&module=cancer")
+        data = resp.json()
+        assert data[0]["provenance"]["sources"]["clinvar"]["version"] == "2026-05-01"
+        assert data[0]["provenance"]["variation_ids"]["rsid"] == "rs80357906"
+
+    def test_finding_without_provenance_is_none(self, findings_client):
+        resp = findings_client.get("/api/analysis/findings?sample_id=1&module=pharmacogenomics")
+        data = resp.json()
+        assert data[0]["provenance"] is None
 
     def test_finding_has_cross_module_link(self, findings_client):
         resp = findings_client.get("/api/analysis/findings?sample_id=1&module=gene_health")

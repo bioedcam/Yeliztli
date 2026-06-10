@@ -249,6 +249,7 @@ class TestSampleSchema:
             "prs_score",
             "pathway",
             "svg_path",
+            "provenance",
             "related_module",
             "related_finding_id",
         ]:
@@ -535,3 +536,55 @@ class TestSchemaMigration:
             assert row[1] == "Uncertain significance"
             assert row[2] == "BRCA2 VUS"
             assert row[3] is not None, "watched_at should have a default timestamp"
+
+    def _create_v10_sample_db(self, db_path: Path) -> sa.Engine:
+        """Create a sample DB at v10 (findings table without the provenance column)."""
+        engine = sa.create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(sa.text("PRAGMA journal_mode=WAL"))
+            conn.execute(
+                sa.text(
+                    """CREATE TABLE findings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        module TEXT NOT NULL,
+                        category TEXT,
+                        finding_text TEXT NOT NULL,
+                        rsid TEXT,
+                        detail_json TEXT,
+                        related_module TEXT,
+                        related_finding_id INTEGER
+                    )"""
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO findings (module, finding_text, rsid) "
+                    "VALUES ('cancer', 'BRCA1 Pathogenic', 'rs80357906')"
+                )
+            )
+            conn.execute(sa.text("PRAGMA user_version = 10"))
+            conn.commit()
+        return engine
+
+    def test_upgrade_v10_adds_provenance_column(self, tmp_path):
+        """v10 → v11 adds the provenance column to findings."""
+        db_path = tmp_path / "sample_001.db"
+        engine = self._create_v10_sample_db(db_path)
+
+        assert "provenance" not in _get_columns(db_path, "findings")
+
+        updated = ensure_sample_schema_current(engine)
+        assert updated is True
+        assert "provenance" in _get_columns(db_path, "findings")
+
+    def test_upgrade_v10_preserves_existing_findings(self, tmp_path):
+        """The v10 → v11 upgrade keeps existing finding rows, NULLing provenance."""
+        db_path = tmp_path / "sample_001.db"
+        engine = self._create_v10_sample_db(db_path)
+        ensure_sample_schema_current(engine)
+
+        with engine.connect() as conn:
+            row = conn.execute(sa.text("SELECT module, rsid, provenance FROM findings")).fetchone()
+        assert row[0] == "cancer"
+        assert row[1] == "rs80357906"
+        assert row[2] is None, "pre-existing rows have NULL provenance until re-annotation"

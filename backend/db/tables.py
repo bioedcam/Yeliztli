@@ -669,6 +669,13 @@ findings = sa.Table(
     sa.Column("svg_path", sa.Text),
     sa.Column("pmid_citations", sa.Text),  # JSON array of PubMed IDs
     sa.Column("detail_json", sa.Text),  # arbitrary module-specific data (JSON)
+    # Per-finding provenance + version pinning (SW-A4 / #8): JSON snapshot of the
+    # source releases (ClinVar/gnomAD/dbNSFP/CPIC versions + genome_build, F30),
+    # the variant's variation IDs, the annotation_coverage bitmask, and the
+    # pipeline version that produced the finding. NULL on rows predating SW-A4 /
+    # before the post-run stamping pass. Audit metadata only — never alters
+    # evidence_level / clinvar_significance.
+    sa.Column("provenance", sa.Text),
     sa.Column("related_module", sa.Text),  # cross-module link target module name
     sa.Column("related_finding_id", sa.Integer),  # cross-module link target finding ID
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
