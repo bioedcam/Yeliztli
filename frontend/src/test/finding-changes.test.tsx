@@ -114,6 +114,29 @@ describe('FindingChangesPanel', () => {
     expect(screen.getByText('CFTR')).toBeInTheDocument()
   })
 
+  it('renders nothing when the fetch rejects (network error)', async () => {
+    mockFetch.mockRejectedValue(new Error('Network error'))
+    const { container } = render(<FindingChangesPanel sampleId={1} />, {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+    expect(container.querySelector('[data-testid="finding-changes-1"]')).toBeNull()
+  })
+
+  it('renders nothing on a non-OK HTTP response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => 'Not found',
+      json: async () => ({ detail: 'Not found' }),
+    })
+    const { container } = render(<FindingChangesPanel sampleId={999} />, {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+    expect(container.querySelector('[data-testid="finding-changes-999"]')).toBeNull()
+  })
+
   it('calls the dismiss endpoint when Dismiss is clicked', async () => {
     mockFindingChanges(DIFF_WITH_CHANGES)
     render(<FindingChangesPanel sampleId={7} />, { wrapper: createWrapper() })
