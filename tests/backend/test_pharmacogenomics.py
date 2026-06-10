@@ -890,9 +890,7 @@ class TestCallAllStarAlleles:
         # mislabel it while the diplotype string still reads "*1/*1".
         assert results[0].phenotype == "Normal Metabolizer"
 
-    def test_absent_data_produces_no_risk_phenotype_alerts(
-        self, pgx_reference_engine: sa.Engine
-    ):
+    def test_absent_data_produces_no_risk_phenotype_alerts(self, pgx_reference_engine: sa.Engine):
         """Absent pgx data must default to Normal Metabolizer, never a risk call.
 
         The genotype-agnostic guard for the diplotype path: a sample with no
