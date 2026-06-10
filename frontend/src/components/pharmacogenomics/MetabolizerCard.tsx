@@ -99,6 +99,22 @@ export default function MetabolizerCard({ gene }: MetabolizerCardProps) {
         </p>
       )}
 
+      {/* Gene-specific interpretive caveat (e.g. DPYD fatal-toxicity / absent-allele).
+          Context only — mirrors the backend disclaimer; never overrides the result. */}
+      {gene.gene_caveat && (
+        <div
+          className="mt-2 flex gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 p-2"
+          role="note"
+          aria-label={`${gene.gene} interpretation caveat`}
+        >
+          <AlertTriangle
+            className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400"
+            aria-hidden="true"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">{gene.gene_caveat}</p>
+        </div>
+      )}
+
       {/* Associated drugs */}
       {gene.drugs.length > 0 && (
         <div className="mt-2 pt-2 border-t border-border/50">

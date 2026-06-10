@@ -850,3 +850,28 @@ ARRAY_CONFIDENCE_CONTEXT_ONLY = (
     "rarer — a low-reliability flag means confirm the call in a CLIA/accredited lab "
     "before any medical action, not that the call is wrong."
 )
+
+
+# ── DPYD fluoropyrimidine absent-allele / fatal-toxicity caveat (SW-E5) ───────
+# Attached to every DPYD prescribing-alert finding (gene_caveat in detail_json,
+# surfaced by backend.api.routes.pharma). DPYD encodes dihydropyrimidine
+# dehydrogenase, the rate-limiting enzyme of fluoropyrimidine (5-FU /
+# capecitabine) catabolism; DPD deficiency causes severe and sometimes fatal
+# toxicity. This panel only types 4 variants, and CPIC is explicit that a
+# normal-metabolizer result does NOT exclude DPD deficiency from rare or untested
+# variants. Honesty guardrail: this is interpretive context only — it never
+# changes the finding's metabolizer status or evidence level.
+
+DPYD_FLUOROPYRIMIDINE_CAVEAT = (
+    "DPYD result interpretation (context only). This panel types only 4 DPYD "
+    "variants (DPYD*2A, *13, c.2846A>T, and the HapB3 intronic variant). A "
+    "normal-metabolizer / negative result does NOT rule out dihydropyrimidine "
+    "dehydrogenase (DPD) deficiency — rare or untested DPYD variants, and "
+    "non-genetic causes, can still reduce DPD activity. DPD deficiency can cause "
+    "severe or fatal fluoropyrimidine (5-fluorouracil / capecitabine) toxicity, so "
+    "before fluoropyrimidine chemotherapy an oncologist may consider phenotypic DPD "
+    "testing (plasma uracil or dihydrouracil-to-uracil ratio, or DPD enzyme "
+    "activity) regardless of this genotype. This does not change the metabolizer "
+    "status or evidence level above; confirm any actionable result in a "
+    "CLIA/accredited laboratory and discuss dosing only with your care team."
+)

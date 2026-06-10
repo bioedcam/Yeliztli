@@ -20,6 +20,7 @@ const COMPLETE_GENE: GeneSummary = {
   evidence_level: 4,
   involved_rsids: ["rs4244285"],
   drugs: ["clopidogrel", "omeprazole", "voriconazole"],
+  gene_caveat: null,
 }
 
 const PARTIAL_GENE: GeneSummary = {
@@ -34,6 +35,7 @@ const PARTIAL_GENE: GeneSummary = {
   evidence_level: 3,
   involved_rsids: ["rs3892097"],
   drugs: ["codeine", "tramadol"],
+  gene_caveat: null,
 }
 
 const INSUFFICIENT_GENE: GeneSummary = {
@@ -47,6 +49,24 @@ const INSUFFICIENT_GENE: GeneSummary = {
   evidence_level: null,
   involved_rsids: [],
   drugs: ["efavirenz"],
+  gene_caveat: null,
+}
+
+const DPYD_GENE: GeneSummary = {
+  gene: "DPYD",
+  diplotype: "*1/*2A",
+  phenotype: "Intermediate Metabolizer",
+  call_confidence: "Complete",
+  confidence_note: null,
+  activity_score: 1.0,
+  ehr_notation: "DPYD Intermediate Metabolizer",
+  evidence_level: 4,
+  involved_rsids: ["rs3918290"],
+  drugs: ["fluorouracil", "capecitabine"],
+  gene_caveat:
+    "DPYD result interpretation (context only). This panel types only 4 DPYD variants. " +
+    "A normal-metabolizer / negative result does NOT rule out DPD deficiency, which can " +
+    "cause severe or fatal fluoropyrimidine toxicity.",
 }
 
 const DRUG_LIST: DrugListItem[] = [
@@ -113,6 +133,19 @@ describe("MetabolizerCard", () => {
     expect(
       screen.getByRole("article", { name: "CYP2C19 metabolizer status" }),
     ).toBeInTheDocument()
+  })
+
+  it("renders the DPYD interpretive caveat as a note", () => {
+    render(<MetabolizerCard gene={DPYD_GENE} />)
+    const note = screen.getByRole("note", { name: "DPYD interpretation caveat" })
+    expect(note).toBeInTheDocument()
+    expect(note).toHaveTextContent(/does NOT rule out DPD deficiency/i)
+    expect(note).toHaveTextContent(/fatal fluoropyrimidine toxicity/i)
+  })
+
+  it("does not render a caveat note when gene_caveat is null", () => {
+    render(<MetabolizerCard gene={COMPLETE_GENE} />)
+    expect(screen.queryByRole("note")).not.toBeInTheDocument()
   })
 })
 

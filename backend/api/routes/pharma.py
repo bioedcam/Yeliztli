@@ -61,6 +61,7 @@ class GeneEffect(BaseModel):
     activity_score: float | None = None
     ehr_notation: str | None = None
     involved_rsids: list[str] = []
+    gene_caveat: str | None = None  # interpretive caveat (e.g. DPYD fatal-toxicity)
 
 
 class DrugLookupResponse(BaseModel):
@@ -83,6 +84,7 @@ class GeneSummary(BaseModel):
     evidence_level: int | None = None
     involved_rsids: list[str] = []
     drugs: list[str] = []
+    gene_caveat: str | None = None  # interpretive caveat (e.g. DPYD fatal-toxicity)
 
 
 class GeneSummaryResponse(BaseModel):
@@ -186,6 +188,7 @@ def _fetch_sample_findings(sample_engine: sa.Engine, drug_name: str) -> dict[str
             "activity_score": detail.get("activity_score"),
             "ehr_notation": detail.get("ehr_notation"),
             "involved_rsids": detail.get("involved_rsids", []),
+            "gene_caveat": detail.get("gene_caveat"),
         }
 
     return result
@@ -302,6 +305,7 @@ def drug_lookup(
                     activity_score=finding["activity_score"],
                     ehr_notation=finding["ehr_notation"],
                     involved_rsids=finding["involved_rsids"],
+                    gene_caveat=finding["gene_caveat"],
                 )
             )
         else:
@@ -375,6 +379,7 @@ def gene_results(
             "ehr_notation": detail.get("ehr_notation"),
             "evidence_level": row.evidence_level,
             "involved_rsids": detail.get("involved_rsids", []),
+            "gene_caveat": detail.get("gene_caveat"),
         }
 
     # 3. Fetch drugs for each gene from CPIC guidelines
@@ -415,6 +420,7 @@ def gene_results(
                 evidence_level=info["evidence_level"],
                 involved_rsids=info["involved_rsids"],
                 drugs=gene_drugs.get(gene, []),
+                gene_caveat=info["gene_caveat"],
             )
         )
 

@@ -67,6 +67,7 @@ from backend.db.tables import (
     findings,
     raw_variants,
 )
+from backend.disclaimers import DPYD_FLUOROPYRIMIDINE_CAVEAT
 
 logger = structlog.get_logger(__name__)
 
@@ -76,6 +77,14 @@ _STAR_ALLELE_RE = re.compile(r"^\*?(\d+)(.*)")
 # gene conversion, hybrid alleles) that array genotyping cannot resolve.
 # These always receive "Partial" confidence at best.
 STRUCTURAL_VARIANT_GENES: frozenset[str] = frozenset({"CYP2D6", "CYP2B6"})
+
+# Gene-specific interpretive caveats attached to prescribing-alert findings
+# (detail_json["gene_caveat"]) and surfaced by the pharma route. Context only —
+# they never change metabolizer_status or evidence_level. DPYD carries an
+# absent-allele / fatal-toxicity caveat (SW-E5): only 4 variants are typed, and a
+# normal result does not exclude DPD deficiency (severe/fatal fluoropyrimidine
+# toxicity).
+_GENE_INTERPRETATION_CAVEATS: dict[str, str] = {"DPYD": DPYD_FLUOROPYRIMIDINE_CAVEAT}
 
 
 class CallConfidence(enum.Enum):
@@ -752,6 +761,9 @@ def store_prescribing_alerts(
             "ehr_notation": alert.ehr_notation,
             "involved_rsids": alert.involved_rsids,
         }
+        gene_caveat = _GENE_INTERPRETATION_CAVEATS.get(alert.gene)
+        if gene_caveat:
+            detail["gene_caveat"] = gene_caveat
 
         rows.append(
             {

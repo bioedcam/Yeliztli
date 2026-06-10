@@ -15,6 +15,12 @@ export interface GeneSummary {
   evidence_level: number | null
   involved_rsids: string[]
   drugs: string[]
+  /**
+   * Gene-specific interpretive caveat (context only — never changes the
+   * metabolizer status or evidence level). Mirrors the backend constant
+   * `DPYD_FLUOROPYRIMIDINE_CAVEAT` in backend/disclaimers.py (SW-E5).
+   */
+  gene_caveat: string | null
 }
 
 export interface GeneSummaryResponse {
@@ -48,6 +54,8 @@ export interface GeneEffect {
   activity_score: number | null
   ehr_notation: string | null
   involved_rsids: string[]
+  /** See {@link GeneSummary.gene_caveat}. Mirrors a backend disclaimer (SW-E5). */
+  gene_caveat: string | null
 }
 
 export interface DrugLookupResponse {

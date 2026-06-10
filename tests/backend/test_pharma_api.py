@@ -33,6 +33,7 @@ from backend.db.tables import (
     reference_metadata,
     samples,
 )
+from backend.disclaimers import DPYD_FLUOROPYRIMIDINE_CAVEAT
 
 # ── Test data ────────────────────────────────────────────────────────
 
@@ -466,3 +467,73 @@ class TestGeneResults:
         data = resp.json()
         genes = [item["gene"] for item in data["items"]]
         assert genes == sorted(genes)
+
+    def test_non_dpyd_gene_has_no_caveat(self, client: tuple[TestClient, int]):
+        """gene_caveat is DPYD-specific; CYP2C19/CYP2D6 cards expose None."""
+        tc, sample_id = client
+        resp = tc.get(f"/api/analysis/pharma/genes?sample_id={sample_id}")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert items, "expected non-DPYD gene cards (CYP2C19 / CYP2D6 findings)"
+        for item in items:
+            assert item.get("gene_caveat") is None, item["gene"]
+
+
+# ── DPYD fluoropyrimidine caveat surfacing (SW-E5) ────────────────────
+
+
+_DPYD_GUIDELINE = {
+    "gene": "DPYD",
+    "drug": "fluorouracil",
+    "phenotype": "Intermediate Metabolizer",
+    "recommendation": "Reduce starting dose by 50%, then titrate.",
+    "classification": "A",
+    "guideline_url": "https://cpicpgx.org/guidelines/guideline-for-fluoropyrimidines-and-dpyd/",
+}
+
+_DPYD_FINDING = {
+    "module": "pharmacogenomics",
+    "category": "prescribing_alert",
+    "evidence_level": 4,
+    "gene_symbol": "DPYD",
+    "diplotype": "*1/*2A",
+    "metabolizer_status": "Intermediate Metabolizer",
+    "drug": "fluorouracil",
+    "finding_text": "DPYD *1/*2A: Intermediate Metabolizer -- fluorouracil: Reduce dose.",
+    "detail_json": json.dumps(
+        {
+            "recommendation": "Reduce starting dose by 50%, then titrate.",
+            "classification": "A",
+            "guideline_url": _DPYD_GUIDELINE["guideline_url"],
+            "call_confidence": "Complete",
+            "confidence_note": "All defining positions assessed.",
+            "activity_score": 1.0,
+            "ehr_notation": "DPYD Intermediate Metabolizer",
+            "involved_rsids": ["rs3918290"],
+            "gene_caveat": DPYD_FLUOROPYRIMIDINE_CAVEAT,
+        }
+    ),
+}
+
+
+@pytest.fixture
+def dpyd_client(tmp_data_dir: Path) -> Generator[tuple[TestClient, int], None, None]:
+    yield from _setup_client(
+        tmp_data_dir, CPIC_GUIDELINES_DATA + [_DPYD_GUIDELINE], [_DPYD_FINDING]
+    )
+
+
+class TestDpydCaveatSurfacing:
+    def test_genes_endpoint_surfaces_caveat(self, dpyd_client: tuple[TestClient, int]):
+        tc, sample_id = dpyd_client
+        resp = tc.get(f"/api/analysis/pharma/genes?sample_id={sample_id}")
+        assert resp.status_code == 200
+        dpyd = next(i for i in resp.json()["items"] if i["gene"] == "DPYD")
+        assert dpyd["gene_caveat"] == DPYD_FLUOROPYRIMIDINE_CAVEAT
+
+    def test_drug_endpoint_surfaces_caveat(self, dpyd_client: tuple[TestClient, int]):
+        tc, sample_id = dpyd_client
+        resp = tc.get(f"/api/analysis/pharma/drug/fluorouracil?sample_id={sample_id}")
+        assert resp.status_code == 200
+        dpyd = next(e for e in resp.json()["gene_effects"] if e["gene"] == "DPYD")
+        assert dpyd["gene_caveat"] == DPYD_FLUOROPYRIMIDINE_CAVEAT

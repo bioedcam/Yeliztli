@@ -146,8 +146,8 @@ class TestParseDiplotypesCSV:
     def test_parse_seed_file(self):
         rows, stats = parse_cpic_diplotypes_csv(SEED_DIR / "cpic_diplotypes_seed.csv")
 
-        assert len(rows) == 55  # 55 data rows in seed
-        assert stats.diplotypes_loaded == 55
+        assert len(rows) == 65  # 55 base + 10 enumerated DPYD compound-het diplotypes (SW-E5)
+        assert stats.diplotypes_loaded == 65
         assert stats.diplotypes_skipped == 0
 
     def test_first_row_structure(self):
