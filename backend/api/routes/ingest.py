@@ -59,7 +59,12 @@ def _build_bundle_gate_payload(installed_version: str | None) -> dict:
         update_url = registry_entry.url if registry_entry else ""
         size_bytes = registry_entry.expected_size_bytes if registry_entry else 0
         sha256 = registry_entry.sha256 if registry_entry else None
-        required = "v2.0.0"
+        # Manifest unreachable → advertise the gate *floor* (the minimum semver
+        # that unblocks AncestryDNA), derived from the threshold constant so it
+        # never drifts when the manifest's latest version is bumped (e.g. G1's
+        # v3.0.0). This only surfaces to users below the floor, so the floor is
+        # the honest "what you need at least" when the latest is unknown.
+        required = f"v{_VEP_BUNDLE_MIN_FOR_ANCESTRYDNA}"
 
     return {
         "error": "bundle_version_too_old",

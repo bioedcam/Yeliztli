@@ -120,6 +120,9 @@ def _parse_manifest(payload: Any) -> Manifest:
             min_app_version = (
                 str(min_app_raw) if isinstance(min_app_raw, str) and min_app_raw else None
             )
+            # Only the fields below are extracted; any other key (e.g. a free-text
+            # ``comment`` used to document an entry in-place — see the vep_bundle
+            # entry's G1 re-annotation note) is intentionally tolerated and ignored.
             bundles[name] = BundleManifestEntry(
                 version=_required_str(entry, "version", context=ctx),
                 build_date=_required_str(entry, "build_date", context=ctx),

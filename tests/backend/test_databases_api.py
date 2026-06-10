@@ -326,11 +326,16 @@ class TestBundledInstall:
 
             # No recorded version → needs install.
             assert _bundle_install_needed(vep, engine) is True
-            # Stale fixture (v1.0.0) trails manifest v2.0.0 → needs install.
+            # Stale fixture (v1.0.0) trails manifest v3.0.0 → needs install.
             _record_db_version(engine, db_name="vep_bundle", version="v1.0.0", file_size_bytes=1)
             assert _bundle_install_needed(vep, engine) is True
-            # Recorded == manifest → no re-install.
+            # G1: a system at the prior v2.0.0 now trails manifest v3.0.0 → the
+            # re-annotation bump surfaces an available update (which, on install,
+            # re-records v3.0.0 and makes pre-existing samples stale).
             _record_db_version(engine, db_name="vep_bundle", version="v2.0.0", file_size_bytes=1)
+            assert _bundle_install_needed(vep, engine) is True
+            # Recorded == manifest (v3.0.0) → no re-install.
+            _record_db_version(engine, db_name="vep_bundle", version="v3.0.0", file_size_bytes=1)
             assert _bundle_install_needed(vep, engine) is False
             # ancestry already at manifest v1.0 → no re-install (setup re-run safe).
             _record_db_version(engine, db_name="ancestry_pca", version="v1.0", file_size_bytes=1)

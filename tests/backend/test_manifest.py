@@ -646,8 +646,15 @@ class TestRepoManifest:
         # gnomAD is no longer a pipeline pin now that it ships as a bundle.
         assert "gnomad" not in m.pipeline_pins
 
-    def test_repo_manifest_vep_bundle_is_v2_0_0(self, monkeypatch):
-        """Pins step 4's manifest update against accidental rollback."""
+    def test_repo_manifest_vep_bundle_is_v3_0_0(self, monkeypatch):
+        """Pins the manifest's vep_bundle entry against accidental rollback/drift.
+
+        G1: the manifest ``version`` was bumped to v3.0.0 to force
+        ``is_sample_stale`` to re-flag pre-existing samples for re-annotation
+        through the corrected engine. The CATALOG is unchanged, so the
+        version intentionally **leads** the asset tag — url/sha256/size still
+        point at the real ``bundle-v2.0.0`` asset.
+        """
         repo_root = Path(__file__).resolve().parents[2]
         path = repo_root / "bundles" / "manifest.json"
         if not path.is_file():
@@ -656,10 +663,10 @@ class TestRepoManifest:
 
         m = fetch_manifest()
         vep = m.bundles["vep_bundle"]
-        assert vep.version == "v2.0.0"
+        assert vep.version == "v3.0.0"
+        # Version leads the asset tag by design (G1) — the catalog is unchanged,
+        # so url/sha256/size still pin the real published bundle-v2.0.0 asset.
         assert vep.url.endswith("/bundle-v2.0.0/vep_bundle.db")
-        # Exact-equality vs the real published asset values (PR-0a, Phase D);
-        # pins bundles/manifest.json against accidental rollback or drift.
         assert vep.size_bytes == VEP_BUNDLE_SIZE_BYTES
         assert vep.sha256 == VEP_BUNDLE_SHA256
         raw = json.loads(path.read_text(encoding="utf-8"))

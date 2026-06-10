@@ -270,10 +270,12 @@ class TestRequireFreshSample:
             "reannotate_url",
         } <= set(detail.keys())
 
-        # The sample's recorded version (the "installed" annotation
-        # state) and the live bundle's version (the "required" target).
+        # The sample's recorded version (the "installed" annotation state) and
+        # the live bundle's version (the "required" target). required_version is
+        # the manifest's vep_bundle version, bumped to v3.0.0 for the G1
+        # re-annotation trigger.
         assert detail["installed_version"] == "v1.0.0"
-        assert detail["required_version"] == "v2.0.0"
+        assert detail["required_version"] == "v3.0.0"
         # Plan §7.5 — escape hatch points at annotation.py.
         assert detail["reannotate_url"] == "/api/annotation/1"
         # Manifest fixture exposes the published URL.

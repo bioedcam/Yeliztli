@@ -220,3 +220,52 @@ class TestIsSampleStale:
         events = [e for e in cap_logs if e.get("event") == "annotation_state_missing"]
         assert events, "expected annotation_state_missing warning"
         assert events[0].get("reason") == "sample_row_missing"
+
+
+# ── G1: vep_bundle re-annotation bump ─────────────────────────────────
+
+
+def _repo_manifest_vep_version() -> str:
+    """Read the vep_bundle ``version`` straight from the repo manifest."""
+    import json
+
+    repo_manifest = Path(__file__).resolve().parents[2] / "bundles" / "manifest.json"
+    data = json.loads(repo_manifest.read_text(encoding="utf-8"))
+    return data["bundles"]["vep_bundle"]["version"]
+
+
+class TestG1ReannotationBump:
+    """G1: the manifest vep_bundle version was bumped so ``is_sample_stale``
+    re-flags every pre-existing sample for re-annotation through the corrected
+    (carriage/zygosity + F25/F15) engine. The catalog is unchanged — only the
+    version leads the asset tag.
+    """
+
+    # What pre-existing samples were annotated against before the bump.
+    _PRIOR_MAJOR_VERSION = "v2.0.0"
+
+    def test_manifest_major_exceeds_prior_so_v2_samples_reflag(self):
+        """The bump must raise the major above the prior, or nothing re-flags."""
+        from packaging.version import Version
+
+        installed_major = Version(_repo_manifest_vep_version().lstrip("v")).major
+        prior_major = Version(self._PRIOR_MAJOR_VERSION.lstrip("v")).major
+        assert installed_major > prior_major
+
+    def test_prior_major_sample_is_stale_after_bump(self, staleness_env):
+        """A sample annotated at the prior major is stale once the bumped
+        manifest version is the installed version → the re-annotation banner
+        fires and a live re-run repopulates zygosity + the new columns."""
+        installed = _repo_manifest_vep_version()
+        _seed_installed_bundle(staleness_env["settings"], installed)
+        _make_sample_db(staleness_env["settings"], seed_version=self._PRIOR_MAJOR_VERSION)
+
+        assert is_sample_stale(staleness_env["sample_id"]) is True
+
+    def test_sample_at_bumped_version_not_stale(self, staleness_env):
+        """A sample re-annotated against the bumped version is no longer stale."""
+        installed = _repo_manifest_vep_version()
+        _seed_installed_bundle(staleness_env["settings"], installed)
+        _make_sample_db(staleness_env["settings"], seed_version=installed)
+
+        assert is_sample_stale(staleness_env["sample_id"]) is False
