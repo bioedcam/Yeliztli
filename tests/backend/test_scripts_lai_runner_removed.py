@@ -17,8 +17,6 @@ import re
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SEARCH_ROOTS = ("backend", "tests", "scripts", "frontend")
 IMPORT_PATTERN = re.compile(
@@ -51,8 +49,12 @@ def test_no_source_tree_imports_or_path_references():
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT, check=False)
     # `git grep` exits 1 on zero matches, 0 on at least one match, 128 on error.
-    if result.returncode == 128:
-        pytest.skip(f"git grep unavailable: {result.stderr.strip()}")
+    # Fail loudly on a broken git environment rather than skipping: a silent skip
+    # would let the removal invariant go unverified and read as "passed".
+    assert result.returncode != 128, (
+        f"git grep failed (exit 128) — the removal invariant could not be "
+        f"checked: {result.stderr.strip()}"
+    )
     assert result.returncode == 1, (
         "Found references to the deleted scripts/lai_runner.py — clean these "
         "up before re-asserting the step-22a removal invariant:\n" + result.stdout

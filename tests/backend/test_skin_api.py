@@ -647,9 +647,29 @@ class TestRunScoring:
         resp = tc.post("/api/analysis/skin/run?sample_id=9999")
         assert resp.status_code == 404
 
-    def test_run_idempotent(self, client_with_variants: tuple[TestClient, int]) -> None:
-        """Running scoring twice produces the same result (no duplicates)."""
+    def test_run_idempotent(
+        self, client_with_variants: tuple[TestClient, int], tmp_data_dir: Path
+    ) -> None:
+        """Running scoring twice is idempotent — equal count AND no duplicate rows."""
         tc, sample_id = client_with_variants
         resp1 = tc.post(f"/api/analysis/skin/run?sample_id={sample_id}")
         resp2 = tc.post(f"/api/analysis/skin/run?sample_id={sample_id}")
-        assert resp1.json()["findings_count"] == resp2.json()["findings_count"]
+        count = resp2.json()["findings_count"]
+        assert resp1.json()["findings_count"] == count
+
+        # findings_count is the per-run stored count, so equal counts alone do not
+        # prove the second run didn't APPEND duplicate rows. Assert the skin
+        # findings table holds exactly `count` rows after two runs — i.e. the
+        # delete-then-insert in store_skin_findings actually cleared the first run.
+        sample_db = tmp_data_dir / "samples" / f"sample_{sample_id}.db"
+        engine = sa.create_engine(f"sqlite:///{sample_db}")
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    sa.select(sa.func.count())
+                    .select_from(findings)
+                    .where(findings.c.module == "skin")
+                ).scalar()
+        finally:
+            engine.dispose()
+        assert rows == count, f"expected {count} skin findings, found {rows} (duplicates?)"

@@ -206,23 +206,25 @@ class TestListWatched:
 
     def test_list_multiple(self, watches_client: TestClient):
         """GET returns all watched variants ordered by watched_at desc."""
-        import time
+        from datetime import UTC, datetime, timedelta
+        from itertools import count
+        from unittest.mock import patch
 
-        watches_client.post(
-            "/api/watches",
-            json={"sample_id": 1, "rsid": "rs12345"},
-        )
-        time.sleep(0.01)  # Ensure distinct timestamps
-        watches_client.post(
-            "/api/watches",
-            json={"sample_id": 1, "rsid": "rs80357906"},
-        )
+        # Inject strictly-increasing watched_at timestamps instead of relying on a
+        # real time.sleep, which flakes when the watched_at resolution is coarser
+        # than the 10 ms sleep. The desc-ordering assertion is now deterministic.
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        ticks = count()
+        with patch("backend.api.routes.watches.datetime") as mock_dt:
+            mock_dt.now.side_effect = lambda *a, **k: base + timedelta(seconds=next(ticks))
+            watches_client.post("/api/watches", json={"sample_id": 1, "rsid": "rs12345"})
+            watches_client.post("/api/watches", json={"sample_id": 1, "rsid": "rs80357906"})
 
         resp = watches_client.get("/api/watches?sample_id=1")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
-        # Most recent first (desc order)
+        # Most recent first: rs80357906 got the later (larger) injected timestamp.
         assert data[0]["rsid"] == "rs80357906"
         assert data[1]["rsid"] == "rs12345"
 
