@@ -78,17 +78,25 @@ def convert_coordinate(
         Tuple of ``(chrom_grch38, pos_grch38)`` with 1-based position and
         chromosome name without ``chr`` prefix (matching our internal convention),
         or ``None`` if the coordinate could not be lifted over (e.g. the region
-        was deleted/rearranged in GRCh38).
+        was deleted/rearranged in GRCh38, or a mitochondrial input — see below).
+
+    Mitochondrial inputs (``MT`` / ``chrM``) always return ``None`` (F34): UCSC
+    hg19 ``chrM`` is the old Yoruba reference sequence, **not** rCRS — the build
+    the chip data uses — so the hg19→hg38 chain lifts MT positions to wrong
+    GRCh38 coordinates (e.g. 263→deleted, 750→748). Refusing to lift is correct
+    here; emitting a bogus coordinate would silently corrupt downstream joins.
     """
+    clean = chrom.removeprefix("chr")
+
+    # MT short-circuit (F34): the vendored hg19→hg38 chain's chrM is Yoruba, not
+    # rCRS, so any lifted mitochondrial coordinate is wrong. Decline to lift.
+    if clean in ("MT", "M"):
+        return None
+
     lo = _get_liftover()
 
-    # Ensure UCSC-style chromosome name (pyliftover requires "chr" prefix)
-    # UCSC uses "chrM" for mitochondrial, while our data uses "MT"
-    clean = chrom.removeprefix("chr")
-    if clean == "MT":
-        ucsc_chrom = "chrM"
-    else:
-        ucsc_chrom = f"chr{clean}"
+    # pyliftover requires UCSC-style "chr"-prefixed names.
+    ucsc_chrom = f"chr{clean}"
 
     # pyliftover uses 0-based coordinates; our positions are 1-based
     results = lo.convert_coordinate(ucsc_chrom, pos - 1)
@@ -99,10 +107,9 @@ def convert_coordinate(
     # Take the best (first) result
     new_chrom, new_pos_0based, _strand, _score = results[0]
 
-    # Strip "chr" prefix for internal consistency; map chrM → MT
+    # Strip "chr" prefix for internal consistency. MT is short-circuited above,
+    # and no autosomal/sex input lifts to chrM, so no chrM→MT remap is needed.
     out_chrom = new_chrom.removeprefix("chr")
-    if out_chrom == "M":
-        out_chrom = "MT"
 
     # Convert back to 1-based
     return (out_chrom, new_pos_0based + 1)

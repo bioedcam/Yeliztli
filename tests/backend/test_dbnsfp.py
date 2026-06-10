@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
 from backend.annotation.dbnsfp import (
     BATCH_SIZE,
@@ -389,8 +390,13 @@ class TestLookupDbnsfpByRsids:
 
 
 class TestLookupDbnsfpByPositions:
+    # dbnsfp.db is GRCh38-coordinate; the join is only valid for GRCh38 inputs,
+    # so the tests that exercise the SQL join declare source_build="GRCh38"
+    # (F35). The default GRCh37 path is covered by the cross-build-skip tests.
     def test_returns_correct_scores(self, dbnsfp_engine_with_data: sa.Engine):
-        results = lookup_dbnsfp_by_positions([("19", 44908684, "T", "C")], dbnsfp_engine_with_data)
+        results = lookup_dbnsfp_by_positions(
+            [("19", 44908684, "T", "C")], dbnsfp_engine_with_data, source_build="GRCh38"
+        )
         key = ("19", 44908684, "T", "C")
         assert key in results
         annot = results[key]
@@ -402,15 +408,50 @@ class TestLookupDbnsfpByPositions:
         assert len(results) == 0
 
     def test_nonexistent_position(self, dbnsfp_engine_with_data: sa.Engine):
-        results = lookup_dbnsfp_by_positions([("99", 1, "A", "T")], dbnsfp_engine_with_data)
+        results = lookup_dbnsfp_by_positions(
+            [("99", 1, "A", "T")], dbnsfp_engine_with_data, source_build="GRCh38"
+        )
         assert len(results) == 0
 
     def test_large_position_batch_chunking(self, dbnsfp_engine_with_data: sa.Engine):
         """Ensure batching works for lists larger than internal batch size."""
         positions = [(str(i % 22 + 1), i, "A", "T") for i in range(300)]
         positions.append(("19", 44908684, "T", "C"))  # one real one
-        results = lookup_dbnsfp_by_positions(positions, dbnsfp_engine_with_data)
+        results = lookup_dbnsfp_by_positions(
+            positions, dbnsfp_engine_with_data, source_build="GRCh38"
+        )
         assert ("19", 44908684, "T", "C") in results
+
+    # ── F35: cross-build guard ────────────────────────────────────────
+    _SKIP_EVENT = "dbnsfp_position_lookup_skipped_cross_build"
+
+    def test_default_source_build_skips_cross_build(self, dbnsfp_engine_with_data: sa.Engine):
+        """Default (GRCh37 pipeline) vs GRCh38 dbNSFP → skip + warn, no match."""
+        with capture_logs() as cap_logs:
+            results = lookup_dbnsfp_by_positions(
+                [("19", 44908684, "T", "C")], dbnsfp_engine_with_data
+            )
+        assert results == {}
+        events = [e for e in cap_logs if e.get("event") == self._SKIP_EVENT]
+        assert events, "expected a cross-build skip warning"
+        assert events[0]["source_build"] == "GRCh37"
+        assert events[0]["dbnsfp_build"] == "GRCh38"
+
+    def test_explicit_grch37_skips_cross_build(self, dbnsfp_engine_with_data: sa.Engine):
+        """An explicit GRCh37 source build is skipped just like the default."""
+        results = lookup_dbnsfp_by_positions(
+            [("19", 44908684, "T", "C")], dbnsfp_engine_with_data, source_build="GRCh37"
+        )
+        assert results == {}
+
+    def test_grch38_opt_in_runs_join(self, dbnsfp_engine_with_data: sa.Engine):
+        """A caller with genuine GRCh38 coordinates can opt in and get a match."""
+        with capture_logs() as cap_logs:
+            results = lookup_dbnsfp_by_positions(
+                [("19", 44908684, "T", "C")], dbnsfp_engine_with_data, source_build="GRCh38"
+            )
+        assert ("19", 44908684, "T", "C") in results
+        assert not [e for e in cap_logs if e.get("event") == self._SKIP_EVENT]
 
 
 # ── Ensemble pathogenicity tests ─────────────────────────────────────────

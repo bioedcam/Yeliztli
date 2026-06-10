@@ -1129,20 +1129,49 @@ def lookup_dbnsfp_by_rsids(
 def lookup_dbnsfp_by_positions(
     positions: list[tuple[str, int, str, str]],
     dbnsfp_engine: sa.Engine,
+    *,
+    source_build: str | None = None,
 ) -> dict[tuple[str, int, str, str], DbNSFPAnnotation]:
     """Look up dbNSFP annotations by (chrom, pos, ref, alt).
 
     Fallback strategy when rsid matching fails. Uses the composite
     primary key for efficient lookups.
 
+    **Cross-build guard (F35).** ``dbnsfp.db`` is GRCh38-coordinate while the
+    annotation pipeline operates in GRCh37, so this position join is only valid
+    for GRCh38 inputs. ``source_build`` declares the assembly of *positions*
+    (default: the GRCh37 pipeline build). When it does not match dbNSFP's
+    GRCh38 build the join would silently mis-key against the wrong coordinates,
+    so the call is skipped with a structured warning and an empty result — the
+    live path matches by rsid (:func:`lookup_dbnsfp_by_rsids`), which is
+    build-agnostic. A caller with genuine GRCh38 coordinates can opt in by
+    passing ``source_build="GRCh38"``.
+
     Args:
         positions: List of (chrom, pos, ref, alt) tuples.
         dbnsfp_engine: SQLAlchemy engine for dbnsfp.db.
+        source_build: Genome build of *positions*; defaults to the pipeline
+            build (GRCh37).
 
     Returns:
-        Dict mapping (chrom, pos, ref, alt) → DbNSFPAnnotation.
+        Dict mapping (chrom, pos, ref, alt) → DbNSFPAnnotation. Empty when
+        *positions* is empty or *source_build* is not dbNSFP's build.
     """
     if not positions:
+        return {}
+
+    from backend.db.database_registry import EXPECTED_GENOME_BUILD, PIPELINE_GENOME_BUILD
+
+    dbnsfp_build = EXPECTED_GENOME_BUILD["dbnsfp"]
+    if source_build is None:
+        source_build = PIPELINE_GENOME_BUILD
+    if source_build != dbnsfp_build:
+        logger.warning(
+            "dbnsfp_position_lookup_skipped_cross_build",
+            source_build=source_build,
+            dbnsfp_build=dbnsfp_build,
+            positions=len(positions),
+        )
         return {}
 
     results: dict[tuple[str, int, str, str], DbNSFPAnnotation] = {}

@@ -379,6 +379,11 @@ def _lookup_dbnsfp(
                 pos_to_rsid[key] = rsid
 
         if positions:
+            # The chip pipeline is GRCh37 but dbnsfp.db is GRCh38 (F35), so this
+            # position fallback is a cross-build join: lookup_dbnsfp_by_positions
+            # skips it (default source_build=GRCh37) and the live match stays
+            # rsid-based above. Chip raw rows carry no ref/alt, so `positions` is
+            # empty here in practice (F32) — the guard covers future VCF inputs.
             pos_matches = lookup_dbnsfp_by_positions(positions, dbnsfp_engine)
             for key, annot in pos_matches.items():
                 rsid = pos_to_rsid[key]

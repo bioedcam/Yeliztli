@@ -1411,9 +1411,17 @@ class TestDbnsfpAnnotationIntegration:
         assert engine_data["primateai"] == module_annot.primateai
         assert engine_data["deleterious_count"] == module_annot.deleterious_count
 
-    def test_position_fallback_with_ref_alt(self, dbnsfp_engine: sa.Engine) -> None:
-        """Position-based fallback matches when rsid differs but coords match."""
-        # Create a fake raw row with ref/alt for position fallback
+    def test_position_fallback_skipped_cross_build(self, dbnsfp_engine: sa.Engine) -> None:
+        """F35: the GRCh37 position fallback is skipped against GRCh38 dbNSFP.
+
+        Even when a raw row carries ref/alt (a future VCF/WGS input), the
+        ``(chrom, pos, ref, alt)`` fallback is a GRCh37→GRCh38 cross-build join,
+        so ``lookup_dbnsfp_by_positions`` declines it and the engine produces no
+        position-based match. The rsid path (build-agnostic) remains the only
+        live match. (The skip warning is asserted in test_dbnsfp.py.)
+        """
+        # Create a fake raw row with ref/alt — would have triggered the (now
+        # guarded) position fallback before F35.
         engine = sa.create_engine("sqlite://")
         with engine.begin() as conn:
             conn.execute(
@@ -1430,10 +1438,9 @@ class TestDbnsfpAnnotationIntegration:
         raw_by_rsid = {"rs_user_id": row}
         result = _lookup_dbnsfp(["rs_user_id"], raw_by_rsid, dbnsfp_engine)
 
-        assert "rs_user_id" in result
-        assert result["rs_user_id"]["cadd_phred"] == pytest.approx(28.3)
-        # rs429358 coordinates → 4 independent axes, all deleterious (F24)
-        assert result["rs_user_id"]["deleterious_count"] == 4
+        # rsid "rs_user_id" is not in the dbNSFP DB and the position fallback is
+        # cross-build → no match at all.
+        assert "rs_user_id" not in result
 
     def test_position_fallback_skipped_without_ref_alt(self, dbnsfp_engine: sa.Engine) -> None:
         """Fallback is skipped when raw variant lacks ref/alt columns."""

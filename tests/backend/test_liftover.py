@@ -55,14 +55,22 @@ class TestConvertCoordinate:
         assert chrom == "X"
         assert pos == 1039265  # GRCh38 (1-based)
 
-    def test_mt_chromosome(self) -> None:
-        """MT chromosome — mitochondrial positions should lift (MT→chrM mapping)."""
-        result = convert_coordinate("MT", 7028)
-        assert result is not None
-        chrom, pos = result
-        assert chrom == "MT"
-        # MT genome is nearly identical between builds
-        assert pos == 7027
+    def test_mt_chromosome_returns_none(self) -> None:
+        """F34: MT/chrM must NOT lift — UCSC hg19 chrM is Yoruba, not rCRS.
+
+        The hg19→hg38 chain would emit wrong GRCh38 coordinates for
+        mitochondrial positions (rCRS ≠ UCSC-hg19-chrM), so ``convert_coordinate``
+        refuses to lift them rather than silently corrupting the position.
+        """
+        assert convert_coordinate("MT", 7028) is None
+        assert convert_coordinate("MT", 263) is None
+        # The ``chrM`` spelling is short-circuited identically to ``MT``.
+        assert convert_coordinate("chrM", 750) is None
+
+    def test_autosomal_still_lifts_after_mt_guard(self) -> None:
+        """The MT short-circuit must not regress autosomal/sex liftover."""
+        assert convert_coordinate("1", 11856378) == ("1", 11796321)
+        assert convert_coordinate("X", 1000000) == ("X", 1039265)
 
     def test_chr_prefix_handled(self) -> None:
         """Input with 'chr' prefix works the same as without."""
