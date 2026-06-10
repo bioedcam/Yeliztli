@@ -77,8 +77,11 @@ def findings_client(
             "provenance": json.dumps(
                 {
                     "pipeline_version": "0.2.0",
+                    "pipeline_genome_build": "GRCh37",
                     "sources": {"clinvar": {"version": "2026-05-01", "genome_build": "GRCh37"}},
                     "variation_ids": {"rsid": "rs80357906"},
+                    "annotation_coverage": 0b0000110,
+                    "annotation_coverage_sources": ["ClinVar", "gnomAD"],
                 }
             ),
         },
@@ -196,9 +199,19 @@ class TestListFindings:
 
     def test_finding_has_parsed_provenance(self, findings_client):
         resp = findings_client.get("/api/analysis/findings?sample_id=1&module=cancer")
-        data = resp.json()
-        assert data[0]["provenance"]["sources"]["clinvar"]["version"] == "2026-05-01"
-        assert data[0]["provenance"]["variation_ids"]["rsid"] == "rs80357906"
+        prov = resp.json()[0]["provenance"]
+        # Full audit-metadata contract is preserved end-to-end (not just a subset).
+        assert set(prov) == {
+            "pipeline_version",
+            "pipeline_genome_build",
+            "sources",
+            "variation_ids",
+            "annotation_coverage",
+            "annotation_coverage_sources",
+        }
+        assert prov["sources"]["clinvar"]["version"] == "2026-05-01"
+        assert prov["variation_ids"]["rsid"] == "rs80357906"
+        assert prov["annotation_coverage_sources"] == ["ClinVar", "gnomAD"]
 
     def test_finding_without_provenance_is_none(self, findings_client):
         resp = findings_client.get("/api/analysis/findings?sample_id=1&module=pharmacogenomics")

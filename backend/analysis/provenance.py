@@ -108,8 +108,13 @@ def stamp_findings_provenance(sample_engine: sa.Engine, reference_engine: sa.Eng
 
     Reads the release snapshot once, left-joins ``findings`` to
     ``annotated_variants`` on ``rsid`` for per-variant variation IDs +
-    ``annotation_coverage``, and bulk-updates ``findings.provenance``. Idempotent:
-    re-running overwrites with the current snapshot.
+    ``annotation_coverage``, and bulk-updates ``findings.provenance``.
+
+    Provenance pins the snapshot that produced the *current* findings, not an
+    immutable historical log: re-annotation deletes and re-inserts findings (each
+    module clears its own rows), so a re-stamp records the releases behind the
+    rows that now exist. Re-running on unchanged rows is therefore idempotent —
+    it refreshes them to the current snapshot, which equals what produced them.
     """
     snapshot = read_release_snapshot(reference_engine)
 
