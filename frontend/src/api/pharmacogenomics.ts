@@ -5,6 +5,7 @@ import type {
   GeneSummaryResponse,
   DrugListResponse,
   DrugLookupResponse,
+  MedicationSafetyReportResponse,
 } from "@/types/pharmacogenomics"
 
 /**
@@ -69,6 +70,30 @@ export function usePharmaDrugLookup(drugName: string | null, sampleId: number | 
       return res.json()
     },
     enabled: drugName != null && sampleId != null,
+    staleTime: Infinity,
+  })
+}
+
+/**
+ * Consolidated drug-centric medication-safety report for a sample (SW-E4).
+ * Aggregates every stored prescribing alert with CPIC-standard phenotype terms,
+ * per-gene coverage / call-confidence, actionability ordering, and a
+ * report-level reference-bias disclosure.
+ * Cached with staleTime: Infinity since annotation data doesn't change.
+ */
+export function usePharmaReport(sampleId: number | null) {
+  return useQuery({
+    queryKey: ["pharma-report", sampleId],
+    queryFn: async (): Promise<MedicationSafetyReportResponse> => {
+      const params = new URLSearchParams({ sample_id: String(sampleId!) })
+      const res = await fetch(`/api/analysis/pharma/report?${params}`)
+      if (!res.ok) {
+        const text = await res.text().catch(() => "")
+        throw new Error(`Pharma report failed: ${res.status}${text ? ` - ${text}` : ""}`)
+      }
+      return res.json()
+    },
+    enabled: sampleId != null,
     staleTime: Infinity,
   })
 }

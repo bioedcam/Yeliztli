@@ -7,6 +7,7 @@ CPIC classification level, and prescribing recommendation.
 GET  /api/analysis/pharma/drugs           — List all CPIC drugs
 GET  /api/analysis/pharma/drug/{drug_name} — Drug detail with user genotype
 GET  /api/analysis/pharma/genes?sample_id=N — Per-gene star-allele results (metabolizer cards)
+GET  /api/analysis/pharma/report?sample_id=N — Consolidated medication-safety report (SW-E4)
 """
 
 from __future__ import annotations
@@ -19,9 +20,11 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.analysis.pharmacogenomics import classify_actionability
 from backend.api.dependencies import require_fresh_sample
 from backend.db.connection import get_registry
 from backend.db.tables import cpic_guidelines, findings, samples
+from backend.disclaimers import MEDICATION_SAFETY_REFERENCE_BIAS
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,74 @@ class GeneSummaryResponse(BaseModel):
 
     items: list[GeneSummary]
     total: int
+
+
+# ── Medication-safety report models (SW-E4) ──────────────────────────
+
+
+class CoverageInfo(BaseModel):
+    """SNP defining-position coverage for a pharmacogene.
+
+    ``assessed`` of ``total`` defining array positions were genotyped and called.
+    This is SNP-level coverage only — it cannot reflect copy-number or
+    gene-conversion alleles (see the report-level reference-bias disclosure).
+    """
+
+    assessed: int
+    total: int
+
+
+class ReportGeneEffect(BaseModel):
+    """A single gene's effect on a drug within the medication-safety report."""
+
+    gene: str
+    diplotype: str | None = None
+    phenotype: str | None = None  # CPIC-standard phenotype term
+    recommendation: str | None = None
+    classification: str | None = None  # CPIC level: A, B, C, D
+    guideline_url: str | None = None
+    call_confidence: str | None = None  # Complete / Partial / Insufficient
+    confidence_note: str | None = None
+    evidence_level: int | None = None  # 1-4 stars
+    activity_score: float | None = None
+    ehr_notation: str | None = None
+    coverage: CoverageInfo | None = None
+    actionability: str  # actionable / routine / indeterminate
+    gene_caveat: str | None = None
+
+
+class DrugSafetyEntry(BaseModel):
+    """All gene effects for one drug, with a drug-level actionability flag."""
+
+    drug: str
+    actionable: bool  # any gene effect is actionable
+    gene_effects: list[ReportGeneEffect]
+
+
+class GeneCoverageSummary(BaseModel):
+    """Per-gene coverage / call-confidence summary for the report header."""
+
+    gene: str
+    diplotype: str | None = None
+    phenotype: str | None = None
+    call_confidence: str | None = None
+    confidence_note: str | None = None
+    coverage: CoverageInfo | None = None
+    activity_score: float | None = None
+    ehr_notation: str | None = None
+    evidence_level: int | None = None
+    gene_caveat: str | None = None
+
+
+class MedicationSafetyReportResponse(BaseModel):
+    """Consolidated drug-centric medication-safety report for a sample (SW-E4)."""
+
+    reference_bias_disclosure: str
+    genes_assessed: int
+    drugs_assessed: int
+    actionable_drug_count: int
+    gene_coverage: list[GeneCoverageSummary]
+    drugs: list[DrugSafetyEntry]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -192,6 +263,22 @@ def _fetch_sample_findings(sample_engine: sa.Engine, drug_name: str) -> dict[str
         }
 
     return result
+
+
+def _parse_coverage(detail: dict[str, Any]) -> CoverageInfo | None:
+    """Build CoverageInfo from a finding's detail_json, tolerating older findings.
+
+    Returns None when the finding predates SW-E4 coverage persistence or the
+    coverage block is malformed, so the report degrades gracefully.
+    """
+    cov = detail.get("coverage")
+    if not isinstance(cov, dict):
+        return None
+    assessed = cov.get("assessed")
+    total = cov.get("total")
+    if not isinstance(assessed, int) or not isinstance(total, int):
+        return None
+    return CoverageInfo(assessed=assessed, total=total)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -425,3 +512,124 @@ def gene_results(
         )
 
     return GeneSummaryResponse(items=items, total=len(items))
+
+
+@router.get("/report", dependencies=[Depends(require_fresh_sample)])
+def medication_safety_report(
+    sample_id: int = Query(..., description="Sample ID"),
+) -> MedicationSafetyReportResponse:
+    """Consolidated drug-centric medication-safety report for a sample (SW-E4).
+
+    Aggregates every stored pharmacogenomics prescribing alert into a single
+    report organized by drug, with CPIC-standard phenotype terms, per-gene
+    coverage / call-confidence, a coarse actionability flag (attention-worthy
+    results first), and a report-level reference-bias disclosure.
+
+    This endpoint is a read-only re-presentation of existing findings — it never
+    creates findings or changes any phenotype / evidence level / recommendation.
+
+    Example: ``GET /api/analysis/pharma/report?sample_id=1``
+    """
+    sample_engine = _get_sample_engine(sample_id)
+
+    # 1. Fetch all stored prescribing-alert findings for this sample.
+    with sample_engine.connect() as conn:
+        stmt = (
+            sa.select(findings)
+            .where(
+                sa.and_(
+                    findings.c.module == "pharmacogenomics",
+                    findings.c.category == "prescribing_alert",
+                )
+            )
+            .order_by(findings.c.gene_symbol, findings.c.drug, findings.c.id)
+        )
+        rows = conn.execute(stmt).fetchall()
+
+    # 2. Walk findings once, building per-gene coverage summaries and grouping
+    #    gene effects by drug.
+    gene_summaries: dict[str, GeneCoverageSummary] = {}
+    drug_groups: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        gene = row.gene_symbol
+        drug = row.drug
+        if gene is None or drug is None:
+            continue
+
+        detail: dict[str, Any] = {}
+        if row.detail_json:
+            try:
+                detail = json.loads(row.detail_json)
+            except (json.JSONDecodeError, TypeError):
+                detail = {}
+
+        coverage = _parse_coverage(detail)
+
+        # First finding per gene wins for the coverage summary (mirrors /genes).
+        if gene not in gene_summaries:
+            gene_summaries[gene] = GeneCoverageSummary(
+                gene=gene,
+                diplotype=row.diplotype,
+                phenotype=row.metabolizer_status,
+                call_confidence=detail.get("call_confidence"),
+                confidence_note=detail.get("confidence_note"),
+                coverage=coverage,
+                activity_score=detail.get("activity_score"),
+                ehr_notation=detail.get("ehr_notation"),
+                evidence_level=row.evidence_level,
+                gene_caveat=detail.get("gene_caveat"),
+            )
+
+        recommendation = detail.get("recommendation")
+        effect = ReportGeneEffect(
+            gene=gene,
+            diplotype=row.diplotype,
+            phenotype=row.metabolizer_status,
+            recommendation=recommendation,
+            classification=detail.get("classification"),
+            guideline_url=detail.get("guideline_url"),
+            call_confidence=detail.get("call_confidence"),
+            confidence_note=detail.get("confidence_note"),
+            evidence_level=row.evidence_level,
+            activity_score=detail.get("activity_score"),
+            ehr_notation=detail.get("ehr_notation"),
+            coverage=coverage,
+            actionability=classify_actionability(recommendation),
+            gene_caveat=detail.get("gene_caveat"),
+        )
+
+        # Group by drug (case-insensitive key; keep first-seen canonical name).
+        key = drug.lower()
+        group = drug_groups.get(key)
+        if group is None:
+            group = {"drug": drug, "effects": {}}
+            drug_groups[key] = group
+        # One effect per gene per drug (first finding wins on duplicates).
+        group["effects"].setdefault(gene, effect)
+
+    # 3. Assemble drug entries; sort actionable-first, then by drug name.
+    drug_entries: list[DrugSafetyEntry] = []
+    for group in drug_groups.values():
+        gene_effects = [group["effects"][g] for g in sorted(group["effects"])]
+        actionable = any(e.actionability == "actionable" for e in gene_effects)
+        drug_entries.append(
+            DrugSafetyEntry(
+                drug=group["drug"],
+                actionable=actionable,
+                gene_effects=gene_effects,
+            )
+        )
+    drug_entries.sort(key=lambda d: (not d.actionable, d.drug.lower()))
+
+    gene_coverage = [gene_summaries[g] for g in sorted(gene_summaries)]
+    actionable_drug_count = sum(1 for d in drug_entries if d.actionable)
+
+    return MedicationSafetyReportResponse(
+        reference_bias_disclosure=MEDICATION_SAFETY_REFERENCE_BIAS,
+        genes_assessed=len(gene_coverage),
+        drugs_assessed=len(drug_entries),
+        actionable_drug_count=actionable_drug_count,
+        gene_coverage=gene_coverage,
+        drugs=drug_entries,
+    )

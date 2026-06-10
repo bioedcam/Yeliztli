@@ -19,6 +19,7 @@ import { usePharmaGenes, usePharmaDrugs } from "@/api/pharmacogenomics"
 import MetabolizerCard from "@/components/pharmacogenomics/MetabolizerCard"
 import DrugTable from "@/components/pharmacogenomics/DrugTable"
 import DrugDetailPanel from "@/components/pharmacogenomics/DrugDetailPanel"
+import MedicationSafetyReport from "@/components/pharmacogenomics/MedicationSafetyReport"
 
 export default function PharmacogenomicsView() {
   const [searchParams] = useSearchParams()
@@ -85,6 +86,9 @@ export default function PharmacogenomicsView() {
       {/* Main content */}
       {!isLoading && !hasError && (
         <>
+          {/* Consolidated drug-centric medication-safety report (SW-E4) */}
+          <MedicationSafetyReport sampleId={sampleId} />
+
           {/* Metabolizer phenotype cards */}
           {genesQuery.data && genesQuery.data.items.length > 0 && (
             <section aria-label="Metabolizer phenotype cards" className="mb-8">

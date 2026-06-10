@@ -33,7 +33,7 @@ from backend.db.tables import (
     reference_metadata,
     samples,
 )
-from backend.disclaimers import DPYD_FLUOROPYRIMIDINE_CAVEAT
+from backend.disclaimers import DPYD_FLUOROPYRIMIDINE_CAVEAT, MEDICATION_SAFETY_REFERENCE_BIAS
 
 # ── Test data ────────────────────────────────────────────────────────
 
@@ -541,3 +541,268 @@ class TestDpydCaveatSurfacing:
         assert resp.status_code == 200
         dpyd = next(e for e in resp.json()["gene_effects"] if e["gene"] == "DPYD")
         assert dpyd["gene_caveat"] == DPYD_FLUOROPYRIMIDINE_CAVEAT
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GET /api/analysis/pharma/report — Consolidated medication-safety report (SW-E4)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# Findings exercising the report: an actionable result (CYP2C19/clopidogrel) with
+# a coverage block, a routine result (CYP2D6/codeine — but with the copy-number
+# caveat), and a DPYD result carrying the fatal-toxicity caveat.
+_REPORT_FINDINGS = [
+    {
+        "module": "pharmacogenomics",
+        "category": "prescribing_alert",
+        "evidence_level": 4,
+        "gene_symbol": "CYP2C19",
+        "diplotype": "*1/*2",
+        "metabolizer_status": "Intermediate Metabolizer",
+        "drug": "clopidogrel",
+        "finding_text": "CYP2C19 *1/*2: Intermediate Metabolizer -- clopidogrel: ...",
+        "detail_json": json.dumps(
+            {
+                "recommendation": "Consider alternative antiplatelet therapy.",
+                "classification": "A",
+                "guideline_url": "https://cpicpgx.org/guidelines/clopidogrel/",
+                "call_confidence": "Complete",
+                "confidence_note": "All defining positions assessed.",
+                "activity_score": 0.5,
+                "ehr_notation": "Intermediate Metabolizer",
+                "involved_rsids": ["rs4244285"],
+                "coverage": {"assessed": 3, "total": 4},
+            }
+        ),
+    },
+    {
+        "module": "pharmacogenomics",
+        "category": "prescribing_alert",
+        "evidence_level": 4,
+        "gene_symbol": "CYP2D6",
+        "diplotype": "*1/*1",
+        "metabolizer_status": "Normal Metabolizer",
+        "drug": "codeine",
+        "finding_text": "CYP2D6 *1/*1: Normal Metabolizer -- codeine: ...",
+        "detail_json": json.dumps(
+            {
+                "recommendation": "Use label-recommended age- or weight-specific dosing.",
+                "classification": "A",
+                "guideline_url": "https://cpicpgx.org/guidelines/codeine/",
+                "call_confidence": "Partial",
+                "confidence_note": "Structural variant gene.",
+                "activity_score": 2.0,
+                "ehr_notation": "Normal Metabolizer",
+                "involved_rsids": ["rs3892097"],
+                "coverage": {"assessed": 5, "total": 5},
+                "gene_caveat": "CYP2D6 copy-number caveat text.",
+            }
+        ),
+    },
+    {
+        "module": "pharmacogenomics",
+        "category": "prescribing_alert",
+        "evidence_level": 4,
+        "gene_symbol": "DPYD",
+        "diplotype": "*1/*2A",
+        "metabolizer_status": "Intermediate Metabolizer",
+        "drug": "fluorouracil",
+        "finding_text": "DPYD *1/*2A: Intermediate Metabolizer -- fluorouracil: ...",
+        "detail_json": json.dumps(
+            {
+                "recommendation": "Reduce starting dose by 50%, then titrate.",
+                "classification": "A",
+                "guideline_url": "https://cpicpgx.org/guidelines/fluoropyrimidines/",
+                "call_confidence": "Complete",
+                "confidence_note": "All defining positions assessed.",
+                "activity_score": 1.0,
+                "ehr_notation": "DPYD Intermediate Metabolizer",
+                "involved_rsids": ["rs3918290"],
+                "coverage": {"assessed": 4, "total": 4},
+                "gene_caveat": DPYD_FLUOROPYRIMIDINE_CAVEAT,
+            }
+        ),
+    },
+]
+
+
+@pytest.fixture
+def report_client(tmp_data_dir: Path) -> Generator[tuple[TestClient, int], None, None]:
+    yield from _setup_client(tmp_data_dir, CPIC_GUIDELINES_DATA, _REPORT_FINDINGS)
+
+
+# Findings with corrupted coverage blocks: wrong value types and a non-dict value.
+# The report must degrade to coverage=null (200), never raise a 500.
+_MALFORMED_COVERAGE_FINDINGS = [
+    {
+        "module": "pharmacogenomics",
+        "category": "prescribing_alert",
+        "evidence_level": 4,
+        "gene_symbol": "CYP2C19",
+        "diplotype": "*1/*2",
+        "metabolizer_status": "Intermediate Metabolizer",
+        "drug": "clopidogrel",
+        "finding_text": "CYP2C19 *1/*2 -- clopidogrel",
+        "detail_json": json.dumps(
+            {
+                "recommendation": "Consider alternative antiplatelet therapy.",
+                "classification": "A",
+                "call_confidence": "Complete",
+                # Wrong types: total is null, assessed is a string.
+                "coverage": {"assessed": "3", "total": None},
+            }
+        ),
+    },
+    {
+        "module": "pharmacogenomics",
+        "category": "prescribing_alert",
+        "evidence_level": 4,
+        "gene_symbol": "CYP2D6",
+        "diplotype": "*1/*1",
+        "metabolizer_status": "Normal Metabolizer",
+        "drug": "codeine",
+        "finding_text": "CYP2D6 *1/*1 -- codeine",
+        "detail_json": json.dumps(
+            {
+                "recommendation": "Use label-recommended dosing.",
+                "classification": "A",
+                "call_confidence": "Partial",
+                # Non-dict coverage value.
+                "coverage": "n/a",
+            }
+        ),
+    },
+]
+
+
+@pytest.fixture
+def malformed_coverage_client(tmp_data_dir: Path) -> Generator[tuple[TestClient, int], None, None]:
+    yield from _setup_client(tmp_data_dir, CPIC_GUIDELINES_DATA, _MALFORMED_COVERAGE_FINDINGS)
+
+
+class TestMedicationSafetyReport:
+    def test_disclosure_present(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        resp = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}")
+        assert resp.status_code == 200
+        assert resp.json()["reference_bias_disclosure"] == MEDICATION_SAFETY_REFERENCE_BIAS
+
+    def test_counts(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        assert data["genes_assessed"] == 3  # CYP2C19, CYP2D6, DPYD
+        assert data["drugs_assessed"] == 3  # clopidogrel, codeine, fluorouracil
+        # clopidogrel (Consider alternative) + fluorouracil (Reduce) are actionable;
+        # codeine (label-recommended) is routine.
+        assert data["actionable_drug_count"] == 2
+
+    def test_actionable_sorted_first(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        drugs = data["drugs"]
+        # Actionable drugs (clopidogrel, fluorouracil) precede the routine one (codeine).
+        assert [d["drug"] for d in drugs] == ["clopidogrel", "fluorouracil", "codeine"]
+        assert drugs[0]["actionable"] is True
+        assert drugs[-1]["actionable"] is False
+        assert drugs[-1]["drug"] == "codeine"
+
+    def test_effect_actionability_labels(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        by_drug = {d["drug"]: d for d in data["drugs"]}
+        clopidogrel = by_drug["clopidogrel"]["gene_effects"][0]
+        assert clopidogrel["actionability"] == "actionable"
+        codeine = by_drug["codeine"]["gene_effects"][0]
+        assert codeine["actionability"] == "routine"
+
+    def test_coverage_surfaced(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        cyp2c19 = next(g for g in data["gene_coverage"] if g["gene"] == "CYP2C19")
+        assert cyp2c19["coverage"] == {"assessed": 3, "total": 4}
+        # And on the per-drug effect too.
+        clopidogrel = next(d for d in data["drugs"] if d["drug"] == "clopidogrel")
+        assert clopidogrel["gene_effects"][0]["coverage"] == {"assessed": 3, "total": 4}
+
+    def test_phenotype_terms_and_confidence(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        cyp2d6 = next(g for g in data["gene_coverage"] if g["gene"] == "CYP2D6")
+        assert cyp2d6["phenotype"] == "Normal Metabolizer"
+        assert cyp2d6["call_confidence"] == "Partial"
+
+    def test_gene_caveat_surfaced(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        dpyd = next(g for g in data["gene_coverage"] if g["gene"] == "DPYD")
+        assert dpyd["gene_caveat"] == DPYD_FLUOROPYRIMIDINE_CAVEAT
+        fluorouracil = next(d for d in data["drugs"] if d["drug"] == "fluorouracil")
+        assert fluorouracil["gene_effects"][0]["gene_caveat"] == DPYD_FLUOROPYRIMIDINE_CAVEAT
+
+    def test_gene_coverage_sorted(self, report_client: tuple[TestClient, int]):
+        tc, sample_id = report_client
+        data = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").json()
+        genes = [g["gene"] for g in data["gene_coverage"]]
+        assert genes == sorted(genes)
+
+    def test_coverage_none_when_absent(self, client: tuple[TestClient, int]):
+        # The shared `client` fixture's findings predate coverage persistence —
+        # the report must degrade gracefully (coverage null), not error.
+        tc, sample_id = client
+        resp = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}")
+        assert resp.status_code == 200
+        for gene in resp.json()["gene_coverage"]:
+            assert gene["coverage"] is None
+
+    def test_empty_when_no_findings(self, client_no_findings: tuple[TestClient, int]):
+        tc, sample_id = client_no_findings
+        resp = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["genes_assessed"] == 0
+        assert data["drugs_assessed"] == 0
+        assert data["actionable_drug_count"] == 0
+        assert data["drugs"] == []
+        assert data["gene_coverage"] == []
+        # Disclosure is always present, even with no findings.
+        assert data["reference_bias_disclosure"] == MEDICATION_SAFETY_REFERENCE_BIAS
+
+    def test_unknown_sample_404(self, report_client: tuple[TestClient, int]):
+        tc, _ = report_client
+        resp = tc.get("/api/analysis/pharma/report?sample_id=9999")
+        assert resp.status_code == 404
+
+    def test_missing_sample_id_422(self, report_client: tuple[TestClient, int]):
+        tc, _ = report_client
+        resp = tc.get("/api/analysis/pharma/report")
+        assert resp.status_code == 422
+
+    def test_malformed_coverage_degrades_gracefully(
+        self, malformed_coverage_client: tuple[TestClient, int]
+    ):
+        # A corrupted/older coverage block (wrong types, or a non-dict value) must
+        # yield coverage=null with a 200, never a 500 ValidationError.
+        tc, sample_id = malformed_coverage_client
+        resp = tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}")
+        assert resp.status_code == 200
+        for gene in resp.json()["gene_coverage"]:
+            assert gene["coverage"] is None
+        for drug in resp.json()["drugs"]:
+            for effect in drug["gene_effects"]:
+                assert effect["coverage"] is None
+
+    def test_report_writes_no_findings(self, report_client: tuple[TestClient, int]):
+        # Golden-snapshot guardrail: the report is read-only and must never create
+        # findings. Pin the invariant with a before/after count. _get_sample_engine
+        # resolves the same per-sample DB the route uses (registry is patched and
+        # active inside the fixture's TestClient context).
+        from backend.api.routes.pharma import _get_sample_engine
+
+        tc, sample_id = report_client
+        engine = _get_sample_engine(sample_id)
+        with engine.connect() as conn:
+            before = conn.execute(sa.select(sa.func.count()).select_from(findings)).scalar()
+        assert tc.get(f"/api/analysis/pharma/report?sample_id={sample_id}").status_code == 200
+        with engine.connect() as conn:
+            after = conn.execute(sa.select(sa.func.count()).select_from(findings)).scalar()
+        assert before == after

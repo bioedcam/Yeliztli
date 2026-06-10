@@ -903,3 +903,36 @@ CYP2D6_CNV_CAVEAT = (
     "copy-number-aware CYP2D6 assay in a CLIA/accredited laboratory before any "
     "medication change."
 )
+
+
+# ── Medication-safety report reference-bias disclosure (SW-E4) ────────────────
+# Surfaced once at the top of the consolidated drug-centric medication-safety
+# report (backend.api.routes.pharma -> GET /api/analysis/pharma/report). This is
+# the report-level statement of the §12.1 / §12.6 guardrail: array-based star-allele
+# calling is REFERENCE-BIASED — it only interrogates the specific variants on the
+# array, so any allele that is not assayed defaults to the reference (usually the
+# normal-function *1) call. A "Normal Metabolizer" / normal-function / negative
+# result therefore never rules out rare, untested, or structural (copy-number /
+# gene-conversion) alleles. Phenotype terms follow the CPIC consensus standard
+# (Caudle et al., Genet Med 2017; PMID 27441996). Honesty guardrail: this is
+# interpretive context for the whole report; it never changes any finding's
+# metabolizer status, evidence level, or recommendation.
+
+MEDICATION_SAFETY_REFERENCE_BIAS = (
+    "About this medication-safety report (context only). Phenotype terms follow the "
+    "CPIC consensus standard (e.g. Normal / Intermediate / Poor / Rapid / Ultrarapid "
+    "Metabolizer; Normal / Decreased / Poor Function). These calls come from an array "
+    "that types only specific pre-selected variants, so the result is REFERENCE-BIASED: "
+    "any star allele that is not directly assayed defaults to the reference (normal-"
+    "function) call. A Normal Metabolizer, normal-function, or otherwise reassuring "
+    "result does NOT rule out rare or untested variants, copy-number changes "
+    "(duplications/deletions), or gene-conversion alleles that this array cannot see, "
+    "and several genes (e.g. CYP2D6, DPYD) carry additional gene-specific caveats. The "
+    "per-gene coverage below counts how many of each gene's known SNP positions were "
+    "assayed; it does NOT measure copy-number or structural completeness, which array "
+    "data cannot assess — so a gene can show full SNP coverage and still hide a "
+    "duplication or deletion. Call-confidence flags genes whose result is structurally "
+    "uncertain. This report is research/educational decision support only — it is not a "
+    "prescribing instruction. Confirm any actionable result in a CLIA/accredited "
+    "laboratory and discuss medication changes only with your care team."
+)

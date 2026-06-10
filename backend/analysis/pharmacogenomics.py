@@ -138,8 +138,22 @@ class StarAlleleResult:
     involved_rsids: set[str] = field(default_factory=set)
     missing_rsids: set[str] = field(default_factory=set)
     uncalled_rsids: set[str] = field(default_factory=set)
+    defining_rsid_count: int = 0
     call_confidence: CallConfidence = CallConfidence.COMPLETE
     confidence_note: str = ""
+
+    @property
+    def coverage_assessed(self) -> int:
+        """Number of the gene's defining SNP positions actually assayed and called.
+
+        ``defining_rsid_count`` minus the positions that were missing from the
+        array or could not be genotyped. This is *SNP defining-position* coverage
+        only — it does not (and from array data cannot) account for copy-number or
+        gene-conversion alleles, which the reference-bias disclosure covers
+        separately.
+        """
+        unusable = self.missing_rsids | self.uncalled_rsids
+        return max(0, self.defining_rsid_count - len(unusable))
 
 
 def _count_alt_alleles(genotype: str, ref: str, alt: str) -> int | None:
@@ -486,6 +500,7 @@ def call_star_alleles_for_gene(
         involved_rsids=involved_rsids,
         missing_rsids=missing_rsids,
         uncalled_rsids=uncalled_rsids,
+        defining_rsid_count=len(all_defining_rsids),
         call_confidence=call_confidence,
         confidence_note=confidence_note,
     )
@@ -566,6 +581,85 @@ _CPIC_CLASSIFICATION_STARS: dict[str | None, int] = {
     "D": 2,
 }
 
+# Coarse keyword signals for classifying a CPIC prescribing recommendation's
+# actionability (SW-E4 medication-safety report). A recommendation is treated as
+# "routine" (standard label dosing, no PGx-driven change) when it matches a routine
+# marker and carries no action verb, "actionable" when it implies avoidance, an
+# alternative agent, a dose change, or extra monitoring. This is a presentation aid
+# to surface attention-worthy results first; it is NOT a clinical-decision signal
+# and never alters the recommendation text, phenotype, or evidence level.
+_ROUTINE_RECOMMENDATION_MARKERS: tuple[str, ...] = (
+    "label-recommended",
+    "label recommended",
+    "standard dosing",
+    "standard, label",
+    "no dose adjustment",
+    "no recommended dose change",
+    "no dose change",
+    "routine",
+)
+_ACTIONABLE_RECOMMENDATION_MARKERS: tuple[str, ...] = (
+    "avoid",
+    "alternative",
+    "reduce",
+    "increase",
+    "decrease",
+    "lower dose",
+    "higher dose",
+    "adjust",
+    "titrate",
+    "contraindicat",
+    "consider",
+    "caution",
+    "select ",
+    "monitor",
+)
+# Negated "no-change" phrasings that embed an action substring (e.g. "no dose
+# adjustment" contains "adjust"). These are stripped before the action scan so
+# they classify as routine, not actionable.
+_NEGATED_ROUTINE_MARKERS: tuple[str, ...] = (
+    "no dose adjustment",
+    "no recommended dose change",
+    "no dose change",
+)
+
+ACTIONABILITY_ACTIONABLE = "actionable"
+ACTIONABILITY_ROUTINE = "routine"
+ACTIONABILITY_INDETERMINATE = "indeterminate"
+
+
+def classify_actionability(recommendation: str | None) -> str:
+    """Coarsely classify a CPIC prescribing recommendation's actionability.
+
+    Returns ``"actionable"`` when the recommendation implies a PGx-driven change
+    (avoid / alternative agent / dose adjustment / added monitoring),
+    ``"routine"`` when it is standard label-recommended dosing, and
+    ``"indeterminate"`` when there is no recommendation to classify.
+
+    Honesty guardrail: this is a presentation aid for ordering the
+    medication-safety report (attention-worthy results first); it is NOT a
+    clinical-decision signal and never changes the underlying phenotype,
+    evidence level, or recommendation text.
+    """
+    if not recommendation:
+        return ACTIONABILITY_INDETERMINATE
+    rec = recommendation.lower()
+    # Neutralize negated "no-change" phrases first so their embedded action
+    # substrings (e.g. "adjust" inside "no dose adjustment") don't spuriously flag
+    # a genuinely routine recommendation as actionable.
+    action_scan = rec
+    for marker in _NEGATED_ROUTINE_MARKERS:
+        action_scan = action_scan.replace(marker, " ")
+    has_action = any(marker in action_scan for marker in _ACTIONABLE_RECOMMENDATION_MARKERS)
+    has_routine = any(marker in rec for marker in _ROUTINE_RECOMMENDATION_MARKERS)
+    if has_action:
+        return ACTIONABILITY_ACTIONABLE
+    if has_routine:
+        return ACTIONABILITY_ROUTINE
+    # Unknown phrasing with no routine marker and no action verb: default to
+    # actionable so a recommendation is never under-flagged (fail toward attention).
+    return ACTIONABILITY_ACTIONABLE
+
 
 @dataclass
 class PrescribingAlert:
@@ -588,6 +682,10 @@ class PrescribingAlert:
     activity_score: float | None = None
     ehr_notation: str | None = None
     involved_rsids: list[str] = field(default_factory=list)
+    # SNP defining-position coverage for the gene (SW-E4): how many of the gene's
+    # defining array positions were assayed and called out of the total defined.
+    coverage_assessed: int = 0
+    coverage_total: int = 0
 
 
 def _fetch_guidelines_for_gene_phenotype(
@@ -704,6 +802,8 @@ def generate_prescribing_alerts(
                 activity_score=result.activity_score,
                 ehr_notation=result.ehr_notation,
                 involved_rsids=sorted(result.involved_rsids),
+                coverage_assessed=result.coverage_assessed,
+                coverage_total=result.defining_rsid_count,
             )
             alerts.append(alert)
 
@@ -768,6 +868,10 @@ def store_prescribing_alerts(
             "activity_score": alert.activity_score,
             "ehr_notation": alert.ehr_notation,
             "involved_rsids": alert.involved_rsids,
+            "coverage": {
+                "assessed": alert.coverage_assessed,
+                "total": alert.coverage_total,
+            },
         }
         gene_caveat = _GENE_INTERPRETATION_CAVEATS.get(alert.gene)
         if gene_caveat:
