@@ -405,8 +405,14 @@ class TestPRS:
         assert len(data["items"]) == 2
 
     def test_prs_research_use_only(self, seeded_client: TestClient) -> None:
+        # Surface check: the endpoint must never emit a non-RUO PRS item. The
+        # invariant is *enforced* at the producer (store_prs_findings always
+        # writes research_use_only=True) and tested there — see
+        # test_prs.py::test_detail_json_has_ancestry_source_tag. Guard the loop
+        # against an empty items list so it can't pass vacuously.
         resp = seeded_client.get("/api/analysis/traits/prs?sample_id=1")
         data = resp.json()
+        assert data["items"], "no PRS items returned — assertion would be vacuous"
         for item in data["items"]:
             assert item["research_use_only"] is True
 
@@ -429,9 +435,16 @@ class TestPRS:
         assert ca["ancestry_warning_text"] is not None
 
     def test_prs_evidence_cap(self, seeded_client: TestClient) -> None:
-        """All PRS evidence levels must be <= 2 (★★☆☆ cap)."""
+        """All PRS evidence levels must be <= 2 (★★☆☆ cap).
+
+        Surface check over a producer-enforced invariant: PRS findings are written
+        with evidence_level = PRS_EVIDENCE_LEVEL (=1), which is verified on a
+        computed-then-stored finding in test_prs.py::test_findings_have_prs_category.
+        Guarded against an empty items list so the loop can't pass vacuously.
+        """
         resp = seeded_client.get("/api/analysis/traits/prs?sample_id=1")
         data = resp.json()
+        assert data["items"], "no PRS items returned — assertion would be vacuous"
         for item in data["items"]:
             assert item["evidence_level"] <= 2
 

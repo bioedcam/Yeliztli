@@ -34,11 +34,12 @@ import sqlalchemy as sa
 from backend.analysis.gnomix_inference import (
     CANONICAL_POPULATIONS,
     ChromosomeResult,
+    GnomixModel,
     _build_smoother_features,
     _pad_mirror,
     _softmax,
 )
-from backend.analysis.lai_runner import LAIRunner
+from backend.analysis.lai_runner import POPULATIONS, LAIRunner
 from backend.db.tables import findings, lai_results
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -129,13 +130,33 @@ class TestPopulationRemap:
     """T-GNX-02: Output remaps from model order to canonical order."""
 
     def test_remap_indices(self):
-        model_order = ["CSA", "AFR", "OCE", "EUR", "MID", "AMR", "EAS"]
-        canonical = list(CANONICAL_POPULATIONS)
-        model_to_canonical = {pop: i for i, pop in enumerate(canonical)}
-        remap = np.array([model_to_canonical[pop] for pop in model_order], dtype=np.int32)
-        # CSA -> 2, AFR -> 0, OCE -> 6, EUR -> 4, MID -> 5, AMR -> 1, EAS -> 3
+        # Exercise the PRODUCTION remap (GnomixModel.__post_init__), not a
+        # re-implementation of it: a model whose population_order differs from the
+        # canonical order must remap each model index to its canonical index.
+        n_pops = len(CANONICAL_POPULATIONS)
+        model = GnomixModel(
+            chrom=1,
+            n_snps=0,
+            n_pops=n_pops,
+            n_windows=1,
+            window_size=1,
+            smoother_context=1,
+            context=0,
+            snp_pos=np.empty(0, dtype=np.int64),
+            snp_ref=np.empty(0, dtype="U1"),
+            snp_alt=np.empty(0, dtype="U1"),
+            population_order=["CSA", "AFR", "OCE", "EUR", "MID", "AMR", "EAS"],
+            coefs=np.zeros((1, n_pops, 1)),
+            intercepts=np.zeros((1, n_pops)),
+            window_n_features=np.array([1]),
+            smoother_path=Path("unused"),
+        )
+        # CANONICAL_POPULATIONS = (AFR, AMR, CSA, EAS, EUR, MID, OCE), so the
+        # model order [CSA, AFR, OCE, EUR, MID, AMR, EAS] maps to:
+        # CSA->2, AFR->0, OCE->6, EUR->4, MID->5, AMR->1, EAS->3
         expected = [2, 0, 6, 4, 5, 1, 3]
-        np.testing.assert_array_equal(remap, expected)
+        np.testing.assert_array_equal(model.pop_remap, expected)
+        assert model.pop_remap.dtype == np.int32
 
 
 # ── T-LAI: LAI runner unit tests ─────────────────────────────────────────
@@ -268,16 +289,23 @@ class TestChromosomePainting:
         assert "chr5" in painting
         assert "chr22" in painting
         assert len(painting) == 3
-        # Each chromosome has 3 segments
-        for chrom_key in painting:
-            assert len(painting[chrom_key]) == 3
-            for seg in painting[chrom_key]:
-                assert "start" in seg
-                assert "end" in seg
-                assert "hap0" in seg
-                assert "hap1" in seg
-                assert "hap0_color" in seg
-                assert "hap1_color" in seg
+
+        # hap0_ancestry is all-0 and hap1_ancestry is all-1, so every segment must
+        # resolve to the canonical population at index 0 (hap0) and index 1 (hap1),
+        # with the matching palette colors. Asserting the VALUES — not just that the
+        # keys exist — is what catches the index→population mislabel bug class.
+        expected_hap0 = CANONICAL_POPULATIONS[0]  # AFR
+        expected_hap1 = CANONICAL_POPULATIONS[1]  # AMR
+        for chrom_key, segments in painting.items():
+            assert len(segments) == 3, chrom_key
+            for i, seg in enumerate(segments):
+                assert seg["hap0"] == expected_hap0
+                assert seg["hap1"] == expected_hap1
+                assert seg["hap0_color"] == POPULATIONS[expected_hap0]["color"]
+                assert seg["hap1_color"] == POPULATIONS[expected_hap1]["color"]
+                # window_positions were (i*1000, (i+1)*1000)
+                assert seg["start"] == i * 1000
+                assert seg["end"] == (i + 1) * 1000
 
 
 # ── T-LAI: LAI availability checks ──────────────────────────────────────
