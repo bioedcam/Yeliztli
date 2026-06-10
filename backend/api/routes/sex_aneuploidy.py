@@ -22,7 +22,12 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from backend.analysis.sex_aneuploidy import CATEGORY, MODULE
+from backend.analysis.sex_aneuploidy import (
+    CATEGORY,
+    MODULE,
+    screen_aneuploidy,
+    store_aneuploidy_findings,
+)
 from backend.api.dependencies import require_fresh_sample
 from backend.api.routes.risk_common import resolve_sample_engine
 from backend.db.tables import aneuploidy_gate, findings
@@ -158,7 +163,7 @@ def list_findings(sample_id: int = Query(..., description="Sample ID")) -> Scree
     return ScreenFindingResponse(
         computed=True,
         outcome=detail.get("outcome"),
-        finding_text=row.finding_text or "",
+        finding_text=row.finding_text,
         x_nonpar_typed=detail.get("x_nonpar_typed"),
         x_nonpar_het=detail.get("x_nonpar_het"),
         y_total=detail.get("y_total"),
@@ -168,8 +173,6 @@ def list_findings(sample_id: int = Query(..., description="Sample ID")) -> Scree
 
 @router.post("/run", dependencies=[Depends(require_fresh_sample)])
 def run(sample_id: int = Query(..., description="Sample ID")) -> RunResponse:
-    from backend.analysis.sex_aneuploidy import screen_aneuploidy, store_aneuploidy_findings
-
     engine = resolve_sample_engine(sample_id)
     result = screen_aneuploidy(engine)
     store_aneuploidy_findings(result, engine)
