@@ -67,7 +67,7 @@ from backend.db.tables import (
     findings,
     raw_variants,
 )
-from backend.disclaimers import DPYD_FLUOROPYRIMIDINE_CAVEAT
+from backend.disclaimers import CYP2D6_CNV_CAVEAT, DPYD_FLUOROPYRIMIDINE_CAVEAT
 
 logger = structlog.get_logger(__name__)
 
@@ -80,11 +80,19 @@ STRUCTURAL_VARIANT_GENES: frozenset[str] = frozenset({"CYP2D6", "CYP2B6"})
 
 # Gene-specific interpretive caveats attached to prescribing-alert findings
 # (detail_json["gene_caveat"]) and surfaced by the pharma route. Context only —
-# they never change metabolizer_status or evidence_level. DPYD carries an
-# absent-allele / fatal-toxicity caveat (SW-E5): only 4 variants are typed, and a
-# normal result does not exclude DPD deficiency (severe/fatal fluoropyrimidine
-# toxicity).
-_GENE_INTERPRETATION_CAVEATS: dict[str, str] = {"DPYD": DPYD_FLUOROPYRIMIDINE_CAVEAT}
+# they never change metabolizer_status or evidence_level.
+#   DPYD (SW-E5): absent-allele / fatal-toxicity caveat — only 4 variants typed, a
+#     normal result does not exclude DPD deficiency (severe/fatal fluoropyrimidine
+#     toxicity).
+#   CYP2D6 (SW-E3): structural-variant / copy-number caveat — array data cannot
+#     assess duplications, the *5 deletion, or CYP2D7 hybrids, so the activity
+#     score is an assayed estimate that may be higher (duplication → UM) or lower
+#     (*5 deletion → PM). Pairs with the "Partial" confidence from
+#     STRUCTURAL_VARIANT_GENES.
+_GENE_INTERPRETATION_CAVEATS: dict[str, str] = {
+    "DPYD": DPYD_FLUOROPYRIMIDINE_CAVEAT,
+    "CYP2D6": CYP2D6_CNV_CAVEAT,
+}
 
 
 class CallConfidence(enum.Enum):

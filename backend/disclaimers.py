@@ -875,3 +875,31 @@ DPYD_FLUOROPYRIMIDINE_CAVEAT = (
     "status or evidence level above; confirm any actionable result in a "
     "CLIA/accredited laboratory and discuss dosing only with your care team."
 )
+
+
+# ── CYP2D6 structural-variant / copy-number caveat (SW-E3) ────────────────────
+# Attached to every CYP2D6 prescribing-alert finding (gene_caveat in detail_json,
+# surfaced by backend.api.routes.pharma). CYP2D6 is the canonical structural-variant
+# pharmacogene: whole-gene duplications/multiplications, the CYP2D6*5 whole-gene
+# deletion, and CYP2D6-CYP2D7 hybrid / gene-conversion alleles cannot be resolved
+# from SNP-array data. The star-allele call assumes exactly two gene copies, so the
+# activity score is an ASSAYED point estimate with a directional band: true activity
+# may be HIGHER (a functional-allele duplication → Ultrarapid Metabolizer) or LOWER
+# (a *5 deletion → Poor Metabolizer). Honesty guardrail: context only — it never
+# changes the metabolizer status or evidence level (the call already carries
+# "Partial" confidence via STRUCTURAL_VARIANT_GENES).
+
+CYP2D6_CNV_CAVEAT = (
+    "CYP2D6 result interpretation (context only). Array genotyping reads only "
+    "single-nucleotide variants and assumes two CYP2D6 gene copies; it does NOT "
+    "assess copy-number variation (whole-gene duplications/multiplications, the "
+    "CYP2D6*5 whole-gene deletion) or CYP2D6-CYP2D7 hybrid / gene-conversion "
+    "alleles. The activity score shown is therefore an assayed estimate: true "
+    "CYP2D6 activity may be HIGHER if a functional allele is duplicated (toward "
+    "Ultrarapid Metabolizer — e.g. increased morphine from codeine) or LOWER if a "
+    "CYP2D6*5 gene deletion is present (toward Poor Metabolizer). A normal-"
+    "metabolizer result does not exclude these structural variants. This does not "
+    "change the metabolizer status or evidence level above; confirm with a "
+    "copy-number-aware CYP2D6 assay in a CLIA/accredited laboratory before any "
+    "medication change."
+)

@@ -468,15 +468,19 @@ class TestGeneResults:
         genes = [item["gene"] for item in data["items"]]
         assert genes == sorted(genes)
 
-    def test_non_dpyd_gene_has_no_caveat(self, client: tuple[TestClient, int]):
-        """gene_caveat is DPYD-specific; CYP2C19/CYP2D6 cards expose None."""
+    def test_caveat_absent_when_finding_has_none(self, client: tuple[TestClient, int]):
+        """The route passes through gene_caveat=None when the finding has none.
+
+        CYP2C19 has no gene-specific caveat (unlike DPYD's fatal-toxicity caveat or
+        CYP2D6's copy-number caveat, which are injected at store time), so its card
+        must expose gene_caveat=None.
+        """
         tc, sample_id = client
         resp = tc.get(f"/api/analysis/pharma/genes?sample_id={sample_id}")
         assert resp.status_code == 200
         items = resp.json()["items"]
-        assert items, "expected non-DPYD gene cards (CYP2C19 / CYP2D6 findings)"
-        for item in items:
-            assert item.get("gene_caveat") is None, item["gene"]
+        cyp2c19 = next(i for i in items if i["gene"] == "CYP2C19")
+        assert cyp2c19.get("gene_caveat") is None
 
 
 # ── DPYD fluoropyrimidine caveat surfacing (SW-E5) ────────────────────
