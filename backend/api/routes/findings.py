@@ -63,6 +63,7 @@ class FindingResponse(BaseModel):
     svg_path: str | None = None
     pmid_citations: list[str] = []
     detail: dict | None = None
+    provenance: dict | None = None
     related_module: str | None = None
     related_finding_id: int | None = None
     created_at: str | None = None
@@ -127,6 +128,14 @@ def _row_to_response(row: sa.Row) -> FindingResponse:
         except (json.JSONDecodeError, TypeError):
             pass
 
+    provenance: dict | None = None
+    raw_provenance = row.provenance
+    if raw_provenance:
+        try:
+            provenance = json.loads(raw_provenance)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     created = None
     if row.created_at is not None:
         created = str(row.created_at)
@@ -154,6 +163,7 @@ def _row_to_response(row: sa.Row) -> FindingResponse:
         svg_path=row.svg_path,
         pmid_citations=pmids,
         detail=detail,
+        provenance=provenance,
         related_module=row.related_module,
         related_finding_id=row.related_finding_id,
         created_at=created,

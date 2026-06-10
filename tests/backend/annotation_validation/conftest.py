@@ -421,6 +421,14 @@ def build_live_run(tmp_data_dir: Path):
 
         annot_result = run_annotation(sample_engine, registry)
         analysis_result = run_all_analyses(sample_engine, registry) if run_analyses else {}
+        if run_analyses:
+            # Mirror the production Huey flow: stamp per-finding provenance after
+            # analysis so the live path exercises it (SW-A4 #8). Audit-only — it
+            # does not change finding counts or carriage, so the golden snapshot
+            # is unaffected.
+            from backend.analysis.provenance import stamp_findings_provenance
+
+            stamp_findings_provenance(sample_engine, registry.reference_engine)
 
         with sample_engine.connect() as conn:
             findings_rows = conn.execute(sa.select(findings)).fetchall()
