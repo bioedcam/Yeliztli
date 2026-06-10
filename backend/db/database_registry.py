@@ -477,6 +477,30 @@ def get_build_fn(db_name: str) -> Callable | None:
     return fn
 
 
+# ── Genome-build provenance (F30) ─────────────────────────────────
+# The annotation pipeline operates in GRCh37: the chip rsid catalog, ClinVar,
+# gnomAD r2.1.1, the GWAS catalog, CPIC, the VEP bundle and the gnomAD gene
+# constraint table are all GRCh37-coordinate. dbNSFP is the lone exception — it
+# ships GRCh38 coordinates (F35) and is joined by rsid on the live path, so its
+# cross-build coordinates are *expected*, not a defect.
+PIPELINE_GENOME_BUILD = "GRCh37"
+
+# Expected genome build per recorded source, keyed by the ``db_name`` written to
+# ``database_versions``. Sources absent here are build-agnostic / gene-keyed
+# (dbsnp merge history, mondo_hpo, omim, lai_bundle, ancestry_pca, encode_ccres)
+# and record no build. This map is the single source of truth shared by the
+# recorder (auto-stamp) and :func:`check_genome_build_consistency`.
+EXPECTED_GENOME_BUILD: dict[str, str] = {
+    "clinvar": "GRCh37",
+    "gnomad": "GRCh37",
+    "gwas_catalog": "GRCh37",
+    "cpic": "GRCh37",
+    "vep_bundle": "GRCh37",
+    "gnomad_constraint": "GRCh37",
+    "dbnsfp": "GRCh38",
+}
+
+
 # ── Version recording ────────────────────────────────────────────
 
 
@@ -487,18 +511,29 @@ def _record_db_version(
     file_size_bytes: int | None,
     sha256: str | None = None,
     file_path: str | None = None,
+    genome_build: str | None = None,
 ) -> None:
     """Upsert a single row in ``database_versions``.
 
     Single-source helper used by every download/build/extract path so the
     Update Manager always sees a row regardless of which DB type completed
     (per setup-update-plan §3.7).
+
+    ``genome_build`` records the source's coordinate assembly (F30). When the
+    caller leaves it ``None`` it is auto-resolved from
+    :data:`EXPECTED_GENOME_BUILD` by ``db_name``, so every recorder stamps the
+    correct build without each call site repeating it; a build-agnostic source
+    (not in the map) records ``NULL``. An explicit non-``None`` value overrides
+    the map — used by tests to plant a skew.
     """
     from datetime import UTC, datetime
 
     import sqlalchemy as sa
 
     from backend.db.tables import database_versions
+
+    if genome_build is None:
+        genome_build = EXPECTED_GENOME_BUILD.get(db_name)
 
     with engine.begin() as conn:
         existing = conn.execute(
@@ -516,6 +551,7 @@ def _record_db_version(
                     file_size_bytes=file_size_bytes,
                     downloaded_at=now,
                     checksum_sha256=sha256,
+                    genome_build=genome_build,
                 )
             )
         else:
@@ -527,8 +563,51 @@ def _record_db_version(
                     file_size_bytes=file_size_bytes,
                     downloaded_at=now,
                     checksum_sha256=sha256,
+                    genome_build=genome_build,
                 )
             )
+
+
+def check_genome_build_consistency(reference_engine: Engine) -> list[str]:
+    """Return ``db_name``s whose recorded ``genome_build`` is an unexpected skew.
+
+    Compares each ``database_versions`` row's recorded build against
+    :data:`EXPECTED_GENOME_BUILD`. A source is flagged only when it carries a
+    non-NULL build that differs from what the map expects — e.g. a GRCh38 gnomAD
+    bundle slipping in where the GRCh37 pipeline expects GRCh37. dbNSFP's
+    expected build is GRCh38, so its legitimate cross-build coordinates are
+    *not* flagged. Rows with a NULL build (not yet stamped, or a build-agnostic
+    source) and sources absent from the map are skipped.
+
+    This is advisory provenance — callers **log a warning**, they do not
+    hard-fail: the dominant live path joins by rsid and is build-agnostic. The
+    check exists to make an unexpected assembly skew visible. Returns an empty
+    list when ``database_versions`` is unreachable.
+    """
+    import sqlalchemy as sa
+
+    from backend.db.tables import database_versions
+
+    flagged: list[str] = []
+    try:
+        with reference_engine.connect() as conn:
+            rows = conn.execute(
+                sa.select(
+                    database_versions.c.db_name,
+                    database_versions.c.genome_build,
+                )
+            ).fetchall()
+    except sa.exc.OperationalError as exc:
+        logger.warning("genome_build_consistency_unreadable", error=str(exc))
+        return flagged
+
+    for row in rows:
+        expected = EXPECTED_GENOME_BUILD.get(row.db_name)
+        if expected is None or row.genome_build is None:
+            continue
+        if row.genome_build != expected:
+            flagged.append(row.db_name)
+    return flagged
 
 
 # ── Bundled-DB materialization (offline fallback) ────────────────

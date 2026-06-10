@@ -101,4 +101,53 @@ def test_noop_on_fresh_create_all_schema(tmp_path: Path) -> None:
     reference_metadata.create_all(engine, checkfirst=True)
 
     assert "individual_id" in _columns(engine, "samples")
+    assert "genome_build" in _columns(engine, "database_versions")
+    assert ensure_reference_schema_current(engine) is False
+
+
+def _make_pre011_database_versions(engine: sa.Engine) -> None:
+    """Create a ``database_versions`` table lacking ``genome_build`` (pre-011)."""
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "CREATE TABLE database_versions ("
+                "  db_name TEXT PRIMARY KEY,"
+                "  version TEXT NOT NULL,"
+                "  file_path TEXT,"
+                "  file_size_bytes INTEGER,"
+                "  downloaded_at DATETIME,"
+                "  checksum_sha256 TEXT"
+                ")"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO database_versions (db_name, version) VALUES ('clinvar', '20260101')"
+            )
+        )
+
+
+def test_backfills_missing_genome_build(tmp_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ref.db'}")
+    _make_pre011_database_versions(engine)
+
+    assert "genome_build" not in _columns(engine, "database_versions")
+
+    changed = ensure_reference_schema_current(engine)
+
+    assert changed is True
+    assert "genome_build" in _columns(engine, "database_versions")
+    # The pre-existing row survives and reads NULL for the new column.
+    with engine.connect() as conn:
+        row = conn.execute(
+            sa.text("SELECT version, genome_build FROM database_versions WHERE db_name='clinvar'")
+        ).fetchone()
+    assert row == ("20260101", None)
+
+
+def test_genome_build_backfill_idempotent(tmp_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ref.db'}")
+    _make_pre011_database_versions(engine)
+
+    assert ensure_reference_schema_current(engine) is True
     assert ensure_reference_schema_current(engine) is False

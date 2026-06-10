@@ -668,3 +668,54 @@ class TestMigration009Individuals:
         assert _tables(db) == before_tables
         assert set(_columns(db, "samples").keys()) == before_samples_cols
         assert _sample_indexes(db) == before_indexes
+
+
+# ── 011: database_versions.genome_build (F30) ─────────────────────────
+
+
+class TestMigration011GenomeBuild:
+    def test_upgrade_adds_genome_build_column(self, tmp_path: Path) -> None:
+        db = tmp_path / "reference.db"
+        _upgrade(db, revision="011")
+
+        cols = _columns(db, "database_versions")
+        assert "genome_build" in cols
+        # Nullable TEXT — build-agnostic sources record NULL.
+        assert cols["genome_build"]["notnull"] is False
+
+    def test_pre_011_db_lacks_column(self, tmp_path: Path) -> None:
+        db = tmp_path / "reference.db"
+        _upgrade(db, revision="010")
+        assert "genome_build" not in _columns(db, "database_versions")
+
+    def test_downgrade_drops_genome_build_column(self, tmp_path: Path) -> None:
+        db = tmp_path / "reference.db"
+        _upgrade(db, revision="011")
+        assert "genome_build" in _columns(db, "database_versions")
+
+        _downgrade(db, "010")
+        assert "genome_build" not in _columns(db, "database_versions")
+
+    def test_upgrade_downgrade_upgrade_round_trip(self, tmp_path: Path) -> None:
+        db = tmp_path / "reference.db"
+        _upgrade(db, revision="011")
+        _downgrade(db, "010")
+        _upgrade(db, revision="011")
+        assert "genome_build" in _columns(db, "database_versions")
+
+    def test_existing_rows_survive_with_null_build(self, tmp_path: Path) -> None:
+        """A row recorded before 011 keeps its data; new column reads NULL."""
+        db = tmp_path / "reference.db"
+        _upgrade(db, revision="010")
+        with sqlite3.connect(str(db)) as conn:
+            conn.execute(
+                "INSERT INTO database_versions (db_name, version) VALUES ('clinvar', '20260101')"
+            )
+
+        _upgrade(db, revision="011")
+
+        with sqlite3.connect(str(db)) as conn:
+            row = conn.execute(
+                "SELECT version, genome_build FROM database_versions WHERE db_name = 'clinvar'"
+            ).fetchone()
+        assert row == ("20260101", None)

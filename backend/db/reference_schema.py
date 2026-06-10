@@ -66,4 +66,20 @@ def ensure_reference_schema_current(engine: sa.Engine) -> bool:
                 column="individual_id",
             )
 
+    # ── database_versions.genome_build (Alembic 011 — F30 provenance)
+    # Cross-source genome-build column. Nullable TEXT; existing rows keep NULL
+    # until each source's version is next recorded (the recorder auto-stamps the
+    # build from EXPECTED_GENOME_BUILD).
+    if "database_versions" in table_names:
+        dv_cols = {c["name"] for c in inspector.get_columns("database_versions")}
+        if "genome_build" not in dv_cols:
+            with engine.begin() as conn:
+                conn.execute(sa.text("ALTER TABLE database_versions ADD COLUMN genome_build TEXT"))
+            changed = True
+            logger.info(
+                "reference_schema_backfilled",
+                table="database_versions",
+                column="genome_build",
+            )
+
     return changed

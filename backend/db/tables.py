@@ -99,6 +99,10 @@ database_versions = sa.Table(
     sa.Column("file_size_bytes", sa.Integer),
     sa.Column("downloaded_at", sa.DateTime),
     sa.Column("checksum_sha256", sa.Text),
+    # Genome build of the source's coordinates (F30). NULL for build-agnostic /
+    # gene-keyed sources (dbsnp, mondo_hpo, omim, lai_bundle, ancestry_pca).
+    # dbNSFP is legitimately GRCh38; the rest of the live path is GRCh37.
+    sa.Column("genome_build", sa.Text),
 )
 
 # ── Auto-Update Settings ───────────────────────────────────────────────

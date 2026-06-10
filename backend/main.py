@@ -78,6 +78,7 @@ from backend.api.routes.watches import router as watches_router
 from backend.auth import AuthMiddleware
 from backend.config import get_settings, migrate_legacy_data_dir, warn_deprecated_env
 from backend.db.connection import get_registry, reset_registry
+from backend.db.database_registry import check_genome_build_consistency
 from backend.db.db_health import recover_orphaned_downloads
 from backend.db.reference_schema import ensure_reference_schema_current
 from backend.db.tables import reference_metadata
@@ -114,6 +115,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # pre-existing ones. Backfill additive columns (e.g. samples.individual_id)
     # so DBs that predate a column-adding revision keep working.
     ensure_reference_schema_current(registry.reference_engine)
+    # Cross-source genome-build provenance check (F30): warn — never fail — when
+    # a recorded source's build deviates from its expected assembly (e.g. a
+    # GRCh38 gnomAD bundle where the GRCh37 pipeline expects GRCh37). dbNSFP's
+    # legitimate GRCh38 coordinates are expected and not flagged.
+    build_skew = check_genome_build_consistency(registry.reference_engine)
+    if build_skew:
+        logger.warning(
+            "genome_build_skew_detected",
+            sources=build_skew,
+            pipeline_build="GRCh37",
+        )
     # Configure structured logging with DB persistence
     configure_logging(engine_getter=lambda: registry.reference_engine)
     # Mark any leftover in-progress download sessions as interrupted/stale
