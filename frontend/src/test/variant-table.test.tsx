@@ -139,6 +139,37 @@ describe("VariantTable", () => {
     })
     expect(screen.getByText("rs101")).toBeInTheDocument()
     expect(screen.getByText("rs102")).toBeInTheDocument()
+    // The genotype column carries a value, not just a header — all three rows
+    // are genotype "AG" in this fixture.
+    expect(screen.getAllByText("AG")).toHaveLength(3)
+  })
+
+  it("renders genotype and zygosity for het and hom_alt rows", async () => {
+    // A preset that surfaces the zygosity column (the default presets omit it).
+    const carriagePreset: ColumnPreset[] = [
+      { name: "Carriage", columns: ["genotype", "zygosity", "gene_symbol"], predefined: true },
+    ]
+    const page = makeVariantPage(2)
+    page.items[0] = { ...page.items[0], rsid: "rs_het", genotype: "AG", zygosity: "het" }
+    page.items[1] = {
+      ...page.items[1],
+      rsid: "rs_homalt",
+      genotype: "GG",
+      ref: "A",
+      alt: "G",
+      zygosity: "hom_alt",
+    }
+    setupFetchMock(page, makeCountResponse(2), defaultChromCounts, carriagePreset)
+
+    render(<VariantTable sampleId={1} />)
+    await waitFor(() => expect(screen.getByText("rs_het")).toBeInTheDocument())
+
+    // Both carriage branches must render their genotype + zygosity — a het↔hom
+    // label inversion (a clinically wrong call) would otherwise be invisible.
+    expect(screen.getByText("AG")).toBeInTheDocument()
+    expect(screen.getByText("GG")).toBeInTheDocument()
+    expect(screen.getByText("het")).toBeInTheDocument()
+    expect(screen.getByText("hom_alt")).toBeInTheDocument()
   })
 
   it("shows async total count", async () => {

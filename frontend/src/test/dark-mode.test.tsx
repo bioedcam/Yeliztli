@@ -71,6 +71,51 @@ describe('Dark mode toggle (T4-30)', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
+  it('system mode applies .dark when the OS prefers dark', () => {
+    const original = window.matchMedia
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('dark'), // OS prefers dark
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+    try {
+      localStorage.setItem('gi-theme', 'system')
+      render(<TopNav />)
+      expect(screen.getByTestId('theme-toggle')).toHaveAttribute('aria-label', 'Theme: system')
+      expect(document.documentElement.classList.contains('dark')).toBe(true)
+    } finally {
+      window.matchMedia = original
+    }
+  })
+
+  it('system mode removes .dark when the OS prefers light', () => {
+    const original = window.matchMedia
+    window.matchMedia = ((query: string) => ({
+      matches: false, // OS prefers light
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+    try {
+      document.documentElement.classList.add('dark') // start dirty
+      localStorage.setItem('gi-theme', 'system')
+      render(<TopNav />)
+      expect(screen.getByTestId('theme-toggle')).toHaveAttribute('aria-label', 'Theme: system')
+      expect(document.documentElement.classList.contains('dark')).toBe(false)
+    } finally {
+      window.matchMedia = original
+    }
+  })
+
   it('removes dark class when set to light', () => {
     document.documentElement.classList.add('dark')
     localStorage.setItem('gi-theme', 'light')

@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render as rtlRender, screen, waitFor } from "@testing-library/react"
+import { render as rtlRender, screen, waitFor, fireEvent } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import OverlaysView from "@/pages/OverlaysView"
@@ -171,5 +171,65 @@ describe("OverlaysView", () => {
     expect(
       screen.getByText("Drop a BED or VCF file here, or click to browse")
     ).toBeInTheDocument()
+  })
+
+  it("applies an overlay and renders the results table", async () => {
+    const applyResponse = {
+      overlay_id: 1,
+      overlay_name: "ClinVar Custom",
+      variants_matched: 2,
+      records_checked: 100,
+    }
+    mockFetch.mockImplementation(async (url: string, opts?: { method?: string }) => {
+      if (url === "/api/overlays") {
+        return { ok: true, json: async () => MOCK_OVERLAYS, text: async () => "" }
+      }
+      if (url.includes("/api/overlays/1/apply") && opts?.method === "POST") {
+        return { ok: true, json: async () => applyResponse, text: async () => "" }
+      }
+      if (url.includes("/api/overlays/1/results")) {
+        return { ok: true, json: async () => MOCK_RESULTS, text: async () => "" }
+      }
+      return { ok: false, status: 404, text: async () => "Not found" }
+    })
+
+    renderWithRoute(<OverlaysView />, ["/overlays?sample_id=1"])
+    await waitFor(() => expect(screen.getByText("ClinVar Custom")).toBeInTheDocument())
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Apply" })[0])
+
+    // The applied overlay's results table renders the matched annotations.
+    await waitFor(() => expect(screen.getByText("rs12345")).toBeInTheDocument())
+    expect(screen.getByText("rs429358")).toBeInTheDocument()
+    expect(screen.getByText("pathogenic")).toBeInTheDocument()
+    expect(screen.getByText("risk_factor")).toBeInTheDocument()
+  })
+
+  it("deletes an overlay after confirmation", async () => {
+    // jsdom has no window.confirm, so install a stub (not a spy).
+    const originalConfirm = window.confirm
+    const confirmFn = vi.fn(() => true)
+    window.confirm = confirmFn
+    let deleteMethod: string | undefined
+    mockFetch.mockImplementation(async (url: string, opts?: { method?: string }) => {
+      if (url === "/api/overlays") {
+        return { ok: true, json: async () => MOCK_OVERLAYS, text: async () => "" }
+      }
+      if (url === "/api/overlays/1" && opts?.method === "DELETE") {
+        deleteMethod = opts?.method
+        return { ok: true, json: async () => ({}), text: async () => "" }
+      }
+      return { ok: false, status: 404, text: async () => "Not found" }
+    })
+
+    renderWithRoute(<OverlaysView />, ["/overlays?sample_id=1"])
+    await waitFor(() => expect(screen.getByText("ClinVar Custom")).toBeInTheDocument())
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0])
+
+    // Delete must prompt for confirmation and then issue the DELETE request.
+    expect(confirmFn).toHaveBeenCalledWith('Delete overlay "ClinVar Custom"?')
+    await waitFor(() => expect(deleteMethod).toBe("DELETE"))
+    window.confirm = originalConfirm
   })
 })

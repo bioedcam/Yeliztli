@@ -95,16 +95,16 @@ Each is a real masked defect; fix the assertion (and the SUT if the assertion th
 
 ---
 
-### P2 — Frontend chart/mocks that discard the data under test
+### P2 — Frontend chart/mocks that discard the data under test — DONE
 
 | Item | Test | Fix |
 |---|---|---|
-| Plotly mock collapses traces | `density-chart.test.tsx`, `qc-charts.test.tsx` | Mock should expose per-trace data so bin counts / het-hom-nocall values can be asserted (not just `data.length`). |
-| System dark mode untested | `dark-mode.test.tsx` | Mock `matchMedia`/`prefers-color-scheme` and assert the resolved `.dark` class in System mode. |
-| Promised coverage absent | `overlays.test.tsx` | Add the upload/apply/delete cases the docstring promises. |
-| Findings/variant zygosity not asserted | `findings-explorer.test.tsx`, `variant-table.test.tsx` | Assert the rendered genotype/zygosity (both `het` and `hom_alt`). |
+| Plotly mock collapses traces | `density-chart.test.tsx`, `qc-charts.test.tsx` | ✅ The mock now exposes `data-traces` (each trace's `name` + `y`); tests assert the per-bin impact counts, the het/hom/nocall series, and the per-chromosome het rates (`het/(het+hom)`) — not just `data.length`. |
+| System dark mode untested | `dark-mode.test.tsx` | ✅ Two tests stub `matchMedia('(prefers-color-scheme: dark)')` and assert `.dark` is applied (OS dark) / removed (OS light) in System mode. |
+| Promised coverage absent | `overlays.test.tsx` | ✅ Added the apply→results-table and delete (confirm + `DELETE` request) interaction cases. |
+| Findings/variant zygosity not asserted | `findings-explorer.test.tsx`, `variant-table.test.tsx` | ✅ `findings-explorer` asserts the rendered `het`/`hom` labels; `variant-table` asserts the genotype value and renders `het` **and** `hom_alt` via a zygosity-column preset. |
 
-**DoD:** chart mocks preserve the data under test; promised cases exist. ~1–2 frontend PRs.
+**DoD:** chart mocks preserve the data under test; promised cases exist. ✅ Done in one frontend PR (983 vitest tests green, `eslint` + `tsc -b` clean).
 
 ---
 
@@ -154,5 +154,5 @@ Rough order of effort: P1 items are small and high-signal; the P2 sweep is the b
 - ✅ Every clinical-finding module has a `hom_ref` (or all-reference) negative control. *(carrier_status added; risk-genotype modules already covered)*
 - ✅ Convention against `assert x is not None` / `status_code == 200`-only assertions is documented (`CONTRIBUTING.md`) with an advisory `.coderabbit.yaml` check; the audit's high-signal value-blind tests are fixed. *(Legacy lines are migrated opportunistically, not in a blocking sweep.)*
 - ✅ No perf assert sits next to a target it is an order of magnitude looser than. *(120s/300s inlined at the benchmark assert)*
-- ⏳ Frontend chart tests assert the data, not the trace count *(density/qc charts, dark-mode, overlays, findings/variant zygosity)* — **next PR** (P2 frontend sub-section, below).
+- ✅ Frontend chart tests assert the data, not the trace count *(density/qc charts expose per-trace y-values; dark-mode System-mode OS preference; overlays apply→results + delete; findings/variant zygosity rendering)*.
 - ⏳ **Owner-only (pending `bioedcam`):** `main` protected by the `ci-required` + `lint` required checks, with the merge queue gating Tier-2 (macOS/Docker/E2E). The aggregator + Tier-2 legs are already wired in `ci.yml`; only the repo-settings toggle remains (see "Owner — repo settings").

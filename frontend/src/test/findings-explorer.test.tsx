@@ -186,6 +186,20 @@ describe("FindingsExplorer", () => {
     expect(screen.getByText(/Primary ancestry: European/)).toBeInTheDocument()
   })
 
+  it("renders the zygosity label for findings that carry one", async () => {
+    setupFetchMock()
+    renderWithRoute(<FindingsExplorer />, ["/?sample_id=1"])
+    await screen.findByText(/BRCA1 c\.5266dupC/) // wait for findings to load
+
+    // FindingsExplorer renders `finding.zygosity` for findings that have it
+    // (the cancer finding is het, the nutrigenomics finding is hom). Assert both
+    // labels render — a regression that dropped or inverted carriage rendering
+    // would otherwise be invisible. (exact-text match, so "hom" does not collide
+    // with the "homozygous (TT)" inside a finding_text.)
+    expect(screen.getByText("het")).toBeInTheDocument()
+    expect(screen.getByText("hom")).toBeInTheDocument()
+  })
+
   it("displays module filter chips with counts", async () => {
     setupFetchMock()
     renderWithRoute(<FindingsExplorer />, ["/?sample_id=1"])
