@@ -158,6 +158,42 @@ ANNOTATED_VARIANTS_DATA = [
         "inheritance_pattern": None,
         "annotation_coverage": 31,
     },
+    {
+        # Rare + Pathogenic + hom_alt carrier: passes the default rarity /
+        # significance / carriage filters, so ONLY the zygosity filter can
+        # exclude it. Without this row the zygosity-filter test is vacuous —
+        # the sole other non-het variant (rs12345) is common+benign and is
+        # dropped for AF reasons regardless of zygosity.
+        "rsid": "rs_homalt_rare",
+        "chrom": "13",
+        "pos": 32339000,
+        "ref": "C",
+        "alt": "T",
+        "genotype": "TT",
+        "zygosity": "hom_alt",
+        "gene_symbol": "BRCA2",
+        "consequence": "stop_gained",
+        "hgvs_coding": None,
+        "hgvs_protein": None,
+        "gnomad_af_global": 0.0003,
+        "gnomad_af_afr": None,
+        "gnomad_af_amr": None,
+        "gnomad_af_eas": None,
+        "gnomad_af_eur": 0.0004,
+        "gnomad_af_fin": None,
+        "gnomad_af_sas": None,
+        "clinvar_significance": "Pathogenic",
+        "clinvar_review_stars": 2,
+        "clinvar_accession": "VCV000009999",
+        "clinvar_conditions": "Hereditary breast and ovarian cancer",
+        "cadd_phred": 33.0,
+        "revel": 0.9,
+        "ensemble_pathogenic": True,
+        "evidence_conflict": False,
+        "disease_name": "Hereditary breast-ovarian cancer",
+        "inheritance_pattern": "AD",
+        "annotation_coverage": 31,
+    },
 ]
 
 
@@ -270,7 +306,7 @@ class TestSearchEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] >= 2  # BRCA1 pathogenic + TP53 novel
-        assert data["total_variants_scanned"] == 4
+        assert data["total_variants_scanned"] == 5
         # High AF variant (rs12345, 0.15) should be excluded
         rsids = [item["rsid"] for item in data["items"]]
         assert "rs12345" not in rsids
@@ -352,15 +388,38 @@ class TestSearchEndpoint:
             assert item["gnomad_af_global"] is not None
 
     def test_search_zygosity_filter(self, rare_client: TestClient) -> None:
-        """Zygosity filter restricts to het or hom_alt."""
-        resp = rare_client.post(
+        """Zygosity filter is two-sided — het-only must EXCLUDE a carried hom_alt.
+
+        A filter that silently ignored zygosity would still pass a one-sided
+        "every returned row is het" check, because the only other rare carrier in
+        the seed is hom_alt. So assert both directions: the het filter drops
+        ``rs_homalt_rare`` (a rare, Pathogenic, hom_alt variant that passes every
+        other default filter), the hom_alt filter surfaces it, and the two result
+        sets are disjoint.
+        """
+        het = rare_client.post(
             "/api/analysis/rare-variants/search?sample_id=1",
             json={"zygosity": "het"},
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        for item in data["items"]:
+        assert het.status_code == 200
+        het_items = het.json()["items"]
+        het_rsids = {item["rsid"] for item in het_items}
+        assert het_rsids, "expected at least one het carrier in the seed"
+        for item in het_items:
             assert item["zygosity"] == "het"
+        assert "rs_homalt_rare" not in het_rsids  # hom_alt excluded by het filter
+
+        hom = rare_client.post(
+            "/api/analysis/rare-variants/search?sample_id=1",
+            json={"zygosity": "hom_alt"},
+        )
+        assert hom.status_code == 200
+        hom_items = hom.json()["items"]
+        hom_rsids = {item["rsid"] for item in hom_items}
+        for item in hom_items:
+            assert item["zygosity"] == "hom_alt"
+        assert "rs_homalt_rare" in hom_rsids  # surfaced when the filter matches
+        assert het_rsids.isdisjoint(hom_rsids)  # the filter genuinely partitions
 
     def test_search_stores_findings(self, rare_client: TestClient) -> None:
         """Search also stores findings in the sample DB."""

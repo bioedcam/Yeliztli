@@ -766,3 +766,18 @@ class TestResponseShape:
         assert data["clinvar_significance"] is None
         assert data["gnomad_af_global"] is None
         assert data["cadd_phred"] is None
+
+    def test_minimal_variant_surfaces_hom_ref_carriage(self, client):
+        """The endpoint must faithfully surface a non-carrier's carriage.
+
+        ``test_returns_all_core_fields`` covers the het branch (rs80357906); this
+        is the hom_ref counterpart. rs999 is seeded ``genotype='CC'`` /
+        ``zygosity='hom_ref'`` (the individual carries no copy of the ALT), so the
+        variant-detail response must report exactly that — a regression that
+        dropped or mislabeled carriage (e.g. blanked ``zygosity`` to NULL, or
+        rendered the non-carrier as a carrier) would otherwise pass unnoticed.
+        """
+        tc, sid = client
+        data = tc.get(f"/api/variants/rs999?sample_id={sid}").json()
+        assert data["genotype"] == "CC"
+        assert data["zygosity"] == "hom_ref"
