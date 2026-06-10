@@ -65,6 +65,7 @@ from backend.api.routes.roh import router as roh_router
 from backend.api.routes.samples import router as samples_router
 from backend.api.routes.saved_queries import router as saved_queries_router
 from backend.api.routes.setup import router as setup_router
+from backend.api.routes.sex_aneuploidy import router as sex_aneuploidy_router
 from backend.api.routes.skin import router as skin_router
 from backend.api.routes.sleep import router as sleep_router
 from backend.api.routes.tags import router as tags_router
@@ -215,6 +216,7 @@ def create_app() -> FastAPI:
     api_router.include_router(saved_queries_router)
     api_router.include_router(samples_router)
     api_router.include_router(setup_router)
+    api_router.include_router(sex_aneuploidy_router)
     api_router.include_router(skin_router)
     api_router.include_router(sleep_router)
     api_router.include_router(tags_router)

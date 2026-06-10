@@ -34,6 +34,7 @@ populating ``individuals.biological_sex``) will use it too.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 import sqlalchemy as sa
@@ -104,11 +105,25 @@ def _classify(
     return "unknown"
 
 
-def infer_biological_sex(sample_engine: sa.Engine) -> Classification:
-    """Infer biological sex from a sample's ``raw_variants`` table.
+@dataclass(frozen=True)
+class SexSignals:
+    """Raw chromosome-X/Y signals behind sex inference (also used by the
+    sex-aneuploidy screen, which reads the same counts).
 
-    Returns one of ``"XX"``, ``"XY"``, ``"manual_review"``, ``"unknown"``.
+    ``y_rate`` is the non-no-call rate over the typed chrY probes (or 0.0 when no
+    chrY probe exists).
     """
+
+    x_nonpar_typed: int
+    x_nonpar_het: int
+    x_nonpar_hom: int
+    y_total: int
+    y_typed: int
+    y_rate: float
+
+
+def compute_sex_signals(sample_engine: sa.Engine) -> SexSignals:
+    """Tabulate non-PAR chrX het/hom and chrY call counts from ``raw_variants``."""
     x_nonpar_typed = 0
     x_nonpar_het = 0
     x_nonpar_hom = 0
@@ -142,22 +157,38 @@ def infer_biological_sex(sample_engine: sa.Engine) -> Classification:
                 y_typed += 1
 
     y_rate = (y_typed / y_total) if y_total else 0.0
-    classification = _classify(
-        x_nonpar_het=x_nonpar_het,
+    return SexSignals(
         x_nonpar_typed=x_nonpar_typed,
+        x_nonpar_het=x_nonpar_het,
         x_nonpar_hom=x_nonpar_hom,
+        y_total=y_total,
+        y_typed=y_typed,
         y_rate=y_rate,
+    )
+
+
+def infer_biological_sex(sample_engine: sa.Engine) -> Classification:
+    """Infer biological sex from a sample's ``raw_variants`` table.
+
+    Returns one of ``"XX"``, ``"XY"``, ``"manual_review"``, ``"unknown"``.
+    """
+    s = compute_sex_signals(sample_engine)
+    classification = _classify(
+        x_nonpar_het=s.x_nonpar_het,
+        x_nonpar_typed=s.x_nonpar_typed,
+        x_nonpar_hom=s.x_nonpar_hom,
+        y_rate=s.y_rate,
     )
 
     logger.info(
         "biological_sex_inferred",
         classification=classification,
-        x_nonpar_het=x_nonpar_het,
-        x_nonpar_hom=x_nonpar_hom,
-        x_nonpar_typed=x_nonpar_typed,
-        y_total=y_total,
-        y_typed=y_typed,
-        y_rate=round(y_rate, 4),
+        x_nonpar_het=s.x_nonpar_het,
+        x_nonpar_hom=s.x_nonpar_hom,
+        x_nonpar_typed=s.x_nonpar_typed,
+        y_total=s.y_total,
+        y_typed=s.y_typed,
+        y_rate=round(s.y_rate, 4),
     )
 
     return classification

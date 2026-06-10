@@ -79,6 +79,7 @@ _FULLY_GATED_MODULES = frozenset(
         "rare_variants",
         "reports",
         "roh",
+        "sex_aneuploidy",
         "skin",
         "sleep",
         "tags",

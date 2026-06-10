@@ -137,7 +137,7 @@ class TestSampleMetadata:
     """Verify sample_metadata_obj contains all expected tables."""
 
     def test_sample_table_count(self):
-        assert len(sample_metadata_obj.tables) == 16
+        assert len(sample_metadata_obj.tables) == 17
 
     def test_sample_table_names(self):
         expected = {
@@ -148,6 +148,7 @@ class TestSampleMetadata:
             "sample_metadata",
             "apoe_gate",
             "parkinsons_gate",
+            "aneuploidy_gate",
             "tags",
             "variant_tags",
             "haplogroup_assignments",

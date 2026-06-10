@@ -141,6 +141,45 @@ Parkinson's information each time you access this section.\
 PARKINSONS_GATE_ACCEPT_LABEL = "I Understand — Show My Parkinson's Results"
 PARKINSONS_GATE_DECLINE_LABEL = "Not Now — Skip Parkinson's Results"
 
+# ── Sex-chromosome aneuploidy screen opt-in disclosure gate ─────────────
+
+ANEUPLOIDY_GATE_TITLE = "Sex-Chromosome Screen Disclosure"
+
+ANEUPLOIDY_GATE_TEXT = """\
+You are about to view a screen for a sex-chromosome difference (an XXY, or \
+Klinefelter, pattern) based on your genotype data.
+
+**Important considerations before viewing:**
+
+- This is a SCREEN, not a diagnosis. A positive screen must be confirmed by \
+clinical karyotyping (a chromosome test). Many people with a sex-chromosome \
+difference are healthy and never knew they had one.
+
+- It can detect only the XXY pattern from this kind of data. It CANNOT detect \
+Turner syndrome (45,X) or XYY, which need DNA-quantity measurements that a \
+genotyping chip does not provide. A negative screen is not a karyotype and does \
+not rule these out.
+
+- This information can be unexpected and emotionally significant, including for \
+how you understand your own body. You may wish to have a support person \
+available, or to consult a genetic counselor, before viewing.
+
+- This screen never changes your recorded sex.
+
+- This result is based on a consumer genotyping chip and is NOT a clinical \
+diagnostic test.
+
+**Resources:**
+- National Society of Genetic Counselors: https://findageneticcounselor.nsgc.org/
+- Genetic and Rare Diseases (GARD) Information Center: https://rarediseases.info.nih.gov/
+
+This gate cannot be dismissed. You must actively choose to view or skip this \
+screen each time you access this section.\
+"""
+
+ANEUPLOIDY_GATE_ACCEPT_LABEL = "I Understand — Show the Screen Result"
+ANEUPLOIDY_GATE_DECLINE_LABEL = "Not Now — Skip This Screen"
+
 # ── Carrier status disclaimer ──────────────────────────────────────────
 
 CARRIER_STATUS_DISCLAIMER_TITLE = "About Carrier Status Results"

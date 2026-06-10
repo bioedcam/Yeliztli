@@ -731,6 +731,19 @@ parkinsons_gate = sa.Table(
     sa.CheckConstraint("id = 1", name="single_row_parkinsons"),
 )
 
+# ── Sex-chromosome aneuploidy screen gate state ────────────────────────
+# Single-row opt-in acknowledgment for the psychosocially-sensitive
+# sex-chromosome aneuploidy screen (XXY/Klinefelter pattern; roadmap #48).
+
+aneuploidy_gate = sa.Table(
+    "aneuploidy_gate",
+    sample_metadata_obj,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("acknowledged", sa.Boolean, server_default=sa.text("0")),
+    sa.Column("acknowledged_at", sa.DateTime),
+    sa.CheckConstraint("id = 1", name="single_row_aneuploidy"),
+)
+
 # ── Tags ───────────────────────────────────────────────────────────────
 
 tags = sa.Table(
