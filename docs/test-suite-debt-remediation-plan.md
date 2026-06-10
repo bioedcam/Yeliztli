@@ -88,7 +88,9 @@ Each is a real masked defect; fix the assertion (and the SUT if the assertion th
 | PRS RUO/cap is a circular fixture | `test_traits_api::test_prs_evidence_cap` / `test_prs_research_use_only` | The expected value is hard-coded in the same fixture the assertion reads back (`research_use_only=True`, `evidence_level≤2` baked into `PRS_FINDINGS`), so a broken cap/flag can't fail it. Feed a fixture row that *violates* the cap/flag and assert the API enforces it. |
 | LAI label/remap not value-asserted | `test_lai::test_painting_structure` / `test_remap_indices` | Assert per-segment labels / remap values against an independent truth table (same mislabel class as the fixed #9). |
 
-**DoD:** each test asserts the behavior it claims to. Batch into ~2–3 PRs by subsystem (variant/export, cross-module, traits/pgx/lai). 
+**DoD:** each test asserts the behavior it claims to. Batch into ~2–3 PRs by subsystem (variant/export, cross-module, traits/pgx/lai).
+
+**Progress:** the **variant/export** subsystem is done — `test_variant_detail_api` now asserts hom_ref carriage is surfaced; `test_rare_variants_api::test_search_zygosity_filter` is two-sided (a rare hom_alt carrier is excluded by the het filter and surfaced by the hom_alt filter); `test_export::test_vcf_export` asserts per-line REF/ALT/GT (no dropped variants / swapped REF↔ALT / mis-encoded GT). The **cross-module** and **traits/pgx/lai** subsystems remain.
 
 ---
 

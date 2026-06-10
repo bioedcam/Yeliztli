@@ -271,9 +271,40 @@ class TestExportQueryVCF:
         header_lines = [ln for ln in lines if ln.startswith("#CHROM")]
         assert len(header_lines) == 1
 
-        # Should have data lines
+        # Data lines: assert structure + REF/ALT/GT, not just presence — a
+        # dropped variant, swapped REF↔ALT, or mis-encoded GT would otherwise
+        # slip through a bare "len >= 1" check.
         data_lines = [ln for ln in lines if not ln.startswith("#")]
-        assert len(data_lines) >= 1  # At least some variants exported
+        assert len(data_lines) == 3  # all three seeded variants exported (none dropped)
+
+        rows: dict[str, tuple[str, str, str, str, str]] = {}
+        for ln in data_lines:
+            cols = ln.split("\t")
+            assert len(cols) == 10, f"VCF data line is not 10 columns: {ln!r}"
+            chrom, pos, vid, ref, alt, _qual, _filt, _info, fmt, gt = cols
+            # FORMAT declares GT; the sample column carries a GT encoding.
+            assert fmt == "GT", f"FORMAT column must be GT: {ln!r}"
+            assert gt in {"0/0", "0/1", "0"}, f"unexpected GT encoding: {gt!r}"
+            # REF is always a concrete base; ALT is '.' only for hom/haploid calls.
+            assert ref in {"A", "C", "G", "T"}, f"REF not a base: {ref!r}"
+            if gt == "0/1":
+                assert alt in {"A", "C", "G", "T"}, f"het ALT not a base: {alt!r}"
+                assert ref != alt, f"het REF == ALT: {ln!r}"
+            else:
+                assert alt == ".", f"non-het ALT must be '.': {ln!r}"
+            rows[vid] = (chrom, pos, ref, alt, gt)
+
+        # No variant silently dropped.
+        assert set(rows) == {"rs429358", "rs80357906", "rs1801133"}
+        # REF/ALT/GT are inferred from the genotype call (per the VCF note), so a
+        # swapped REF↔ALT or mis-encoded GT is caught here.
+        assert rows["rs429358"][2:] == ("T", "C", "0/1")  # genotype "TC"
+        assert rows["rs1801133"][2:] == ("A", "G", "0/1")  # genotype "AG"
+        # rs80357906's genotype is "TC" → alleles come from the CALL (T/C), not
+        # the annotated indel ref/alt (CTC/C); lock that documented behavior.
+        assert rows["rs80357906"][2:] == ("T", "C", "0/1")
+        # CHROM/POS round-trip for one variant.
+        assert rows["rs429358"][:2] == ("19", "44908684")
 
 
 # ══════════════════════════════════════════════════════════════════════
