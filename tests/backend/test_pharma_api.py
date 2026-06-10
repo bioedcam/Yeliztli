@@ -472,7 +472,10 @@ class TestGeneResults:
         """gene_caveat is DPYD-specific; CYP2C19/CYP2D6 cards expose None."""
         tc, sample_id = client
         resp = tc.get(f"/api/analysis/pharma/genes?sample_id={sample_id}")
-        for item in resp.json()["items"]:
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert items, "expected non-DPYD gene cards (CYP2C19 / CYP2D6 findings)"
+        for item in items:
             assert item.get("gene_caveat") is None, item["gene"]
 
 
