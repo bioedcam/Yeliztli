@@ -10,18 +10,19 @@ far, with concrete code surfaces and a per-finding execution plan.
 **Merged** (genotype-aware live engine + M1–M8 suite, then the Phase-F
 follow-ups): F1–F37 carriage remediation (#320), F20 (#324), F38 (#327),
 F19 (#329), **F22** (#332), **F23** (#342), **F24/F25** (#345), **F12** (#346),
-**F15** (#349).
+**F15** (#349), **F30** (#364), **F34/F35** (#369), **G1** (#373).
 
 Per-sample schema is at **v10** (`v9` = `deleterious_total_assessed` (F25),
 `v10` = `gnomad_af_popmax` (F15)). Repo is `bioedcam/Yeliztli`.
 
-**Remaining:** F30, F34, F35 (build / provenance group), then G1
-(re-annotation trigger). "Phase-B" as originally scoped is now subsumed — see
-below.
+**Remaining: none — this plan is complete.** F30, F34, F35 (build / provenance
+group) and G1 (re-annotation trigger) are all merged; "Phase-B" as originally
+scoped was subsumed by F30 (see below). The per-finding sections below are
+retained as the as-built record.
 
 ---
 
-## F30 — Genome-build manifest + cross-source provenance  *(Medium, active)*
+## F30 — Genome-build manifest + cross-source provenance  *(Medium, merged #364)*
 
 **Problem.** `database_versions` (reference.db) has **no genome-build column**
 and there is no cross-source consistency check, so a stored finding cannot be
@@ -71,7 +72,7 @@ sweep, and the Alembic/reference-schema tests (`test_alembic_backfill.py`,
 
 ---
 
-## F34 — Mitochondrial liftover guard  *(Low, latent)*
+## F34 — Mitochondrial liftover guard  *(Low, merged #369)*
 
 **Problem.** `backend/ingestion/liftover.py::convert_coordinate` maps `MT`→`chrM`
 (line ~88) and lifts via the UCSC hg19→hg38 chain. But UCSC hg19 `chrM` is the
@@ -87,7 +88,7 @@ input yields `(None, None)` while an autosomal input still lifts correctly.
 
 ---
 
-## F35 — dbNSFP GRCh38-coordinate provenance / guard  *(Low, latent)*
+## F35 — dbNSFP GRCh38-coordinate provenance / guard  *(Low, merged #369)*
 
 **Problem.** The dbNSFP DB is **GRCh38-coordinate** (`rs1801133` at 11,796,321)
 while the pipeline is GRCh37 (11,856,378). Harmless today because the dbNSFP
@@ -118,7 +119,7 @@ delivered by **F30**. So there is no separate Phase-B PR; it collapses into F30.
 
 ---
 
-## G1 — Re-annotation trigger for pre-existing samples  *(Cross-cutting)*
+## G1 — Re-annotation trigger for pre-existing samples  *(Cross-cutting, merged #373)*
 
 **Problem.** Samples annotated before the carriage/zygosity fix have 100 % NULL
 `zygosity` (so cancer/cardio/carrier modules silently return 0), and samples
@@ -136,6 +137,16 @@ zygosity + new columns populated). Test: a sample recorded at the prior
 `vep_bundle` major is reported stale after the bump.
 
 **Cross-cutting** → full sweep.
+
+**As built (#373).** Version-only bump: `bundles/manifest.json` `vep_bundle`
+`version` v2.0.0 → **v3.0.0**, while `url`/`sha256`/`size_bytes` keep pointing at
+the real published `bundle-v2.0.0` asset (the catalog is unchanged — the
+corrections are *code*, not bundle data). So the manifest version intentionally
+leads the asset tag; no new release asset is required and downloads keep working.
+A documenting `comment` key in the manifest entry (tolerated/ignored by the
+parser) and a note at the `run_vep_bundle_update` parity check explain the single
+expected, non-fatal `vep_bundle_metadata_version_mismatch` advisory on update.
+AncestryDNA still gates on ≥ 2.0.0 (v3.0.0 satisfies it).
 
 ---
 
