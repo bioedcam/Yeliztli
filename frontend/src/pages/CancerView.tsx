@@ -26,6 +26,7 @@ import VariantCard from "@/components/cancer/VariantCard"
 import PRSGaugeCard from "@/components/cancer/PRSGaugeCard"
 import VariantDetailPanel from "@/components/cancer/VariantDetailPanel"
 import TraitArchitectureCard from "@/components/ui/TraitArchitectureCard"
+import ClinicalConfirmationGate from "@/components/ui/ClinicalConfirmationGate"
 
 export default function CancerView() {
   const [searchParams] = useSearchParams()
@@ -139,21 +140,24 @@ export default function CancerView() {
             </p>
 
             {variantsQuery.data && variantsQuery.data.items.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {variantsQuery.data.items.map((variant) => (
-                  <VariantCard
-                    key={`${variant.gene_symbol}-${variant.rsid}`}
-                    variant={variant}
-                    onClick={() =>
-                      setSelectedVariant(
-                        selectedVariant?.rsid === variant.rsid ? null : variant,
-                      )
-                    }
-                    selected={selectedVariant?.rsid === variant.rsid}
-                    sampleId={sampleId}
-                  />
-                ))}
-              </div>
+              <>
+                <ClinicalConfirmationGate />
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {variantsQuery.data.items.map((variant) => (
+                    <VariantCard
+                      key={`${variant.gene_symbol}-${variant.rsid}`}
+                      variant={variant}
+                      onClick={() =>
+                        setSelectedVariant(
+                          selectedVariant?.rsid === variant.rsid ? null : variant,
+                        )
+                      }
+                      selected={selectedVariant?.rsid === variant.rsid}
+                      sampleId={sampleId}
+                    />
+                  ))}
+                </div>
+              </>
             ) : (
               <PageEmpty
                 icon={ShieldAlert}

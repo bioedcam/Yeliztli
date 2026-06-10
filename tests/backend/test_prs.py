@@ -814,6 +814,27 @@ class TestStorePRSFindings:
         assert "ding" in arch["portability"].lower()
         assert "calibration is not accuracy" in arch["calibration"].lower()
 
+    def test_detail_json_has_return_framing(
+        self, weight_set: PRSWeightSet, sample_with_prs_variants: sa.Engine
+    ) -> None:
+        """SW-A1: every PRS finding carries the consolidated return-framing block."""
+        result = run_prs(
+            weight_set,
+            sample_with_prs_variants,
+            inferred_ancestry="EUR",
+            n_bootstrap=100,
+            rng_seed=42,
+        )
+        store_prs_findings([result], sample_with_prs_variants, module="cancer")
+
+        with sample_with_prs_variants.connect() as conn:
+            row = conn.execute(sa.select(findings).where(findings.c.category == "prs")).fetchone()
+        rf = json.loads(row.detail_json)["return_framing"]
+        assert rf["research_use_only"] is True
+        assert rf["source_population"] == "EUR"
+        assert "EUR" in rf["source_population_label"]
+        assert "95% CI" in rf["ci_label"]
+
     def test_prs_score_and_percentile_stored(
         self, weight_set: PRSWeightSet, sample_with_prs_variants: sa.Engine
     ) -> None:

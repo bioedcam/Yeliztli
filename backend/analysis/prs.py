@@ -66,6 +66,7 @@ from backend.analysis.allele_match import (
     match_effect_allele_dosage,
 )
 from backend.analysis.evidence import PRS_EVIDENCE_LEVEL
+from backend.analysis.return_framing import prs_return_framing
 from backend.db.tables import annotated_variants, findings
 
 logger = structlog.get_logger(__name__)
@@ -702,6 +703,7 @@ def store_prs_findings(
             "research_use_only": True,
             "architecture": PRS_TRAIT_ARCHITECTURE,
         }
+        detail["return_framing"] = prs_return_framing(detail)
 
         rows.append(
             {
