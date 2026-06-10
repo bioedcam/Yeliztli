@@ -74,6 +74,7 @@ _FULLY_GATED_MODULES = frozenset(
         "overlays",
         "parkinsons",
         "pharma",
+        "qc",
         "query_builder",
         "rare_variants",
         "reports",

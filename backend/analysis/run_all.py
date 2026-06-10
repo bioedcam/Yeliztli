@@ -87,6 +87,7 @@ def _get_modules() -> list[tuple[str, Callable]]:
         ("methylation", _run_methylation),
         ("allergy", _run_allergy),
         ("gene_health", _run_gene_health),
+        ("qc", _run_qc),
         ("rare_variants", _run_rare_variants),
     ]
 
@@ -385,6 +386,16 @@ def _run_gene_health(sample_engine: Engine, registry: DBRegistry) -> int:
     panel = load_gene_health_panel()
     result = score_gene_health_pathways(panel, sample_engine, registry.reference_engine)
     return store_gene_health_findings(result, sample_engine)
+
+
+def _run_qc(sample_engine: Engine, registry: DBRegistry) -> int:
+    # QC writes to the qc_metrics table (not findings), so it does not affect the
+    # high-confidence findings set; returns 0 to fit the runner contract.
+    from backend.analysis.qc import compute_qc_metrics, store_qc_metrics
+
+    metrics = compute_qc_metrics(sample_engine)
+    store_qc_metrics(metrics, sample_engine)
+    return 0
 
 
 def _run_rare_variants(sample_engine: Engine, registry: DBRegistry) -> int:

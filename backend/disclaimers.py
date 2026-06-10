@@ -606,6 +606,40 @@ checking before interpreting any downstream results.
 """
 
 
+# ── Sample QC metrics + reference-bias disclosure ───────────────────────────
+
+QC_DISCLAIMER_TITLE = "About Sample Quality-Control Metrics"
+
+QC_DISCLAIMER_TEXT = """\
+This section reports quality-control (QC) metrics for your genotyping data — \
+call rate, heterozygosity, Ti/Tv ratio, and a genetic-vs-recorded sex check. \
+They describe data quality, not health.
+
+**Please understand the following before reviewing:**
+
+1. **Reference and population bias.** Call rate, heterozygosity, and Ti/Tv all \
+depend on which array generated the data and on your genetic ancestry. A value \
+that looks 'off' may simply reflect the array design or an ancestry under- \
+represented in the array's reference panel, not a problem with your sample.
+
+2. **The sex check is concordance only.** The genetically inferred sex is \
+compared to the sex you recorded, and reported as concordant, discordant, or \
+indeterminate. This is a data-integrity check (e.g. catching a mislabeled file). \
+It is NOT a sex-chromosome aneuploidy test and never changes your recorded sex.
+
+3. **Call-rate pass line.** A call rate at or above ~98% is the usual array \
+threshold; a lower value suggests degraded data and that downstream results \
+should be read with extra caution.
+
+4. **Outlier detection needs a batch.** A heterozygosity outlier is only \
+meaningful relative to a group of comparable samples; with few local samples no \
+reliable outlier judgment can be made, and none is asserted.
+
+5. **Not a clinical result.** These are research/educational data-quality \
+metrics, not a clinical or diagnostic test.\
+"""
+
+
 # ── Runs-of-Homozygosity (ROH / FROH) autozygosity metric ───────────────────
 
 ROH_DISCLAIMER_TITLE = "About Runs of Homozygosity (FROH)"
