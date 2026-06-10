@@ -57,6 +57,55 @@ export interface ReannotationPrompt {
   created_at: string | null
 }
 
+// ── Finding-level change diff (SW-A4b) ───────────────────────────────
+
+export interface FindingFieldChange {
+  field: string
+  before: string | null
+  after: string | null
+}
+
+export interface ReleaseDelta {
+  db_name: string
+  before: string | null
+  after: string | null
+}
+
+export interface ChangedFinding {
+  module: string
+  category: string | null
+  gene_symbol: string | null
+  rsid: string | null
+  drug: string | null
+  diplotype: string | null
+  finding_text: string
+  changes: FindingFieldChange[]
+}
+
+export interface DiffFinding {
+  module: string
+  category: string | null
+  gene_symbol: string | null
+  rsid: string | null
+  drug: string | null
+  diplotype: string | null
+  finding_text: string
+  clinvar_significance: string | null
+  evidence_level: number | null
+  metabolizer_status: string | null
+  pathway_level: string | null
+}
+
+export interface FindingChanges {
+  available: boolean
+  generated_at: string | null
+  release_deltas: ReleaseDelta[]
+  changed: ChangedFinding[]
+  added: DiffFinding[]
+  removed: DiffFinding[]
+  counts: Record<string, number>
+}
+
 export interface TriggerUpdateResponse {
   job_id: string
   db_name: string
@@ -87,6 +136,7 @@ export const UPDATE_CHECK_KEY = ['updates', 'check'] as const
 export const UPDATE_HISTORY_KEY = ['updates', 'history'] as const
 export const REANNOTATION_PROMPTS_KEY = ['updates', 'prompts'] as const
 export const APP_UPDATE_KEY = ['updates', 'app'] as const
+export const FINDING_CHANGES_KEY = ['updates', 'finding-changes'] as const
 
 // ── Fetchers ─────────────────────────────────────────────────────────
 
@@ -156,6 +206,26 @@ async function dismissPrompt(promptId: number): Promise<void> {
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(`Dismiss prompt failed: ${res.status} ${text}`.trim())
+  }
+}
+
+async function fetchFindingChanges(sampleId: number): Promise<FindingChanges> {
+  const res = await fetch(`/api/updates/finding-changes?sample_id=${sampleId}`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Finding-changes fetch failed: ${res.status} ${text}`.trim())
+  }
+  return res.json()
+}
+
+async function dismissFindingChanges(sampleId: number): Promise<void> {
+  const res = await fetch(
+    `/api/updates/finding-changes/dismiss?sample_id=${sampleId}`,
+    { method: 'POST' },
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Dismiss finding-changes failed: ${res.status} ${text}`.trim())
   }
 }
 
@@ -292,6 +362,28 @@ export function useDismissPrompt() {
     mutationFn: (promptId: number) => dismissPrompt(promptId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: REANNOTATION_PROMPTS_KEY })
+    },
+  })
+}
+
+/** Fetch the finding-level change diff for a sample (SW-A4b). Disabled until a
+ * sample id is known. */
+export function useFindingChanges(sampleId: number | null | undefined) {
+  return useQuery({
+    queryKey: [...FINDING_CHANGES_KEY, sampleId ?? 'none'],
+    queryFn: () => fetchFindingChanges(sampleId as number),
+    enabled: sampleId != null,
+    staleTime: 5 * 60 * 1000, // 5 min
+  })
+}
+
+/** Dismiss a sample's stored finding-change diff. Invalidates the diff cache. */
+export function useDismissFindingChanges() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sampleId: number) => dismissFindingChanges(sampleId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: FINDING_CHANGES_KEY })
     },
   })
 }
