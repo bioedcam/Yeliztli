@@ -75,6 +75,62 @@ class ReannotationPrompt(BaseModel):
     created_at: str | None
 
 
+# Finding-level change diff (SW-A4b / #8) — the deferred second half of SW-A4.
+
+
+class FindingFieldChange(BaseModel):
+    field: str
+    before: str | None = None
+    after: str | None = None
+
+
+class ReleaseDelta(BaseModel):
+    db_name: str
+    before: str | None = None
+    after: str | None = None
+
+
+class ChangedFinding(BaseModel):
+    module: str
+    category: str | None = None
+    gene_symbol: str | None = None
+    rsid: str | None = None
+    drug: str | None = None
+    diplotype: str | None = None
+    finding_text: str
+    changes: list[FindingFieldChange] = []
+
+
+class DiffFinding(BaseModel):
+    module: str
+    category: str | None = None
+    gene_symbol: str | None = None
+    rsid: str | None = None
+    drug: str | None = None
+    diplotype: str | None = None
+    finding_text: str
+    clinvar_significance: str | None = None
+    evidence_level: int | None = None
+    metabolizer_status: str | None = None
+    pathway_level: str | None = None
+
+
+class FindingChangesResponse(BaseModel):
+    """What changed at the finding level since the prior analysis.
+
+    ``available`` is False when there is no undismissed diff with changes — the
+    common case (first analysis, nothing changed, or the user dismissed it).
+    """
+
+    available: bool
+    generated_at: str | None = None
+    release_deltas: list[ReleaseDelta] = []
+    changed: list[ChangedFinding] = []
+    added: list[DiffFinding] = []
+    removed: list[DiffFinding] = []
+    counts: dict[str, int] = {}
+
+
 class DatabaseStatus(BaseModel):
     db_name: str
     display_name: str
@@ -318,6 +374,51 @@ async def dismiss_reannotation_prompt(prompt_id: int) -> dict:
     if not ok:
         raise HTTPException(status_code=404, detail="Prompt not found")
     return {"status": "dismissed", "prompt_id": prompt_id}
+
+
+@router.get("/finding-changes", response_model=FindingChangesResponse)
+async def get_finding_changes(
+    sample_id: int = Query(..., description="Sample ID"),
+) -> FindingChangesResponse:
+    """Return the finding-level change diff for a sample's latest re-annotation.
+
+    Disclosure only (SW-A4b): reports which findings were added / removed /
+    meaning-shifted since the prior analysis and the source-release delta that
+    explains it. Responds ``available=False`` when there is no undismissed diff
+    with changes.
+    """
+    from backend.analysis.finding_diff import has_changes, read_finding_diff
+    from backend.api.routes.risk_common import resolve_sample_engine
+
+    engine = resolve_sample_engine(sample_id)
+    diff = read_finding_diff(engine)
+    if diff is None or diff.get("dismissed") or not has_changes(diff):
+        return FindingChangesResponse(available=False)
+
+    return FindingChangesResponse(
+        available=True,
+        generated_at=diff.get("generated_at"),
+        release_deltas=[ReleaseDelta(**d) for d in diff.get("release_deltas", [])],
+        changed=[ChangedFinding(**c) for c in diff.get("changed", [])],
+        added=[DiffFinding(**f) for f in diff.get("added", [])],
+        removed=[DiffFinding(**f) for f in diff.get("removed", [])],
+        counts=diff.get("counts", {}),
+    )
+
+
+@router.post("/finding-changes/dismiss")
+async def dismiss_finding_changes(
+    sample_id: int = Query(..., description="Sample ID"),
+) -> dict:
+    """Dismiss the stored finding-level change diff for a sample."""
+    from backend.analysis.finding_diff import dismiss_finding_diff
+    from backend.api.routes.risk_common import resolve_sample_engine
+
+    engine = resolve_sample_engine(sample_id)
+    ok = dismiss_finding_diff(engine)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No finding-change diff to dismiss.")
+    return {"status": "dismissed", "sample_id": sample_id}
 
 
 @router.post("/auto-update", response_model=AutoUpdateResponse)

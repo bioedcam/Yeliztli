@@ -16,6 +16,8 @@ import {
   useTriggerUpdate,
   useDismissPrompt,
   useToggleAutoUpdate,
+  useFindingChanges,
+  useDismissFindingChanges,
   type DatabaseStatus,
   type UpdateAvailable,
   type UpdateHistoryEntry,
@@ -28,10 +30,14 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   Clock,
   Download,
   ExternalLink,
+  GitCompareArrows,
+  MinusCircle,
+  PlusCircle,
   XCircle,
   Zap,
 } from 'lucide-react'
@@ -155,6 +161,146 @@ function ReannotationBanner({ prompts }: { prompts: ReannotationPrompt[] }) {
                 Dismiss ({p.db_name})
               </button>
             ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Finding-level change diff (SW-A4b) ───────────────────────────────
+
+const FINDING_FIELD_LABELS: Record<string, string> = {
+  clinvar_significance: 'ClinVar significance',
+  evidence_level: 'Evidence level',
+  metabolizer_status: 'Metabolizer status',
+  pathway_level: 'Pathway level',
+}
+
+/** Short label for a finding: gene → variant → drug → module. */
+function findingLabel(f: {
+  gene_symbol: string | null
+  rsid: string | null
+  drug: string | null
+  module: string
+}): string {
+  return f.gene_symbol || f.rsid || f.drug || f.module
+}
+
+/**
+ * "What changed since your last analysis" panel for one sample (SW-A4b).
+ *
+ * Disclosure only: it reports which findings were added / removed / reclassified
+ * because the upstream source releases advanced — never a change in the user's
+ * DNA. Renders nothing when there is no undismissed diff with changes. Mirrors
+ * the backend ``FindingChangesResponse`` (backend/api/routes/updates.py).
+ */
+export function FindingChangesPanel({ sampleId }: { sampleId: number }) {
+  const { data } = useFindingChanges(sampleId)
+  const dismissMutation = useDismissFindingChanges()
+
+  if (!data || !data.available) return null
+
+  const { release_deltas, changed, added, removed } = data
+  const releaseSummary = release_deltas
+    .map((d) => `${d.db_name} ${d.before ?? '—'} → ${d.after ?? '—'}`)
+    .join(', ')
+
+  return (
+    <div
+      className="rounded-lg border border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/30 p-4"
+      role="status"
+      data-testid={`finding-changes-${sampleId}`}
+    >
+      <div className="flex items-start gap-3">
+        <GitCompareArrows className="h-5 w-5 shrink-0 text-sky-600 dark:text-sky-400 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-sky-800 dark:text-sky-200">
+            What changed since your last analysis
+          </p>
+          <p className="mt-1 text-xs text-sky-700/90 dark:text-sky-300/90">
+            These reflect updated reference databases
+            {releaseSummary ? ` (${releaseSummary})` : ''} — changes in the data
+            sources, not in your DNA.
+          </p>
+
+          {changed.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                Reclassified ({changed.length})
+              </p>
+              <ul className="mt-1 space-y-1">
+                {changed.map((f, i) => (
+                  <li
+                    key={`changed-${i}`}
+                    className="text-sm text-sky-800 dark:text-sky-200"
+                  >
+                    <span className="font-medium">{findingLabel(f)}</span>
+                    {f.changes.map((c, j) => (
+                      <span
+                        key={`change-${j}`}
+                        className="ml-1 inline-flex items-center gap-1 text-sky-700 dark:text-sky-300"
+                      >
+                        — {FINDING_FIELD_LABELS[c.field] ?? c.field}:{' '}
+                        <span>{c.before ?? '—'}</span>
+                        <ArrowRight className="h-3 w-3" />
+                        <span className="font-medium">{c.after ?? '—'}</span>
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {added.length > 0 && (
+            <div className="mt-3">
+              <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                <PlusCircle className="h-3 w-3" /> New ({added.length})
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {added.map((f, i) => (
+                  <li key={`added-${i}`} className="text-sm text-sky-800 dark:text-sky-200">
+                    <span className="font-medium">{findingLabel(f)}</span>
+                    {f.finding_text ? ` — ${f.finding_text}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {removed.length > 0 && (
+            <div className="mt-3">
+              <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                <MinusCircle className="h-3 w-3" /> No longer reported ({removed.length})
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {removed.map((f, i) => (
+                  <li key={`removed-${i}`} className="text-sm text-sky-800 dark:text-sky-200">
+                    <span className="font-medium">{findingLabel(f)}</span>
+                    {f.finding_text ? ` — ${f.finding_text}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => dismissMutation.mutate(sampleId)}
+              disabled={dismissMutation.isPending}
+              className={cn(
+                'inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium',
+                'border border-sky-400 dark:border-sky-600',
+                'text-sky-700 dark:text-sky-300',
+                'hover:bg-sky-100 dark:hover:bg-sky-900/50',
+                'disabled:opacity-50',
+              )}
+            >
+              <XCircle className="h-3 w-3" />
+              Dismiss
+            </button>
           </div>
         </div>
       </div>
@@ -625,6 +771,13 @@ export default function UpdateManager() {
 
       {/* Re-annotation banner */}
       {prompts && <ReannotationBanner prompts={prompts} />}
+
+      {/* Finding-level "what changed" panels (SW-A4b), one per re-annotated
+          sample. Each renders only when that sample has an undismissed diff. */}
+      {prompts &&
+        [...new Set(prompts.map((p) => p.sample_id))].map((sid) => (
+          <FindingChangesPanel key={sid} sampleId={sid} />
+        ))}
 
       {/* Database table */}
       <div className="rounded-lg border border-border bg-card overflow-x-auto">

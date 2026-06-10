@@ -260,6 +260,22 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
         else:
             error_summary = None
 
+        # SW-A4b: snapshot the prior findings BEFORE run_all_analyses clears them
+        # (each module DELETEs then re-INSERTs its rows), so the finding-level
+        # change diff can be computed once the fresh findings are stamped.
+        # Best-effort and in its own try so a snapshot failure never blocks the
+        # analysis run or holds up the staleness gate.
+        prior_findings = None
+        try:
+            from backend.analysis.finding_diff import snapshot_findings
+
+            prior_findings = snapshot_findings(sample_engine)
+        except Exception:
+            logger.exception(
+                "finding_diff_snapshot_failed",
+                extra={"job_id": job_id, "sample_id": sample_id},
+            )
+
         # Run all analysis modules to populate findings
         _update_job(
             job_id,
@@ -267,6 +283,7 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
             progress_pct=95.0,
             message="Analyzing…",
         )
+        analysis_ok = False
         try:
             from backend.analysis.run_all import run_all_analyses
 
@@ -312,6 +329,7 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
                     "vep_bundle_version": bundle_version,
                 },
             )
+            analysis_ok = True
         except Exception:
             logger.exception(
                 "analysis_modules_failed",
@@ -337,6 +355,25 @@ def run_annotation_task(sample_id: int, job_id: str) -> None:
                 "findings_provenance_failed",
                 extra={"job_id": job_id, "sample_id": sample_id},
             )
+
+        # SW-A4b: compute + store the finding-level change diff (added / removed /
+        # changed since the prior snapshot), attributed to the source-release
+        # delta from provenance. Disclosure only and best-effort — never alters
+        # findings or the staleness gate. Skipped when analysis did not fully
+        # succeed: the findings set is then partial (the gate stays up), so a diff
+        # would surface spurious "removed" findings.
+        if analysis_ok:
+            try:
+                from backend.analysis.finding_diff import compute_and_store_finding_diff
+
+                compute_and_store_finding_diff(
+                    sample_engine, registry.reference_engine, prior_findings
+                )
+            except Exception:
+                logger.exception(
+                    "finding_diff_compute_failed",
+                    extra={"job_id": job_id, "sample_id": sample_id},
+                )
 
         # Generate SVGs for all findings (post-analysis step)
         _update_job(
