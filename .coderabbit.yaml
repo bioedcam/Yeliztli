@@ -1,7 +1,6 @@
-# CodeRabbit configuration — https://docs.coderabbit.ai/getting-started/configure-coderabbit
-# Scope: advisory review guidance only. CodeRabbit uses its defaults for
-# everything not set here.
-version: 2
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration. Scope: advisory review guidance only — CodeRabbit
+# uses its defaults for everything not set here.
 reviews:
   path_instructions:
     - path: "tests/**"
