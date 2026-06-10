@@ -252,6 +252,69 @@ class TestExtractCarrierVariants:
         assert "rs75961395" not in rsids
         assert result.homozygous_plp_skipped == 1
 
+    def test_hom_ref_pathogenic_excluded(
+        self, panel: CarrierPanel, sample_engine: sa.Engine
+    ) -> None:
+        """hom_ref (non-carrier) Pathogenic in a panel gene → NO carrier finding.
+
+        The flagship genotype-agnostic-annotation guard (audit §1.1): a chip
+        reports a call at every probe regardless of carriage, so a ClinVar
+        Pathogenic record where the individual carries ZERO copies of the ALT
+        (homozygous reference) must be suppressed entirely. This is distinct from
+        T3-37, which excludes the homozygous-ALT (affected) case. A real het
+        carrier in the same gene is seeded alongside as a positive control, so the
+        test proves the suppression is carriage-specific rather than a blanket
+        drop — and that it holds through storage, not just extraction.
+        """
+        variants = [
+            {
+                "rsid": "rs_cftr_hom_ref",
+                "chrom": "7",
+                "pos": 117559620,
+                "genotype": "CC",  # homozygous reference — ALT not carried
+                "zygosity": "hom_ref",
+                "gene_symbol": "CFTR",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 3,
+                "clinvar_accession": "VCV000007107",
+                "clinvar_conditions": "Cystic fibrosis",
+                "annotation_coverage": 2,
+            },
+            {
+                "rsid": "rs113993960",  # F508del het — positive control
+                "chrom": "7",
+                "pos": 117559590,
+                "genotype": "CT",
+                "zygosity": "het",
+                "gene_symbol": "CFTR",
+                "clinvar_significance": "Pathogenic",
+                "clinvar_review_stars": 3,
+                "clinvar_accession": "VCV000007105",
+                "clinvar_conditions": "Cystic fibrosis",
+                "annotation_coverage": 2,
+            },
+        ]
+        with sample_engine.begin() as conn:
+            conn.execute(sa.insert(annotated_variants), variants)
+
+        result = extract_carrier_variants(panel, sample_engine)
+        kept = {v.rsid for v in result.variants}
+        assert kept == {"rs113993960"}  # het carrier kept, hom_ref suppressed
+        assert "rs_cftr_hom_ref" not in kept
+        assert result.carrier_count == 1
+
+        # Suppression must survive storage, not just extraction.
+        store_carrier_findings(result, sample_engine)
+        with sample_engine.connect() as conn:
+            stored = {
+                r.rsid
+                for r in conn.execute(
+                    sa.select(findings.c.rsid).where(findings.c.module == "carrier")
+                )
+            }
+        assert stored == {"rs113993960"}
+        assert "rs_cftr_hom_ref" not in stored
+
     def test_t3_38_brca1_dual_role(
         self, panel: CarrierPanel, sample_with_carrier_variants: sa.Engine
     ) -> None:
